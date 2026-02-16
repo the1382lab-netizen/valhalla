@@ -9,6 +9,10 @@ export interface InputPayload {
   aimAngle: number;
   /** Monotonically increasing input sequence number */
   seq: number;
+  /** Fire a ranged projectile */
+  fire: boolean;
+  /** Melee attack */
+  melee: boolean;
 }
 
 // ── Player State (mirrored in Colyseus schema) ─────────────
@@ -18,6 +22,10 @@ export interface IPlayerState {
   y: number;
   aimAngle: number;
   speed: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  inputSeq: number;
 }
 
 // ── Tile Map ────────────────────────────────────────────────
@@ -29,7 +37,22 @@ export interface TileMapData {
   collisionGrid: number[];
 }
 
+// ── Projectile State ────────────────────────────────────────
+export interface IProjectileState {
+  id: string;
+  ownerId: string;
+  x: number;
+  y: number;
+  angle: number;
+  speed: number;
+  damage: number;
+}
+
 // ── Messages ────────────────────────────────────────────────
 export enum MessageType {
   INPUT = 'input',
+  PLAYER_HIT = 'playerHit',
+  PLAYER_DIED = 'playerDied',
+  PLAYER_RESPAWNED = 'playerRespawned',
+  MELEE_ATTACK = 'meleeAttack',
 }

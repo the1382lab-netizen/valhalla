@@ -1,13 +1,22 @@
 import Phaser from 'phaser';
-import { NetworkClient, CollisionGridData } from '../systems/NetworkClient.js';
+import {
+  NetworkClient,
+  CollisionGridData,
+  PlayerHitData,
+  PlayerDiedData,
+  PlayerRespawnedData,
+  MeleeAttackData,
+} from '../systems/NetworkClient.js';
 import { InputManager } from '../systems/InputManager.js';
 import { EntityRenderer } from '../systems/EntityRenderer.js';
 import {
   TILE_SIZE,
   PLAYER_SPEED,
   PLAYER_COLLISION_RADIUS,
+  PLAYER_MAX_HP,
   MAP_WIDTH_PX,
   MAP_HEIGHT_PX,
+  RESPAWN_TIME_MS,
   InputPayload,
   normalise,
 } from '@valhalla/shared';
@@ -20,7 +29,7 @@ interface PendingInput {
 /**
  * Main gameplay scene.
  * Handles tile map rendering, local player with client-side prediction,
- * remote player interpolation, and mouse aiming.
+ * remote player interpolation, projectile rendering, HP, death/respawn.
  */
 export class GameScene extends Phaser.Scene {
   private network!: NetworkClient;
@@ -32,6 +41,17 @@ export class GameScene extends Phaser.Scene {
   private aimLine!: Phaser.GameObjects.Graphics;
   private localX: number = 0;
   private localY: number = 0;
+
+  // Local player HP
+  private localHp: number = PLAYER_MAX_HP;
+  private localMaxHp: number = PLAYER_MAX_HP;
+  private localAlive: boolean = true;
+  private hpBarGfx!: Phaser.GameObjects.Graphics;
+
+  // Death overlay
+  private deathOverlay!: Phaser.GameObjects.Rectangle;
+  private deathText!: Phaser.GameObjects.Text;
+  private respawnTimer: number = 0;
 
   // Client-side prediction
   private pendingInputs: PendingInput[] = [];
@@ -65,7 +85,55 @@ export class GameScene extends Phaser.Scene {
     this.statusText.setScrollFactor(0);
     this.statusText.setDepth(100);
 
+    // Death overlay (hidden initially)
+    this.deathOverlay = this.add.rectangle(
+      this.cameras.main.width / 2,
+      this.cameras.main.height / 2,
+      this.cameras.main.width,
+      this.cameras.main.height,
+      0x000000,
+      0.7,
+    );
+    this.deathOverlay.setScrollFactor(0);
+    this.deathOverlay.setDepth(200);
+    this.deathOverlay.setVisible(false);
+
+    this.deathText = this.add.text(
+      this.cameras.main.width / 2,
+      this.cameras.main.height / 2,
+      'YOU DIED\nRespawning...',
+      {
+        fontSize: '32px',
+        color: '#ff4444',
+        stroke: '#000000',
+        strokeThickness: 4,
+        align: 'center',
+      },
+    );
+    this.deathText.setOrigin(0.5, 0.5);
+    this.deathText.setScrollFactor(0);
+    this.deathText.setDepth(201);
+    this.deathText.setVisible(false);
+
+    // Local HP bar (HUD)
+    this.hpBarGfx = this.add.graphics();
+    this.hpBarGfx.setScrollFactor(0);
+    this.hpBarGfx.setDepth(100);
+
     // Setup network callbacks
+    this.setupNetworkCallbacks();
+
+    // Connect
+    this.network.connect().catch((err) => {
+      this.statusText.setText('Connection failed — is the server running?');
+      console.error(err);
+    });
+
+    // Set world bounds
+    this.cameras.main.setBounds(0, 0, MAP_WIDTH_PX, MAP_HEIGHT_PX);
+  }
+
+  private setupNetworkCallbacks(): void {
     this.network.onCollisionGrid = (data: CollisionGridData) => {
       this.collisionGrid = data.grid;
       this.collisionMapW = data.width;
@@ -78,10 +146,13 @@ export class GameScene extends Phaser.Scene {
         // This is us — set up local player
         this.localX = player.x;
         this.localY = player.y;
+        this.localHp = player.hp;
+        this.localMaxHp = player.maxHp;
+        this.localAlive = player.alive;
         this.createLocalPlayer();
         this.connected = true;
-        this.statusText.setText('Connected — WASD to move, mouse to aim');
-        this.time.delayedCall(3000, () => this.statusText.setVisible(false));
+        this.statusText.setText('WASD move | Mouse aim | Left-click shoot | Space melee');
+        this.time.delayedCall(4000, () => this.statusText.setVisible(false));
       } else {
         // Remote player
         this.entityRenderer.addRemotePlayer(sessionId, player.x, player.y);
@@ -90,6 +161,19 @@ export class GameScene extends Phaser.Scene {
 
     this.network.onPlayerChange = (player: any, sessionId: string) => {
       if (sessionId === this.network.sessionId) {
+        // Update local HP state from server
+        this.localHp = player.hp;
+        this.localMaxHp = player.maxHp;
+        const wasAlive = this.localAlive;
+        this.localAlive = player.alive;
+
+        // Handle death transition
+        if (wasAlive && !this.localAlive) {
+          this.showDeathScreen();
+        } else if (!wasAlive && this.localAlive) {
+          this.hideDeathScreen();
+        }
+
         // Server reconciliation — reapply unacknowledged inputs
         this.reconcile(player.x, player.y, player.inputSeq);
       } else {
@@ -99,6 +183,12 @@ export class GameScene extends Phaser.Scene {
           player.y,
           player.aimAngle,
         );
+        this.entityRenderer.updateRemotePlayerHp(
+          sessionId,
+          player.hp,
+          player.maxHp,
+          player.alive,
+        );
       }
     };
 
@@ -106,14 +196,68 @@ export class GameScene extends Phaser.Scene {
       this.entityRenderer.removeRemotePlayer(sessionId);
     };
 
-    // Connect
-    this.network.connect().catch((err) => {
-      this.statusText.setText('Connection failed — is the server running?');
-      console.error(err);
-    });
+    // Projectile callbacks
+    this.network.onProjectileAdd = (proj: any, id: string) => {
+      this.entityRenderer.addProjectile(id, proj.x, proj.y);
+    };
 
-    // Set world bounds
-    this.cameras.main.setBounds(0, 0, MAP_WIDTH_PX, MAP_HEIGHT_PX);
+    this.network.onProjectileRemove = (id: string) => {
+      this.entityRenderer.removeProjectile(id);
+    };
+
+    this.network.onProjectileChange = (proj: any, id: string) => {
+      this.entityRenderer.updateProjectileTarget(id, proj.x, proj.y);
+    };
+
+    // Combat events
+    this.network.onPlayerHit = (data: PlayerHitData) => {
+      // Find the target position and show damage number
+      if (data.targetId === this.network.sessionId) {
+        // We got hit
+        this.entityRenderer.showDamageFlash(this.localX, this.localY, data.damage);
+        this.cameras.main.shake(100, 0.005); // subtle screen shake
+      } else {
+        // Someone else got hit — find their position from the renderer
+        // The damage flash will use approximate position
+        this.showRemoteDamageFlash(data.targetId, data.damage);
+      }
+    };
+
+    this.network.onPlayerDied = (data: PlayerDiedData) => {
+      if (data.targetId !== this.network.sessionId) {
+        console.log(`[Combat] Player ${data.targetId.slice(0, 6)} was killed by ${data.killerId.slice(0, 6)}`);
+      }
+    };
+
+    this.network.onPlayerRespawned = (data: PlayerRespawnedData) => {
+      if (data.playerId === this.network.sessionId) {
+        console.log('[Combat] You respawned!');
+      }
+    };
+
+    this.network.onMeleeAttack = (data: MeleeAttackData) => {
+      // Show melee visual at the attacker's position
+      if (data.attackerId === this.network.sessionId) {
+        this.entityRenderer.showMeleeSlash(this.localX, this.localY, data.angle);
+      } else {
+        this.showRemoteMeleeSlash(data.attackerId, data.angle);
+      }
+    };
+  }
+
+  private showRemoteDamageFlash(targetId: string, damage: number): void {
+    // We don't have direct access to the remote player's interpolated position,
+    // but we can approximate from the entity renderer. For now we'll trust the
+    // last known position in the remote player data.
+    // The EntityRenderer's remotePlayers map is private, so we pass through.
+    // This is a simplification — in production we'd expose a getter.
+    // For now, the damage flash is shown only for local player hits.
+    // TODO: expose remote player position from EntityRenderer
+  }
+
+  private showRemoteMeleeSlash(attackerId: string, angle: number): void {
+    // Similar to above — simplified for now
+    // TODO: expose remote player position from EntityRenderer
   }
 
   private createLocalPlayer(): void {
@@ -148,32 +292,95 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  // ── Death / Respawn UI ──────────────────────────────────────
+
+  private showDeathScreen(): void {
+    this.deathOverlay.setVisible(true);
+    this.deathText.setVisible(true);
+    this.respawnTimer = RESPAWN_TIME_MS;
+
+    if (this.playerSprite) {
+      this.playerSprite.setVisible(false);
+    }
+    if (this.aimLine) {
+      this.aimLine.clear();
+    }
+  }
+
+  private hideDeathScreen(): void {
+    this.deathOverlay.setVisible(false);
+    this.deathText.setVisible(false);
+
+    if (this.playerSprite) {
+      this.playerSprite.setVisible(true);
+    }
+  }
+
+  // ── HUD HP Bar ──────────────────────────────────────────────
+
+  private drawLocalHpBar(): void {
+    this.hpBarGfx.clear();
+
+    const barWidth = 200;
+    const barHeight = 16;
+    const barX = 16;
+    const barY = this.cameras.main.height - 40;
+
+    // Background
+    this.hpBarGfx.fillStyle(0x000000, 0.7);
+    this.hpBarGfx.fillRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+
+    // HP fill
+    const hpRatio = Math.max(0, this.localHp / this.localMaxHp);
+    const fillColor = hpRatio > 0.5 ? 0x44ff44 : hpRatio > 0.25 ? 0xffaa00 : 0xff4444;
+    this.hpBarGfx.fillStyle(fillColor, 1);
+    this.hpBarGfx.fillRect(barX, barY, barWidth * hpRatio, barHeight);
+
+    // Border
+    this.hpBarGfx.lineStyle(1, 0xffffff, 0.5);
+    this.hpBarGfx.strokeRect(barX - 2, barY - 2, barWidth + 4, barHeight + 4);
+  }
+
   update(_time: number, delta: number): void {
     if (!this.connected || !this.playerSprite) return;
 
     const dt = delta / 1000;
 
+    // ── Update death timer ───────────────────────────────────
+    if (!this.localAlive && this.respawnTimer > 0) {
+      this.respawnTimer -= delta;
+      const secs = Math.max(0, Math.ceil(this.respawnTimer / 1000));
+      this.deathText.setText(`YOU DIED\nRespawning in ${secs}...`);
+    }
+
     // ── Sample input ────────────────────────────────────────
     const input = this.inputManager.getInput(this.localX, this.localY);
 
-    // ── Client-side prediction ──────────────────────────────
-    this.applyInputLocally(input, dt);
+    // ── Client-side prediction (only if alive) ──────────────
+    if (this.localAlive) {
+      this.applyInputLocally(input, dt);
+    }
 
-    // ── Send to server ──────────────────────────────────────
+    // ── Send to server (always, so server knows aim angle) ──
     this.network.sendInput(input);
 
     // ── Store for reconciliation ────────────────────────────
     this.pendingInputs.push({ input, dt });
 
     // ── Update local sprite ─────────────────────────────────
-    this.playerSprite.x = this.localX;
-    this.playerSprite.y = this.localY;
-    this.playerSprite.rotation = input.aimAngle;
+    if (this.localAlive) {
+      this.playerSprite.x = this.localX;
+      this.playerSprite.y = this.localY;
+      this.playerSprite.rotation = input.aimAngle;
 
-    // ── Draw aim line ───────────────────────────────────────
-    this.drawAimLine(input.aimAngle);
+      // ── Draw aim line ─────────────────────────────────────
+      this.drawAimLine(input.aimAngle);
+    }
 
-    // ── Interpolate remote players ──────────────────────────
+    // ── Draw local HP bar HUD ───────────────────────────────
+    this.drawLocalHpBar();
+
+    // ── Interpolate remote players + projectiles ────────────
     this.entityRenderer.update();
   }
 

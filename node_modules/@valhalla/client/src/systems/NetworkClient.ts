@@ -8,6 +8,27 @@ export interface CollisionGridData {
   tileSize: number;
 }
 
+export interface PlayerHitData {
+  targetId: string;
+  attackerId: string;
+  damage: number;
+  remainingHp: number;
+}
+
+export interface PlayerDiedData {
+  targetId: string;
+  killerId: string;
+}
+
+export interface PlayerRespawnedData {
+  playerId: string;
+}
+
+export interface MeleeAttackData {
+  attackerId: string;
+  angle: number;
+}
+
 /**
  * Manages the Colyseus connection to the server.
  */
@@ -21,6 +42,17 @@ export class NetworkClient {
   onPlayerRemove: ((sessionId: string) => void) | null = null;
   onPlayerChange: ((player: any, sessionId: string) => void) | null = null;
   onCollisionGrid: ((data: CollisionGridData) => void) | null = null;
+
+  // Projectile callbacks
+  onProjectileAdd: ((proj: any, id: string) => void) | null = null;
+  onProjectileRemove: ((id: string) => void) | null = null;
+  onProjectileChange: ((proj: any, id: string) => void) | null = null;
+
+  // Combat event callbacks
+  onPlayerHit: ((data: PlayerHitData) => void) | null = null;
+  onPlayerDied: ((data: PlayerDiedData) => void) | null = null;
+  onPlayerRespawned: ((data: PlayerRespawnedData) => void) | null = null;
+  onMeleeAttack: ((data: MeleeAttackData) => void) | null = null;
 
   constructor() {
     this.client = new Client(SERVER_URL);
@@ -41,6 +73,23 @@ export class NetworkClient {
         this.onCollisionGrid?.(data);
       });
 
+      // Combat event messages
+      this.room.onMessage(MessageType.PLAYER_HIT, (data: PlayerHitData) => {
+        this.onPlayerHit?.(data);
+      });
+
+      this.room.onMessage(MessageType.PLAYER_DIED, (data: PlayerDiedData) => {
+        this.onPlayerDied?.(data);
+      });
+
+      this.room.onMessage(MessageType.PLAYER_RESPAWNED, (data: PlayerRespawnedData) => {
+        this.onPlayerRespawned?.(data);
+      });
+
+      this.room.onMessage(MessageType.MELEE_ATTACK, (data: MeleeAttackData) => {
+        this.onMeleeAttack?.(data);
+      });
+
       // Use Colyseus 0.17 Callbacks API for state change listeners
       const callbacks = Callbacks.get(this.room);
 
@@ -55,6 +104,20 @@ export class NetworkClient {
 
       callbacks.onRemove('players', (_player: any, key: any) => {
         this.onPlayerRemove?.(key as string);
+      });
+
+      // Projectile state sync
+      callbacks.onAdd('projectiles', (proj: any, key: any) => {
+        const projId = key as string;
+        this.onProjectileAdd?.(proj, projId);
+
+        callbacks.onChange(proj, () => {
+          this.onProjectileChange?.(proj, projId);
+        });
+      });
+
+      callbacks.onRemove('projectiles', (_proj: any, key: any) => {
+        this.onProjectileRemove?.(key as string);
       });
     } catch (err) {
       console.error('[Network] Connection failed:', err);

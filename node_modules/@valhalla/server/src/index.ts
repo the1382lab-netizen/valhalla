@@ -11,13 +11,16 @@ const server = defineServer({
   },
 
   express: (app) => {
-    // CORS for dev — must allow credentials for Colyseus 0.17 SDK matchmaking
-    app.use((_req, res, next) => {
-      res.header('Access-Control-Allow-Origin', 'http://localhost:3000');
+    // CORS for dev — allow any origin on the LAN, with credentials
+    app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      if (origin) {
+        res.header('Access-Control-Allow-Origin', origin);
+      }
       res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.header('Access-Control-Allow-Credentials', 'true');
-      if (_req.method === 'OPTIONS') {
+      if (req.method === 'OPTIONS') {
         res.sendStatus(200);
         return;
       }
@@ -30,6 +33,6 @@ const server = defineServer({
   },
 });
 
-server.listen(SERVER_PORT).then(() => {
-  console.log(`⚔️  Valhalla server listening on ws://localhost:${SERVER_PORT}`);
+server.listen(SERVER_PORT, '0.0.0.0').then(() => {
+  console.log(`⚔️  Valhalla server listening on 0.0.0.0:${SERVER_PORT}`);
 });

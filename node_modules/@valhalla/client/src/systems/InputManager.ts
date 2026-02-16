@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { InputPayload } from '@valhalla/shared';
 
 /**
- * Captures WASD keyboard input and mouse aim.
+ * Captures WASD keyboard input, mouse aim, and combat inputs (fire/melee).
  */
 export class InputManager {
   private scene: Phaser.Scene;
@@ -11,8 +11,14 @@ export class InputManager {
     A: Phaser.Input.Keyboard.Key;
     S: Phaser.Input.Keyboard.Key;
     D: Phaser.Input.Keyboard.Key;
+    SPACE: Phaser.Input.Keyboard.Key;
   };
   private seq: number = 0;
+
+  // Fire state: true on the frame the left mouse button was pressed
+  private fireQueued: boolean = false;
+  // Melee state: true on the frame spacebar was pressed
+  private meleeQueued: boolean = false;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -22,7 +28,17 @@ export class InputManager {
       A: kb.addKey(Phaser.Input.Keyboard.KeyCodes.A),
       S: kb.addKey(Phaser.Input.Keyboard.KeyCodes.S),
       D: kb.addKey(Phaser.Input.Keyboard.KeyCodes.D),
+      SPACE: kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE),
     };
+
+    // Left click to fire
+    scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.leftButtonDown()) {
+        this.fireQueued = true;
+      }
+    });
+
+    // Spacebar to melee (JustDown check below)
   }
 
   /**
@@ -35,6 +51,12 @@ export class InputManager {
     const worldPoint = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
     const aimAngle = Math.atan2(worldPoint.y - playerWorldY, worldPoint.x - playerWorldX);
 
+    const fire = this.fireQueued;
+    this.fireQueued = false;
+
+    const melee = Phaser.Input.Keyboard.JustDown(this.keys.SPACE) || this.meleeQueued;
+    this.meleeQueued = false;
+
     return {
       up: this.keys.W.isDown,
       down: this.keys.S.isDown,
@@ -42,6 +64,8 @@ export class InputManager {
       right: this.keys.D.isDown,
       aimAngle,
       seq: ++this.seq,
+      fire,
+      melee,
     };
   }
 

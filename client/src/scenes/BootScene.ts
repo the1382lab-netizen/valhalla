@@ -20,6 +20,12 @@ export class BootScene extends Phaser.Scene {
     // ── Generate player sprite texture ─────────────────────
     this.generatePlayerTexture();
 
+    // ── Generate projectile texture ────────────────────────
+    this.generateProjectileTexture();
+
+    // ── Generate melee slash texture ───────────────────────
+    this.generateMeleeTexture();
+
     // Transition to game
     this.scene.start('GameScene');
   }
@@ -85,5 +91,38 @@ export class BootScene extends Phaser.Scene {
     );
     gfx2.generateTexture('remote_player', size, size);
     gfx2.destroy();
+  }
+
+  private generateProjectileTexture(): void {
+    const size = 12;
+    const gfx = this.add.graphics();
+
+    // Bright yellow-white projectile
+    gfx.fillStyle(0xffff88, 1);
+    gfx.fillCircle(size / 2, size / 2, 5);
+    gfx.fillStyle(0xffffff, 0.8);
+    gfx.fillCircle(size / 2, size / 2, 2);
+
+    gfx.generateTexture('projectile', size, size);
+    gfx.destroy();
+  }
+
+  private generateMeleeTexture(): void {
+    // A simple arc/slash shape for melee visual feedback
+    const size = 80;
+    const gfx = this.add.graphics();
+
+    gfx.lineStyle(4, 0xffffff, 0.8);
+    gfx.beginPath();
+    gfx.arc(size / 2, size / 2, 30, -Math.PI / 4, Math.PI / 4, false);
+    gfx.strokePath();
+
+    gfx.lineStyle(2, 0xffaa44, 0.6);
+    gfx.beginPath();
+    gfx.arc(size / 2, size / 2, 25, -Math.PI / 4, Math.PI / 4, false);
+    gfx.strokePath();
+
+    gfx.generateTexture('melee_slash', size, size);
+    gfx.destroy();
   }
 }

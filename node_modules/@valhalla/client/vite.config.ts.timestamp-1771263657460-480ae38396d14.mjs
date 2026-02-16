@@ -1,0 +1,19 @@
+// client/vite.config.ts
+import { defineConfig } from "file:///sessions/elegant-bold-davinci/mnt/game-project/valhalla/node_modules/vite/dist/node/index.js";
+import path from "path";
+var __vite_injected_original_dirname = "/sessions/elegant-bold-davinci/mnt/game-project/valhalla/client";
+var vite_config_default = defineConfig({
+  resolve: {
+    alias: {
+      "@valhalla/shared": path.resolve(__vite_injected_original_dirname, "../shared/src")
+    }
+  },
+  server: {
+    port: 3e3,
+    open: true
+  }
+});
+export {
+  vite_config_default as default
+};
+//# sourceMappingURL=data:application/json;base64,ewogICJ2ZXJzaW9uIjogMywKICAic291cmNlcyI6IFsiY2xpZW50L3ZpdGUuY29uZmlnLnRzIl0sCiAgInNvdXJjZXNDb250ZW50IjogWyJjb25zdCBfX3ZpdGVfaW5qZWN0ZWRfb3JpZ2luYWxfZGlybmFtZSA9IFwiL3Nlc3Npb25zL2VsZWdhbnQtYm9sZC1kYXZpbmNpL21udC9nYW1lLXByb2plY3QvdmFsaGFsbGEvY2xpZW50XCI7Y29uc3QgX192aXRlX2luamVjdGVkX29yaWdpbmFsX2ZpbGVuYW1lID0gXCIvc2Vzc2lvbnMvZWxlZ2FudC1ib2xkLWRhdmluY2kvbW50L2dhbWUtcHJvamVjdC92YWxoYWxsYS9jbGllbnQvdml0ZS5jb25maWcudHNcIjtjb25zdCBfX3ZpdGVfaW5qZWN0ZWRfb3JpZ2luYWxfaW1wb3J0X21ldGFfdXJsID0gXCJmaWxlOi8vL3Nlc3Npb25zL2VsZWdhbnQtYm9sZC1kYXZpbmNpL21udC9nYW1lLXByb2plY3QvdmFsaGFsbGEvY2xpZW50L3ZpdGUuY29uZmlnLnRzXCI7aW1wb3J0IHsgZGVmaW5lQ29uZmlnIH0gZnJvbSAndml0ZSc7XG5pbXBvcnQgcGF0aCBmcm9tICdwYXRoJztcblxuZXhwb3J0IGRlZmF1bHQgZGVmaW5lQ29uZmlnKHtcbiAgcmVzb2x2ZToge1xuICAgIGFsaWFzOiB7XG4gICAgICAnQHZhbGhhbGxhL3NoYXJlZCc6IHBhdGgucmVzb2x2ZShfX2Rpcm5hbWUsICcuLi9zaGFyZWQvc3JjJyksXG4gICAgfSxcbiAgfSxcbiAgc2VydmVyOiB7XG4gICAgcG9ydDogMzAwMCxcbiAgICBvcGVuOiB0cnVlLFxuICB9LFxufSk7XG4iXSwKICAibWFwcGluZ3MiOiAiO0FBQStXLFNBQVMsb0JBQW9CO0FBQzVZLE9BQU8sVUFBVTtBQURqQixJQUFNLG1DQUFtQztBQUd6QyxJQUFPLHNCQUFRLGFBQWE7QUFBQSxFQUMxQixTQUFTO0FBQUEsSUFDUCxPQUFPO0FBQUEsTUFDTCxvQkFBb0IsS0FBSyxRQUFRLGtDQUFXLGVBQWU7QUFBQSxJQUM3RDtBQUFBLEVBQ0Y7QUFBQSxFQUNBLFFBQVE7QUFBQSxJQUNOLE1BQU07QUFBQSxJQUNOLE1BQU07QUFBQSxFQUNSO0FBQ0YsQ0FBQzsiLAogICJuYW1lcyI6IFtdCn0K

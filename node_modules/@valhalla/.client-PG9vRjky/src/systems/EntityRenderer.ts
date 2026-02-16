@@ -217,6 +217,29 @@ export class EntityRenderer {
     });
   }
 
+  // ── Combat Feedback Text (Miss / Dodge / Block) ──────────
+
+  showCombatText(x: number, y: number, label: string, color: string): void {
+    const txt = this.scene.add.text(x, y - 20, label, {
+      fontSize: '14px',
+      color,
+      stroke: '#000000',
+      strokeThickness: 3,
+      fontStyle: 'bold',
+    });
+    txt.setOrigin(0.5, 0.5);
+    txt.setDepth(50);
+
+    this.scene.tweens.add({
+      targets: txt,
+      y: y - 55,
+      alpha: 0,
+      duration: 700,
+      ease: 'Power2',
+      onComplete: () => txt.destroy(),
+    });
+  }
+
   // ── HP Bar Drawing ────────────────────────────────────────
 
   private drawHpBar(gfx: Phaser.GameObjects.Graphics, x: number, y: number, hp: number, maxHp: number): void {
@@ -279,5 +302,11 @@ export class EntityRenderer {
 
   hasPlayer(sessionId: string): boolean {
     return this.remotePlayers.has(sessionId);
+  }
+
+  getPlayerPosition(sessionId: string): { x: number; y: number } | null {
+    const data = this.remotePlayers.get(sessionId);
+    if (!data) return null;
+    return { x: data.sprite.x, y: data.sprite.y };
   }
 }

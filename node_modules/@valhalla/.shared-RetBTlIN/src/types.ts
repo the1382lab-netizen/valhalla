@@ -60,4 +60,7 @@ export enum MessageType {
   PLAYER_DIED = 'playerDied',
   PLAYER_RESPAWNED = 'playerRespawned',
   MELEE_ATTACK = 'meleeAttack',
+  MISSED = 'missed',
+  DODGED = 'dodged',
+  BLOCKED = 'blocked',
 }

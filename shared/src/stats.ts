@@ -101,6 +101,31 @@ export function rollCrit(critChance: number, critDamage: number): { isCrit: bool
 }
 
 /**
+ * Compute hit chance from attacker's dexterity.
+ * Uses a soft-cap formula: hitChance = 0.65 + dex / (dex + 40)
+ *
+ * This gives a baseline ~65% hit chance at 0 dex, scaling up with diminishing returns:
+ *   Dex  6 → 78%   (Wizard / Cleric baseline)
+ *   Dex 10 → 85%   (Warrior / Shaman baseline)
+ *   Dex 18 → 96%   (Rogue baseline)
+ *   Dex 20 → 98%   (Ranger baseline)
+ *
+ * Caps at 99% — attacks can always miss (1% minimum miss chance).
+ */
+export function computeHitChance(dexterity: number): number {
+  const raw = 0.65 + dexterity / (dexterity + 40);
+  return Math.min(0.99, raw);
+}
+
+/**
+ * Roll for hit. Returns true if the attack lands.
+ * Miss = the attack doesn't connect at all (no damage, no dodge/block needed).
+ */
+export function rollHit(dexterity: number): boolean {
+  return Math.random() < computeHitChance(dexterity);
+}
+
+/**
  * Roll for dodge. Returns true if the attack is dodged.
  */
 export function rollDodge(dodgeRating: number): boolean {

@@ -6,6 +6,7 @@ import {
   PlayerDiedData,
   PlayerRespawnedData,
   MeleeAttackData,
+  CombatFeedbackData,
 } from '../systems/NetworkClient.js';
 import { InputManager } from '../systems/InputManager.js';
 import { EntityRenderer } from '../systems/EntityRenderer.js';
@@ -281,14 +282,42 @@ export class GameScene extends Phaser.Scene {
         this.showRemoteMeleeSlash(data.attackerId, data.angle);
       }
     };
+
+    // Combat feedback: miss / dodge / block
+    this.network.onMissed = (data: CombatFeedbackData) => {
+      const pos = this.getCombatTextPosition(data.targetId);
+      if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'MISS', '#999999');
+    };
+
+    this.network.onDodged = (data: CombatFeedbackData) => {
+      const pos = this.getCombatTextPosition(data.targetId);
+      if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'DODGE', '#ffffff');
+    };
+
+    this.network.onBlocked = (data: CombatFeedbackData) => {
+      const pos = this.getCombatTextPosition(data.targetId);
+      if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'BLOCK', '#4488ff');
+    };
+  }
+
+  /**
+   * Get the world position for a given player (local or remote).
+   */
+  private getCombatTextPosition(playerId: string): { x: number; y: number } | null {
+    if (playerId === this.network.sessionId) {
+      return { x: this.localX, y: this.localY };
+    }
+    return this.entityRenderer.getPlayerPosition(playerId);
   }
 
   private showRemoteDamageFlash(targetId: string, damage: number, isCrit?: boolean): void {
-    // TODO: expose remote player position from EntityRenderer
+    const pos = this.entityRenderer.getPlayerPosition(targetId);
+    if (pos) this.entityRenderer.showDamageFlash(pos.x, pos.y, damage, isCrit);
   }
 
   private showRemoteMeleeSlash(attackerId: string, angle: number): void {
-    // TODO: expose remote player position from EntityRenderer
+    const pos = this.entityRenderer.getPlayerPosition(attackerId);
+    if (pos) this.entityRenderer.showMeleeSlash(pos.x, pos.y, angle);
   }
 
   private createLocalPlayer(): void {

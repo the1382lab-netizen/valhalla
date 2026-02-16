@@ -19,6 +19,7 @@ import {
   computePhysicalDamage,
   computeSpellDamage,
   applyDefenseReduction,
+  rollHit,
   rollCrit,
   rollDodge,
   rollBlock,
@@ -34,7 +35,7 @@ let nextProjectileId = 0;
 export type DamageType = 'physical' | 'magical';
 
 export interface CombatEvent {
-  type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'dodged' | 'blocked';
+  type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'missed' | 'dodged' | 'blocked';
   data: any;
 }
 
@@ -88,7 +89,8 @@ export class CombatSystem {
     proj.distanceTravelled = 0;
     // Store damage type on the projectile for defense calculations on hit
     (proj as any)._damageType = damageType;
-    // Store attacker crit stats for resolution on hit
+    // Store attacker stats for resolution on hit
+    (proj as any)._attackerDex = dex;
     (proj as any)._critChance = stats?.critChance ?? 0.05;
     (proj as any)._critDamage = stats?.critDamage ?? 0.5;
 
@@ -148,6 +150,7 @@ export class CombatSystem {
         target,
         rawDamage,
         'physical',
+        dex,
         stats?.critChance ?? 0.05,
         stats?.critDamage ?? 0.5,
         attacker.id,
@@ -208,8 +211,9 @@ export class CombatSystem {
           hitPlayer = true;
           toRemove.push(projId);
 
-          // Stat-driven damage with projectile's stored damage type and crit stats
+          // Stat-driven damage with projectile's stored attacker stats
           const damageType: DamageType = (proj as any)._damageType ?? 'physical';
+          const attackerDex: number = (proj as any)._attackerDex ?? 10;
           const critChance: number = (proj as any)._critChance ?? 0.05;
           const critDamage: number = (proj as any)._critDamage ?? 0.5;
 
@@ -217,6 +221,7 @@ export class CombatSystem {
             player,
             proj.damage,
             damageType,
+            attackerDex,
             critChance,
             critDamage,
             proj.ownerId,
@@ -232,12 +237,18 @@ export class CombatSystem {
 
   /**
    * Apply stat-driven damage to a target.
-   * Rolls dodge → block → crit → defense reduction.
+   * Rolls hit → dodge → block → crit → defense reduction.
+   *
+   * Hit chance is determined by the attacker's dexterity.
+   * If the attack misses, nothing else is checked.
+   * If it hits, the target can still dodge (based on dodgeRating)
+   * or block (based on blockRating, reduces damage by 50%).
    */
   private applyStatDamage(
     target: PlayerState,
     rawDamage: number,
     damageType: DamageType,
+    attackerDex: number,
     attackerCritChance: number,
     attackerCritDamage: number,
     attackerId: string,
@@ -246,7 +257,16 @@ export class CombatSystem {
     const events: CombatEvent[] = [];
     const tStats = target.stats;
 
-    // 1. Dodge roll
+    // 1. Hit roll — attacker's dexterity determines chance to connect
+    if (!rollHit(attackerDex)) {
+      events.push({
+        type: 'missed',
+        data: { targetId: target.id, attackerId },
+      });
+      return events;
+    }
+
+    // 2. Dodge roll — target's dodge rating
     if (rollDodge(tStats?.dodgeRating ?? 0)) {
       events.push({
         type: 'dodged',
@@ -255,18 +275,18 @@ export class CombatSystem {
       return events;
     }
 
-    // 2. Crit roll
+    // 4. Crit roll
     const crit = rollCrit(attackerCritChance, attackerCritDamage);
     let damage = rawDamage * crit.multiplier;
 
-    // 3. Block roll (only reduces, doesn't negate)
+    // 5. Block roll (only reduces, doesn't negate)
     let blocked = false;
     if (rollBlock(tStats?.blockRating ?? 0)) {
       damage *= 0.5;
       blocked = true;
     }
 
-    // 4. Defense reduction
+    // 6. Defense reduction
     const defense = damageType === 'physical'
       ? (tStats?.physicalDefense ?? 0)
       : (tStats?.spellResist ?? 0);

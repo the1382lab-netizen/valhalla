@@ -31,6 +31,11 @@ export interface MeleeAttackData {
   angle: number;
 }
 
+export interface CombatFeedbackData {
+  targetId: string;
+  attackerId: string;
+}
+
 /**
  * Manages the Colyseus connection to the server.
  */
@@ -55,6 +60,9 @@ export class NetworkClient {
   onPlayerDied: ((data: PlayerDiedData) => void) | null = null;
   onPlayerRespawned: ((data: PlayerRespawnedData) => void) | null = null;
   onMeleeAttack: ((data: MeleeAttackData) => void) | null = null;
+  onMissed: ((data: CombatFeedbackData) => void) | null = null;
+  onDodged: ((data: CombatFeedbackData) => void) | null = null;
+  onBlocked: ((data: CombatFeedbackData) => void) | null = null;
 
   constructor() {
     this.client = new Client(SERVER_URL);
@@ -90,6 +98,18 @@ export class NetworkClient {
 
       this.room.onMessage(MessageType.MELEE_ATTACK, (data: MeleeAttackData) => {
         this.onMeleeAttack?.(data);
+      });
+
+      this.room.onMessage(MessageType.MISSED, (data: CombatFeedbackData) => {
+        this.onMissed?.(data);
+      });
+
+      this.room.onMessage(MessageType.DODGED, (data: CombatFeedbackData) => {
+        this.onDodged?.(data);
+      });
+
+      this.room.onMessage(MessageType.BLOCKED, (data: CombatFeedbackData) => {
+        this.onBlocked?.(data);
       });
 
       // Use Colyseus 0.17 Callbacks API for state change listeners

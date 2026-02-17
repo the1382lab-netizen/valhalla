@@ -20,7 +20,8 @@ export class PlayerState extends Schema {
   aimAngle: number = 0;
   speed: number = 0;
 
-  // ── Class & Progression (synced) ──────────────────────
+  // ── Identity & Progression (synced) ─────────────────────
+  characterName: string = '';
   classId: string = 'warrior';
   level: number = 1;
   xp: number = 0;
@@ -64,6 +65,7 @@ defineTypes(PlayerState, {
   y: 'float32',
   aimAngle: 'float32',
   speed: 'float32',
+  characterName: 'string',
   classId: 'string',
   level: 'uint8',
   xp: 'uint16',

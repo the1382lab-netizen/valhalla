@@ -151,6 +151,8 @@ export class NetworkClient {
           this.onPlayerChange?.(player, sessionId);
           // Equipment fields are regular schema props — onChange fires for them
           fireEquipmentChange?.();
+          // Also refresh inventory on any player change to catch splice-replace swaps
+          fireInventoryChange?.();
         });
 
         if (isLocal) {
@@ -201,8 +203,16 @@ export class NetworkClient {
     this.room?.send(MessageType.EQUIP_ITEM, { slotIndex });
   }
 
-  sendUnequipItem(slotType: string): void {
-    this.room?.send(MessageType.UNEQUIP_ITEM, { slotType });
+  sendUnequipItem(slotType: string, targetIndex?: number): void {
+    this.room?.send(MessageType.UNEQUIP_ITEM, { slotType, targetIndex });
+  }
+
+  sendDropItem(source: 'inventory' | 'equipment', slotIndex?: number, slotType?: string): void {
+    this.room?.send(MessageType.DROP_ITEM, { source, slotIndex, slotType });
+  }
+
+  sendSwapInventory(fromIndex: number, toIndex: number): void {
+    this.room?.send(MessageType.SWAP_INVENTORY, { fromIndex, toIndex });
   }
 
   disconnect(): void {

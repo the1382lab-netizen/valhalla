@@ -88,7 +88,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.002,
     },
     allowedArmor: 'plate',
-    baseSpeed: 180,
+    baseSpeed: 144,
     canUseMana: false,
   },
 
@@ -129,7 +129,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.002,
     },
     allowedArmor: 'mail',
-    baseSpeed: 190,
+    baseSpeed: 152,
     canUseMana: true,
   },
 
@@ -170,7 +170,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.008,
     },
     allowedArmor: 'leather',
-    baseSpeed: 230,
+    baseSpeed: 184,
     canUseMana: false,
   },
 
@@ -211,7 +211,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.01,
     },
     allowedArmor: 'leather',
-    baseSpeed: 210,
+    baseSpeed: 168,
     canUseMana: false,
   },
 
@@ -252,7 +252,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.003,
     },
     allowedArmor: 'mail',
-    baseSpeed: 190,
+    baseSpeed: 152,
     canUseMana: true,
   },
 
@@ -293,7 +293,7 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
       dodgeRating: 0.003,
     },
     allowedArmor: 'cloth',
-    baseSpeed: 190,
+    baseSpeed: 152,
     canUseMana: true,
   },
 };

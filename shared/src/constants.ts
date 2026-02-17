@@ -12,7 +12,7 @@ export const SERVER_PORT = 2567;
 
 // ── Player ─────────────────────────────────────────────────
 /** @deprecated Use CLASS_TEMPLATES[classId].baseSpeed instead for class-aware speed */
-export const PLAYER_SPEED = 200;          // pixels per second (legacy fallback)
+export const PLAYER_SPEED = 160;          // pixels per second (legacy fallback)
 export const PLAYER_SIZE = 48;            // sprite size in pixels
 export const PLAYER_COLLISION_RADIUS = 20; // collision circle radius
 

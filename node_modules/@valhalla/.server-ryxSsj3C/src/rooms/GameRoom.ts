@@ -14,7 +14,7 @@ import {
   SAVE_INTERVAL_MS,
   computeDerivedStats,
 } from '@valhalla/shared';
-import { equipItem, unequipItem } from '../systems/InventorySystem.js';
+import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken, JwtPayload } from '../services/AuthService.js';
 import {
   loadCharacter,
@@ -73,11 +73,34 @@ export class GameRoom extends Room<{ state: GameState }> {
       }
     });
 
-    this.onMessage(MessageType.UNEQUIP_ITEM, (client: Client, data: { slotType: string }) => {
+    this.onMessage(MessageType.UNEQUIP_ITEM, (client: Client, data: { slotType: string; targetIndex?: number }) => {
       const player = this.state.players.get(client.sessionId);
       if (player && player.alive) {
-        unequipItem(player, data.slotType as EquipSlotType);
+        if (data.targetIndex !== undefined && data.targetIndex >= 0) {
+          unequipItemToSlot(player, data.slotType as EquipSlotType, data.targetIndex);
+        } else {
+          unequipItem(player, data.slotType as EquipSlotType);
+        }
       }
+    });
+
+    // Drop item (from inventory or equipment)
+    this.onMessage(MessageType.DROP_ITEM, (client: Client, data: { source: string; slotIndex?: number; slotType?: string }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+
+      if (data.source === 'inventory' && data.slotIndex !== undefined) {
+        dropInventoryItem(player, data.slotIndex);
+      } else if (data.source === 'equipment' && data.slotType) {
+        dropEquippedItem(player, data.slotType as EquipSlotType);
+      }
+    });
+
+    // Swap inventory slots
+    this.onMessage(MessageType.SWAP_INVENTORY, (client: Client, data: { fromIndex: number; toIndex: number }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+      swapInventorySlots(player, data.fromIndex, data.toIndex);
     });
 
     console.log(`[GameRoom] Room created. Tick rate: ${SERVER_TICK_RATE}Hz, Save interval: ${SAVE_INTERVAL_MS / 1000}s`);
@@ -135,6 +158,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     // ── Build PlayerState from loaded data ──
     const player = new PlayerState();
     player.id = client.sessionId;
+    player.characterName = charData.name;
     player.classId = charData.classId;
     player.level = charData.level;
     player.xp = charData.xp;

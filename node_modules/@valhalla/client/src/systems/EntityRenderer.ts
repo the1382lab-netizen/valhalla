@@ -22,6 +22,7 @@ interface RemotePlayerData {
   alive: boolean;
   classId: string;
   level: number;
+  characterName: string;
 }
 
 interface ProjectileData {
@@ -48,7 +49,7 @@ export class EntityRenderer {
 
   // ── Remote Players ────────────────────────────────────────
 
-  addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1): void {
+  addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1, characterName: string = ''): void {
     const sprite = this.scene.add.sprite(x, y, 'remote_player');
     sprite.setDepth(5);
 
@@ -56,10 +57,9 @@ export class EntityRenderer {
     const color = CLASS_COLORS[classId as ClassId] ?? 0xffffff;
     sprite.setTint(color);
 
-    // Name label: "ClassName Lv.X"
-    const template = CLASS_TEMPLATES[classId as ClassId];
-    const className = template?.name ?? classId;
-    const labelText = `${className} Lv.${level}`;
+    // Name label: "CharName Lv.X" or fallback to "ClassName Lv.X"
+    const displayName = characterName || (CLASS_TEMPLATES[classId as ClassId]?.name ?? classId);
+    const labelText = `${displayName} Lv.${level}`;
 
     const nameText = this.scene.add.text(x, y - 38, labelText, {
       fontSize: '11px',
@@ -88,6 +88,7 @@ export class EntityRenderer {
       alive: true,
       classId,
       level,
+      characterName,
     });
   }
 
@@ -126,9 +127,8 @@ export class EntityRenderer {
     // Update level if changed
     if (level !== undefined && level !== data.level) {
       data.level = level;
-      const template = CLASS_TEMPLATES[data.classId as ClassId];
-      const className = template?.name ?? data.classId;
-      data.nameText.setText(`${className} Lv.${level}`);
+      const displayName = data.characterName || (CLASS_TEMPLATES[data.classId as ClassId]?.name ?? data.classId);
+      data.nameText.setText(`${displayName} Lv.${level}`);
     }
   }
 

@@ -66,4 +66,6 @@ export enum MessageType {
   INVENTORY_ACTION = 'inventoryAction',
   EQUIP_ITEM = 'equipItem',
   UNEQUIP_ITEM = 'unequipItem',
+  DROP_ITEM = 'dropItem',
+  SWAP_INVENTORY = 'swapInventory',
 }

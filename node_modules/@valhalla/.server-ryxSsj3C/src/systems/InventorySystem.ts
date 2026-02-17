@@ -162,7 +162,59 @@ export function equipItem(player: PlayerState, inventorySlotIndex: number): bool
 }
 
 /**
- * Unequip an item and return it to inventory.
+ * Swap two inventory slots by index.
+ * Uses splice-replace to ensure Colyseus ArraySchema change detection fires.
+ */
+export function swapInventorySlots(player: PlayerState, fromIndex: number, toIndex: number): boolean {
+  if (fromIndex === toIndex) return false;
+  if (fromIndex < 0 || fromIndex >= player.inventory.length) return false;
+  if (toIndex < 0 || toIndex >= player.inventory.length) return false;
+
+  // Read current data from both slots
+  const fromItemId = player.inventory[fromIndex].itemId;
+  const fromQty = player.inventory[fromIndex].quantity;
+  const toItemId = player.inventory[toIndex].itemId;
+  const toQty = player.inventory[toIndex].quantity;
+
+  // Create new slot objects with swapped data
+  const newFromSlot = new InventorySlotState();
+  newFromSlot.itemId = toItemId;
+  newFromSlot.quantity = toQty;
+
+  const newToSlot = new InventorySlotState();
+  newToSlot.itemId = fromItemId;
+  newToSlot.quantity = fromQty;
+
+  // Replace via splice (triggers onRemove + onAdd for Colyseus change detection)
+  player.inventory.splice(fromIndex, 1, newFromSlot);
+  player.inventory.splice(toIndex, 1, newToSlot);
+
+  return true;
+}
+
+/**
+ * Drop an item from inventory (destroy it).
+ * @returns true if the item was dropped.
+ */
+export function dropInventoryItem(player: PlayerState, slotIndex: number): boolean {
+  if (slotIndex < 0 || slotIndex >= player.inventory.length) return false;
+  player.inventory.splice(slotIndex, 1);
+  return true;
+}
+
+/**
+ * Drop an equipped item (unequip and destroy it).
+ * @returns true if the item was dropped.
+ */
+export function dropEquippedItem(player: PlayerState, slotType: EquipSlotType): boolean {
+  const currentlyEquipped = getEquipField(player, slotType);
+  if (!currentlyEquipped) return false;
+  setEquipField(player, slotType, '');
+  return true;
+}
+
+/**
+ * Unequip an item and return it to inventory (appended at end).
  * @returns true if the item was unequipped successfully, false if inventory full or slot empty.
  */
 export function unequipItem(player: PlayerState, slotType: EquipSlotType): boolean {
@@ -180,6 +232,53 @@ export function unequipItem(player: PlayerState, slotType: EquipSlotType): boole
 
   // Clear equip slot
   setEquipField(player, slotType, '');
+
+  return true;
+}
+
+/**
+ * Unequip an item and place it at a specific inventory slot index.
+ * If targetIndex has an item, swaps the equipped item with that inventory item
+ * (equipping the inventory item if it fits the same slot, otherwise just placing it there).
+ * If targetIndex is beyond the array, appends to the end.
+ */
+export function unequipItemToSlot(player: PlayerState, slotType: EquipSlotType, targetIndex: number): boolean {
+  const currentlyEquipped = getEquipField(player, slotType);
+  if (!currentlyEquipped) return false;
+
+  if (targetIndex >= 0 && targetIndex < player.inventory.length) {
+    // Target slot has an item — check if we can swap-equip it
+    const targetSlot = player.inventory[targetIndex];
+    const targetTemplate = ITEM_CATALOG[targetSlot.itemId as ItemId];
+
+    if (targetTemplate?.equipSlot === slotType) {
+      // The target item fits the same equip slot — swap: equip target, place current in inventory
+      const targetItemId = targetSlot.itemId;
+      setEquipField(player, slotType, targetItemId);
+
+      // Replace the inventory slot with the previously equipped item
+      const newSlot = new InventorySlotState();
+      newSlot.itemId = currentlyEquipped;
+      newSlot.quantity = 1;
+      player.inventory.splice(targetIndex, 1, newSlot);
+    } else {
+      // Target item doesn't fit equip slot — just unequip to end of inventory
+      if (player.inventory.length >= INVENTORY_MAX_SLOTS) return false;
+      setEquipField(player, slotType, '');
+      const slot = new InventorySlotState();
+      slot.itemId = currentlyEquipped;
+      slot.quantity = 1;
+      player.inventory.push(slot);
+    }
+  } else {
+    // Target is an empty slot or out of range — unequip to end
+    if (player.inventory.length >= INVENTORY_MAX_SLOTS) return false;
+    setEquipField(player, slotType, '');
+    const slot = new InventorySlotState();
+    slot.itemId = currentlyEquipped;
+    slot.quantity = 1;
+    player.inventory.push(slot);
+  }
 
   return true;
 }

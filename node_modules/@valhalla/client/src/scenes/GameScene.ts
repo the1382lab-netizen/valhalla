@@ -100,6 +100,20 @@ export class GameScene extends Phaser.Scene {
   private charStatTexts: Phaser.GameObjects.Text[] = [];
   private charBarsGfx!: Phaser.GameObjects.Graphics;
 
+  // Drag-and-drop state
+  private dragging: boolean = false;
+  private dragSource: { type: 'inventory' | 'equipment'; index?: number; slotType?: string } | null = null;
+  private dragGhost!: Phaser.GameObjects.Text;
+  private dragGhostBg!: Phaser.GameObjects.Rectangle;
+  // Cached panel positions for hit-testing
+  private panelStartX: number = 0;
+  private panelY: number = 0;
+  private invX: number = 0;
+  private charX: number = 0;
+  private highlightGfx!: Phaser.GameObjects.Graphics;
+  // Equipment slot Y positions for hit-testing (screen coords)
+  private equipSlotYPositions: number[] = [];
+
   constructor() {
     super({ key: 'GameScene' });
   }
@@ -237,6 +251,7 @@ export class GameScene extends Phaser.Scene {
           player.y,
           player.classId ?? 'warrior',
           player.level ?? 1,
+          player.characterName ?? '',
         );
       }
     };
@@ -509,11 +524,11 @@ export class GameScene extends Phaser.Scene {
     return this.INV_COLS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 16;
   }
 
-  private get invPanelH(): number {
-    return this.INV_ROWS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 48;
-  }
+  private readonly PANEL_H = 340;
 
-  private readonly CHAR_PANEL_H = 340;
+  private get invPanelH(): number {
+    return this.PANEL_H;
+  }
 
   private get totalPanelW(): number {
     return this.CHAR_PANEL_W + this.PANEL_GAP + this.invPanelW;
@@ -535,16 +550,22 @@ export class GameScene extends Phaser.Scene {
     this.invContainer.add(dimBg);
 
     // Panel positions — both centered together, using the taller panel for vertical centering
-    const maxPanelH = Math.max(this.CHAR_PANEL_H, this.invPanelH);
+    const maxPanelH = Math.max(this.PANEL_H, this.invPanelH);
     const startX = Math.floor((cam.width - this.totalPanelW) / 2);
     const panelY = Math.floor((cam.height - maxPanelH) / 2);
     const charX = startX;
     const invX = startX + this.CHAR_PANEL_W + this.PANEL_GAP;
 
+    // Cache for drag-and-drop hit testing
+    this.panelStartX = startX;
+    this.panelY = panelY;
+    this.invX = invX;
+    this.charX = charX;
+
     // ── Character Panel Background ──
     const charBg = this.add.rectangle(
-      charX + this.CHAR_PANEL_W / 2, panelY + this.CHAR_PANEL_H / 2,
-      this.CHAR_PANEL_W, this.CHAR_PANEL_H,
+      charX + this.CHAR_PANEL_W / 2, panelY + this.PANEL_H / 2,
+      this.CHAR_PANEL_W, this.PANEL_H,
       0x1a1a2e, 0.95,
     );
     charBg.setStrokeStyle(2, 0x555588);
@@ -575,7 +596,7 @@ export class GameScene extends Phaser.Scene {
     });
     this.invContainer.add(this.invTitleText);
 
-    // Inventory slot texts
+    // Inventory slot texts (no zones — we use scene-level pointer hit testing)
     this.invSlotTexts = [];
     this.invQtyTexts = [];
     for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
@@ -616,6 +637,31 @@ export class GameScene extends Phaser.Scene {
       wordWrap: { width: this.totalPanelW },
     });
     this.invContainer.add(this.invTooltipText);
+
+    // Highlight graphics for drag hover
+    this.highlightGfx = this.add.graphics();
+    this.invContainer.add(this.highlightGfx);
+
+    // Drag ghost (hidden by default)
+    this.dragGhostBg = this.add.rectangle(0, 0, 52, 28, 0x000000, 0.85);
+    this.dragGhostBg.setStrokeStyle(1, 0xffcc00);
+    this.dragGhostBg.setVisible(false);
+    this.dragGhostBg.setDepth(999);
+    this.invContainer.add(this.dragGhostBg);
+
+    this.dragGhost = this.add.text(0, 0, '', {
+      fontSize: '11px',
+      color: '#ffcc00',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.dragGhost.setOrigin(0.5, 0.5);
+    this.dragGhost.setVisible(false);
+    this.dragGhost.setDepth(1000);
+    this.invContainer.add(this.dragGhost);
+
+    // Setup drag-and-drop input handlers
+    this.setupDragAndDrop();
   }
 
   private createCharacterPanelContent(charX: number, panelY: number): void {
@@ -656,7 +702,9 @@ export class GameScene extends Phaser.Scene {
 
     const slotLabels = ['Weapon', 'Helm', 'Chest', 'Legs', 'Boots', 'Ring'];
     this.charEquipTexts = [];
-    for (const label of slotLabels) {
+    this.equipSlotYPositions = [];
+    for (let i = 0; i < slotLabels.length; i++) {
+      const label = slotLabels[i];
       const slotLabel = this.add.text(x, y, `${label}:`, {
         fontSize: '10px',
         color: '#888888',
@@ -673,6 +721,10 @@ export class GameScene extends Phaser.Scene {
       });
       this.invContainer.add(itemText);
       this.charEquipTexts.push(itemText);
+
+      // Track Y position for hit testing
+      this.equipSlotYPositions.push(y);
+
       y += 14;
     }
 
@@ -732,6 +784,284 @@ export class GameScene extends Phaser.Scene {
       }
 
       y += 14;
+    }
+  }
+
+  // ── Drag-and-Drop ─────────────────────────────────────────
+
+  private setupDragAndDrop(): void {
+    // All drag-and-drop uses scene-level pointer events with manual hit testing.
+    // This avoids the Phaser container + zone interaction bug.
+
+    // Pointerdown — start drag if clicking on an item slot
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (!this.inventoryOpen) return;
+
+      const px = pointer.x;
+      const py = pointer.y;
+
+      // Check inventory slot
+      const invSlot = this.getInventorySlotAt(px, py);
+      if (invSlot >= 0) {
+        const item = this.inventoryItems[invSlot];
+        if (item) {
+          const template = ITEM_CATALOG[item.itemId as ItemId];
+          if (template) {
+            this.startDrag(
+              { type: 'inventory', index: invSlot },
+              template.name,
+              RARITY_COLORS[template.rarity] ?? '#ffffff',
+            );
+            return;
+          }
+        }
+      }
+
+      // Check equipment slot
+      const equipSlot = this.getEquipSlotAt(px, py);
+      if (equipSlot) {
+        const equippedId = this.localEquipment[equipSlot] || '';
+        if (equippedId) {
+          const template = ITEM_CATALOG[equippedId as ItemId];
+          if (template) {
+            this.startDrag(
+              { type: 'equipment', slotType: equipSlot },
+              template.name,
+              RARITY_COLORS[template.rarity] ?? '#ffffff',
+            );
+          }
+        }
+      }
+    });
+
+    // Pointermove — update drag ghost position + hover tooltips
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!this.inventoryOpen) return;
+
+      const px = pointer.x;
+      const py = pointer.y;
+
+      if (this.dragging) {
+        this.dragGhost.setPosition(px + 16, py);
+        this.dragGhostBg.setPosition(px + 16, py);
+        this.updateDragHighlight(px, py);
+      } else {
+        // Hover tooltip
+        this.updateHoverTooltip(px, py);
+      }
+    });
+
+    // Pointerup — handle drop
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      if (!this.dragging || !this.dragSource) return;
+      this.handleDrop(pointer.x, pointer.y);
+      this.endDrag();
+    });
+  }
+
+  /**
+   * Update tooltip text based on what slot the pointer is hovering.
+   */
+  private updateHoverTooltip(px: number, py: number): void {
+    // Check inventory slot
+    const invSlot = this.getInventorySlotAt(px, py);
+    if (invSlot >= 0) {
+      const item = this.inventoryItems[invSlot];
+      if (item) {
+        const t = ITEM_CATALOG[item.itemId as ItemId];
+        if (t) {
+          this.invTooltipText.setText(`${t.name} — ${t.description}`);
+          return;
+        }
+      }
+    }
+
+    // Check equipment slot
+    const equipSlot = this.getEquipSlotAt(px, py);
+    if (equipSlot) {
+      const equippedId = this.localEquipment[equipSlot] || '';
+      if (equippedId) {
+        const t = ITEM_CATALOG[equippedId as ItemId];
+        if (t) {
+          this.invTooltipText.setText(`${t.name} — ${t.description}`);
+          return;
+        }
+      }
+    }
+
+    // Default tooltip
+    if (this.inventoryItems.length === 0) {
+      this.invTooltipText.setText('Your inventory is empty.');
+    } else {
+      this.invTooltipText.setText('Drag items to move, equip, or drop on ground.');
+    }
+  }
+
+  private startDrag(
+    source: { type: 'inventory' | 'equipment'; index?: number; slotType?: string },
+    itemName: string,
+    color: string,
+  ): void {
+    this.dragging = true;
+    this.dragSource = source;
+
+    const abbr = itemName.length > 8 ? itemName.slice(0, 7) + '.' : itemName;
+    this.dragGhost.setText(abbr);
+    this.dragGhost.setColor(color);
+    this.dragGhost.setVisible(true);
+
+    // Size the background to fit the text
+    const textWidth = Math.max(this.dragGhost.width + 12, 52);
+    this.dragGhostBg.setSize(textWidth, 22);
+    this.dragGhostBg.setVisible(true);
+  }
+
+  private endDrag(): void {
+    this.dragging = false;
+    this.dragSource = null;
+    this.dragGhost.setVisible(false);
+    this.dragGhostBg.setVisible(false);
+    this.highlightGfx.clear();
+  }
+
+  /**
+   * Get the inventory slot index at a given screen position, or -1 if none.
+   */
+  private getInventorySlotAt(px: number, py: number): number {
+    for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
+      const col = i % this.INV_COLS;
+      const row = Math.floor(i / this.INV_COLS);
+      const sx = this.invX + this.SLOT_GAP + 8 + col * (this.SLOT_SIZE + this.SLOT_GAP);
+      const sy = this.panelY + 36 + this.SLOT_GAP + row * (this.SLOT_SIZE + this.SLOT_GAP);
+
+      if (px >= sx && px <= sx + this.SLOT_SIZE && py >= sy && py <= sy + this.SLOT_SIZE) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Get the equipment slot type at a given screen position, or null if none.
+   */
+  private getEquipSlotAt(px: number, py: number): string | null {
+    const slotTypes = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+    const rowH = 14;
+    for (let i = 0; i < this.equipSlotYPositions.length; i++) {
+      const slotY = this.equipSlotYPositions[i];
+      if (px >= this.charX + 5 && px <= this.charX + this.CHAR_PANEL_W - 5 &&
+          py >= slotY - 2 && py <= slotY + rowH) {
+        return slotTypes[i];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Check if a point is inside either panel.
+   */
+  private isInsidePanels(px: number, py: number): boolean {
+    // Character panel bounds
+    if (px >= this.charX && px <= this.charX + this.CHAR_PANEL_W &&
+        py >= this.panelY && py <= this.panelY + this.PANEL_H) {
+      return true;
+    }
+    // Inventory panel bounds
+    if (px >= this.invX && px <= this.invX + this.invPanelW &&
+        py >= this.panelY && py <= this.panelY + this.invPanelH) {
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Draw a highlight rectangle over the slot being hovered during drag.
+   */
+  private updateDragHighlight(px: number, py: number): void {
+    this.highlightGfx.clear();
+
+    // Check inventory slot hover
+    const invSlot = this.getInventorySlotAt(px, py);
+    if (invSlot >= 0) {
+      const col = invSlot % this.INV_COLS;
+      const row = Math.floor(invSlot / this.INV_COLS);
+      const sx = this.invX + this.SLOT_GAP + 8 + col * (this.SLOT_SIZE + this.SLOT_GAP);
+      const sy = this.panelY + 36 + this.SLOT_GAP + row * (this.SLOT_SIZE + this.SLOT_GAP);
+
+      this.highlightGfx.lineStyle(2, 0xffcc00, 0.9);
+      this.highlightGfx.strokeRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
+      this.highlightGfx.fillStyle(0xffcc00, 0.15);
+      this.highlightGfx.fillRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
+      return;
+    }
+
+    // Check equip slot hover
+    const equipSlot = this.getEquipSlotAt(px, py);
+    if (equipSlot) {
+      const slotTypes = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+      const idx = slotTypes.indexOf(equipSlot);
+      if (idx >= 0) {
+        const slotY = this.equipSlotYPositions[idx];
+        const rx = this.charX + 5;
+        const ry = slotY - 2;
+        const rw = this.CHAR_PANEL_W - 10;
+        const rh = 14;
+        this.highlightGfx.lineStyle(2, 0xffcc00, 0.9);
+        this.highlightGfx.strokeRect(rx, ry, rw, rh);
+        this.highlightGfx.fillStyle(0xffcc00, 0.15);
+        this.highlightGfx.fillRect(rx, ry, rw, rh);
+      }
+      return;
+    }
+
+    // If outside panels — show red drop indicator
+    if (!this.isInsidePanels(px, py)) {
+      this.dragGhostBg.setStrokeStyle(1, 0xff4444);
+    } else {
+      this.dragGhostBg.setStrokeStyle(1, 0xffcc00);
+    }
+  }
+
+  /**
+   * Handle the drop action based on where the pointer was released.
+   */
+  private handleDrop(px: number, py: number): void {
+    if (!this.dragSource) return;
+
+    const targetInvSlot = this.getInventorySlotAt(px, py);
+    const targetEquipSlot = this.getEquipSlotAt(px, py);
+    const insidePanels = this.isInsidePanels(px, py);
+
+    if (this.dragSource.type === 'inventory') {
+      const fromIndex = this.dragSource.index!;
+
+      if (targetEquipSlot) {
+        // Inventory → Equipment: equip the item
+        // Check if the item matches the target equip slot
+        const item = this.inventoryItems[fromIndex];
+        if (item) {
+          const template = ITEM_CATALOG[item.itemId as ItemId];
+          if (template?.equipSlot === targetEquipSlot) {
+            this.network.sendEquipItem(fromIndex);
+          }
+        }
+      } else if (targetInvSlot >= 0 && targetInvSlot !== fromIndex) {
+        // Inventory → Inventory: swap slots
+        this.network.sendSwapInventory(fromIndex, targetInvSlot);
+      } else if (!insidePanels) {
+        // Inventory → Ground: drop item
+        this.network.sendDropItem('inventory', fromIndex);
+      }
+    } else if (this.dragSource.type === 'equipment') {
+      const slotType = this.dragSource.slotType!;
+
+      if (targetInvSlot >= 0) {
+        // Equipment → Inventory: unequip to specific slot
+        this.network.sendUnequipItem(slotType, targetInvSlot);
+      } else if (!insidePanels) {
+        // Equipment → Ground: drop equipped item
+        this.network.sendDropItem('equipment', undefined, slotType);
+      }
     }
   }
 
@@ -846,10 +1176,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   private renderInventorySlots(): void {
-    const cam = this.cameras.main;
-    const startX = Math.floor((cam.width - this.totalPanelW) / 2);
-    const panelY = Math.floor((cam.height - this.invPanelH) / 2);
-    const invX = startX + this.CHAR_PANEL_W + this.PANEL_GAP;
+    // Use cached panel positions (set in createInventoryPanel)
+    const invX = this.invX;
+    const panelY = this.panelY;
 
     this.panelGfx.clear();
 
@@ -887,15 +1216,11 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Tooltip
-    if (this.inventoryItems.length > 0) {
-      const first = this.inventoryItems[0];
-      const t = ITEM_CATALOG[first.itemId as ItemId];
-      if (t) {
-        this.invTooltipText.setText(`${t.name} — ${t.description}`);
-      }
-    } else {
+    // Tooltip — shows on hover via zones; default message
+    if (this.inventoryItems.length === 0) {
       this.invTooltipText.setText('Your inventory is empty.');
+    } else {
+      this.invTooltipText.setText('Drag items to move, equip, or drop on ground.');
     }
   }
 

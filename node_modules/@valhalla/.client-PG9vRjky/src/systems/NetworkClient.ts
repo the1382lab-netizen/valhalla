@@ -64,6 +64,10 @@ export class NetworkClient {
   onDodged: ((data: CombatFeedbackData) => void) | null = null;
   onBlocked: ((data: CombatFeedbackData) => void) | null = null;
 
+  // Inventory & equipment callbacks
+  onInventoryChange: ((inventory: any[]) => void) | null = null;
+  onEquipmentChange: ((equipment: Record<string, string>) => void) | null = null;
+
   constructor() {
     this.client = new Client(SERVER_URL);
   }
@@ -72,7 +76,7 @@ export class NetworkClient {
     return this.room?.sessionId;
   }
 
-  async connect(options?: { classId?: string }): Promise<void> {
+  async connect(options?: { characterId?: number; token?: string }): Promise<void> {
     try {
       this.room = await this.client.joinOrCreate(ROOM_NAME, options);
       console.log(`[Network] Connected as ${this.room.sessionId}`);
@@ -117,11 +121,53 @@ export class NetworkClient {
 
       callbacks.onAdd('players', (player: any, key: any) => {
         const sessionId = key as string;
+        const isLocal = sessionId === this.room?.sessionId;
+
         this.onPlayerAdd?.(player, sessionId);
+
+        // Helpers for local player sync
+        const fireInventoryChange = isLocal ? () => {
+          if (!player.inventory) return;
+          const items: any[] = [];
+          for (let i = 0; i < player.inventory.length; i++) {
+            const slot = player.inventory[i];
+            items.push({ itemId: slot.itemId, quantity: slot.quantity });
+          }
+          this.onInventoryChange?.(items);
+        } : null;
+
+        const fireEquipmentChange = isLocal ? () => {
+          this.onEquipmentChange?.({
+            weapon: player.equipWeapon ?? '',
+            helm: player.equipHelm ?? '',
+            chest: player.equipChest ?? '',
+            legs: player.equipLegs ?? '',
+            boots: player.equipBoots ?? '',
+            ring: player.equipRing ?? '',
+          });
+        } : null;
 
         callbacks.onChange(player, () => {
           this.onPlayerChange?.(player, sessionId);
+          // Equipment fields are regular schema props — onChange fires for them
+          fireEquipmentChange?.();
         });
+
+        if (isLocal) {
+          // Fire once immediately with current state
+          fireInventoryChange!();
+          fireEquipmentChange!();
+
+          // Listen for add/remove on the inventory ArraySchema
+          if (player.inventory) {
+            callbacks.onAdd(player.inventory, () => {
+              fireInventoryChange!();
+            });
+            callbacks.onRemove(player.inventory, () => {
+              fireInventoryChange!();
+            });
+          }
+        }
       });
 
       callbacks.onRemove('players', (_player: any, key: any) => {
@@ -149,6 +195,14 @@ export class NetworkClient {
 
   sendInput(input: InputPayload): void {
     this.room?.send(MessageType.INPUT, input);
+  }
+
+  sendEquipItem(slotIndex: number): void {
+    this.room?.send(MessageType.EQUIP_ITEM, { slotIndex });
+  }
+
+  sendUnequipItem(slotType: string): void {
+    this.room?.send(MessageType.UNEQUIP_ITEM, { slotType });
   }
 
   disconnect(): void {

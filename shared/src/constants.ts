@@ -41,3 +41,11 @@ export const SERVER_URL =
     ? `http://${window.location.hostname}:2567`
     : 'http://localhost:2567';
 export const ROOM_NAME = 'game_room';
+
+// ── Persistence & Auth ────────────────────────────────────
+export const SAVE_INTERVAL_MS = 30_000;    // auto-save every 30 seconds
+export const JWT_EXPIRY = '24h';           // token lifetime
+export const MIN_USERNAME_LENGTH = 3;
+export const MAX_USERNAME_LENGTH = 20;
+export const MIN_PASSWORD_LENGTH = 6;
+export const MAX_CHARACTERS_PER_USER = 4;

@@ -63,4 +63,7 @@ export enum MessageType {
   MISSED = 'missed',
   DODGED = 'dodged',
   BLOCKED = 'blocked',
+  INVENTORY_ACTION = 'inventoryAction',
+  EQUIP_ITEM = 'equipItem',
+  UNEQUIP_ITEM = 'unequipItem',
 }

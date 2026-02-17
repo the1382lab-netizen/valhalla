@@ -1,6 +1,6 @@
 import { Room, Client } from '@colyseus/core';
 import { GameState } from '../schema/GameState.js';
-import { PlayerState } from '../schema/PlayerState.js';
+import { PlayerState, InventorySlotState } from '../schema/PlayerState.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem, CombatEvent } from '../systems/CombatSystem.js';
@@ -10,15 +10,37 @@ import {
   TILE_SIZE,
   SERVER_TICK_RATE,
   ClassId,
-  ALL_CLASS_IDS,
+  EquipSlotType,
+  SAVE_INTERVAL_MS,
   computeDerivedStats,
 } from '@valhalla/shared';
+import { equipItem, unequipItem } from '../systems/InventorySystem.js';
+import { verifyToken, JwtPayload } from '../services/AuthService.js';
+import {
+  loadCharacter,
+  saveCharacter,
+  LoadedCharacter,
+  SaveCharacterData,
+} from '../services/CharacterService.js';
+
+/** Tracking data per connected session. */
+interface SessionData {
+  characterId: number;
+  userId: number;
+  username: string;
+}
 
 export class GameRoom extends Room<{ state: GameState }> {
   private collision!: CollisionSystem;
   private movement!: MovementSystem;
   private combat!: CombatSystem;
   private inputQueues: Map<string, InputPayload[]> = new Map();
+
+  /** Maps sessionId → persistent character data for save/load. */
+  private sessionData: Map<string, SessionData> = new Map();
+
+  /** Interval handle for periodic saves. */
+  private saveInterval: ReturnType<typeof setInterval> | null = null;
 
   onCreate(): void {
     this.setState(new GameState());
@@ -28,6 +50,9 @@ export class GameRoom extends Room<{ state: GameState }> {
 
     // Set the simulation interval (server tick)
     this.setSimulationInterval((dt) => this.update(dt), 1000 / SERVER_TICK_RATE);
+
+    // Periodic save — every 30 seconds, persist all active players
+    this.saveInterval = setInterval(() => this.saveAllPlayers(), SAVE_INTERVAL_MS);
 
     // Listen for player input messages
     this.onMessage(MessageType.INPUT, (client: Client, input: InputPayload) => {
@@ -40,34 +65,135 @@ export class GameRoom extends Room<{ state: GameState }> {
       }
     });
 
-    console.log(`[GameRoom] Room created. Tick rate: ${SERVER_TICK_RATE}Hz`);
+    // Listen for equip/unequip messages
+    this.onMessage(MessageType.EQUIP_ITEM, (client: Client, data: { slotIndex: number }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player && player.alive) {
+        equipItem(player, data.slotIndex);
+      }
+    });
+
+    this.onMessage(MessageType.UNEQUIP_ITEM, (client: Client, data: { slotType: string }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (player && player.alive) {
+        unequipItem(player, data.slotType as EquipSlotType);
+      }
+    });
+
+    console.log(`[GameRoom] Room created. Tick rate: ${SERVER_TICK_RATE}Hz, Save interval: ${SAVE_INTERVAL_MS / 1000}s`);
   }
 
-  onJoin(client: Client, options?: { classId?: string }): void {
-    console.log(`[GameRoom] Player joined: ${client.sessionId}`);
-
-    // Validate class selection, default to warrior
-    let classId = ClassId.WARRIOR;
-    if (options?.classId && ALL_CLASS_IDS.includes(options.classId as ClassId)) {
-      classId = options.classId as ClassId;
+  /**
+   * Colyseus auth hook — validates JWT before allowing the client to join.
+   * Returned value is stored on client.auth.
+   */
+  async onAuth(client: Client, options: { token?: string; characterId?: number }): Promise<JwtPayload> {
+    if (!options?.token) {
+      throw new Error('Authentication required.');
     }
 
+    const payload = verifyToken(options.token);
+    return payload;
+  }
+
+  onJoin(client: Client, options: { token?: string; characterId?: number }): void {
+    const auth = (client as any).auth as JwtPayload;
+    const characterId = options?.characterId;
+
+    if (!characterId) {
+      throw new Error('Character ID required.');
+    }
+
+    console.log(`[GameRoom] Player joining: ${auth.username} (user=${auth.userId}, char=${characterId})`);
+
+    // ── Duplicate login prevention ──
+    // If this user already has an active session, kick the old one
+    for (const [existingSessionId, data] of this.sessionData) {
+      if (data.userId === auth.userId) {
+        const existingClient = this.clients.find(c => c.sessionId === existingSessionId);
+        if (existingClient) {
+          console.log(`[GameRoom] Kicking duplicate session for user ${auth.userId}`);
+          existingClient.send('kicked', { reason: 'Logged in from another location.' });
+          existingClient.leave(4001); // Custom close code
+        }
+        // Clean up old session data
+        this.state.players.delete(existingSessionId);
+        this.inputQueues.delete(existingSessionId);
+        this.sessionData.delete(existingSessionId);
+        break;
+      }
+    }
+
+    // ── Load character from database ──
+    let charData: LoadedCharacter;
+    try {
+      charData = loadCharacter(characterId, auth.userId);
+    } catch (err: any) {
+      throw new Error(`Failed to load character: ${err.message}`);
+    }
+
+    // ── Build PlayerState from loaded data ──
     const player = new PlayerState();
     player.id = client.sessionId;
-    player.classId = classId;
-    player.level = 1;
-    player.xp = 0;
+    player.classId = charData.classId;
+    player.level = charData.level;
+    player.xp = charData.xp;
 
     // Compute stats from class + level
-    this.applyStats(player);
+    const stats = computeDerivedStats(charData.classId as ClassId, charData.level);
+    player.stats = stats;
+    player.maxHp = stats.maxHp;
+    player.maxMana = stats.maxMana;
+    player.speed = stats.speed;
 
-    // Spawn in the middle of the map (avoiding walls)
-    player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
-    player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
-    player.alive = true;
+    // Restore vitals (clamped to max)
+    player.hp = Math.min(charData.hp, stats.maxHp);
+    player.mana = Math.min(charData.mana, stats.maxMana);
+    player.alive = charData.alive;
 
+    // Restore position
+    player.x = charData.positionX;
+    player.y = charData.positionY;
+
+    // If the character was dead, respawn them fresh
+    if (!player.alive) {
+      player.alive = true;
+      player.hp = stats.maxHp;
+      player.mana = stats.maxMana;
+      player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
+      player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
+    }
+
+    // ── Restore equipment ──
+    for (const equip of charData.equipment) {
+      switch (equip.slotType) {
+        case EquipSlotType.WEAPON: player.equipWeapon = equip.itemId; break;
+        case EquipSlotType.HELM:   player.equipHelm = equip.itemId;   break;
+        case EquipSlotType.CHEST:  player.equipChest = equip.itemId;  break;
+        case EquipSlotType.LEGS:   player.equipLegs = equip.itemId;   break;
+        case EquipSlotType.BOOTS:  player.equipBoots = equip.itemId;  break;
+        case EquipSlotType.RING:   player.equipRing = equip.itemId;   break;
+      }
+    }
+
+    // ── Restore inventory ──
+    // Sort by slotIndex to maintain order
+    const sortedInv = [...charData.inventory].sort((a, b) => a.slotIndex - b.slotIndex);
+    for (const slot of sortedInv) {
+      const invSlot = new InventorySlotState();
+      invSlot.itemId = slot.itemId;
+      invSlot.quantity = slot.quantity;
+      player.inventory.push(invSlot);
+    }
+
+    // Register player in room state
     this.state.players.set(client.sessionId, player);
     this.inputQueues.set(client.sessionId, []);
+    this.sessionData.set(client.sessionId, {
+      characterId,
+      userId: auth.userId,
+      username: auth.username,
+    });
 
     // Send collision grid to the client so it can do client-side prediction
     client.send('collisionGrid', {
@@ -77,18 +203,29 @@ export class GameRoom extends Room<{ state: GameState }> {
       tileSize: TILE_SIZE,
     });
 
-    console.log(`[GameRoom] Player ${client.sessionId} joined as ${classId} (Lv.${player.level}, HP:${player.maxHp}, Mana:${player.maxMana}, Speed:${player.speed})`);
+    console.log(`[GameRoom] Player ${auth.username} joined as ${charData.classId} "${charData.name}" (Lv.${player.level}, HP:${player.hp}/${player.maxHp})`);
   }
 
   onLeave(client: Client): void {
-    console.log(`[GameRoom] Player left: ${client.sessionId}`);
+    const data = this.sessionData.get(client.sessionId);
+
+    // Save character state on disconnect
+    if (data) {
+      const player = this.state.players.get(client.sessionId);
+      if (player) {
+        this.savePlayer(client.sessionId, player, data.characterId);
+        console.log(`[GameRoom] Saved and disconnected: ${data.username} (char=${data.characterId})`);
+      }
+    }
+
     this.state.players.delete(client.sessionId);
     this.inputQueues.delete(client.sessionId);
+    this.sessionData.delete(client.sessionId);
   }
 
   /**
    * Compute and apply derived stats from class + level.
-   * Call this on join, level-up, and (later) gear changes.
+   * Call this on level-up and (later) gear changes.
    */
   applyStats(player: PlayerState): void {
     const stats = computeDerivedStats(player.classId as ClassId, player.level);
@@ -167,7 +304,78 @@ export class GameRoom extends Room<{ state: GameState }> {
     }
   }
 
+  // ── Persistence Helpers ──────────────────────────────────
+
+  /**
+   * Extract current player state and save to database.
+   */
+  private savePlayer(sessionId: string, player: PlayerState, characterId: number): void {
+    try {
+      // Build inventory data from ArraySchema
+      const inventory = [];
+      for (let i = 0; i < player.inventory.length; i++) {
+        const slot = player.inventory[i];
+        inventory.push({
+          slotIndex: i,
+          itemId: slot.itemId,
+          quantity: slot.quantity,
+        });
+      }
+
+      // Build equipment data
+      const equipment = [];
+      if (player.equipWeapon) equipment.push({ slotType: EquipSlotType.WEAPON, itemId: player.equipWeapon });
+      if (player.equipHelm)   equipment.push({ slotType: EquipSlotType.HELM,   itemId: player.equipHelm });
+      if (player.equipChest)  equipment.push({ slotType: EquipSlotType.CHEST,  itemId: player.equipChest });
+      if (player.equipLegs)   equipment.push({ slotType: EquipSlotType.LEGS,   itemId: player.equipLegs });
+      if (player.equipBoots)  equipment.push({ slotType: EquipSlotType.BOOTS,  itemId: player.equipBoots });
+      if (player.equipRing)   equipment.push({ slotType: EquipSlotType.RING,   itemId: player.equipRing });
+
+      const data: SaveCharacterData = {
+        hp: player.hp,
+        mana: player.mana,
+        xp: player.xp,
+        level: player.level,
+        positionX: player.x,
+        positionY: player.y,
+        alive: player.alive,
+        inventory,
+        equipment,
+      };
+
+      saveCharacter(characterId, data);
+    } catch (err: any) {
+      console.error(`[GameRoom] Failed to save player ${sessionId}: ${err.message}`);
+    }
+  }
+
+  /**
+   * Save all connected players. Called periodically by the save interval.
+   */
+  private saveAllPlayers(): void {
+    let saved = 0;
+    this.state.players.forEach((player, sessionId) => {
+      const data = this.sessionData.get(sessionId);
+      if (data) {
+        this.savePlayer(sessionId, player, data.characterId);
+        saved++;
+      }
+    });
+    if (saved > 0) {
+      console.log(`[GameRoom] Periodic save: ${saved} player(s) saved.`);
+    }
+  }
+
   onDispose(): void {
+    // Save all players on room dispose
+    this.saveAllPlayers();
+
+    // Clear the save interval
+    if (this.saveInterval) {
+      clearInterval(this.saveInterval);
+      this.saveInterval = null;
+    }
+
     console.log('[GameRoom] Room disposed.');
   }
 }

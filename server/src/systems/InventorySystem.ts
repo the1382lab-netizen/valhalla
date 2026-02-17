@@ -1,0 +1,185 @@
+/**
+ * Stateless inventory helper functions.
+ * Operates on a PlayerState's inventory ArraySchema.
+ */
+
+import {
+  INVENTORY_MAX_SLOTS,
+  ITEM_CATALOG,
+  ItemId,
+  EquipSlotType,
+} from '@valhalla/shared';
+import { InventorySlotState } from '../schema/PlayerState.js';
+import type { PlayerState } from '../schema/PlayerState.js';
+
+/**
+ * Add an item to a player's inventory.
+ * Stacks onto existing slots if the item is stackable, otherwise uses the first empty slot.
+ * @returns true if the item was added, false if inventory is full.
+ */
+export function addItem(player: PlayerState, itemId: ItemId, qty: number = 1): boolean {
+  const template = ITEM_CATALOG[itemId];
+  if (!template) return false;
+
+  let remaining = qty;
+
+  // If stackable, try to fill existing stacks first
+  if (template.stackable) {
+    for (let i = 0; i < player.inventory.length && remaining > 0; i++) {
+      const slot = player.inventory[i];
+      if (slot.itemId === itemId && slot.quantity < template.maxStack) {
+        const canAdd = Math.min(remaining, template.maxStack - slot.quantity);
+        slot.quantity += canAdd;
+        remaining -= canAdd;
+      }
+    }
+  }
+
+  // Place remaining into empty slots
+  while (remaining > 0) {
+    if (player.inventory.length >= INVENTORY_MAX_SLOTS) {
+      return false; // Inventory full
+    }
+
+    const slot = new InventorySlotState();
+    slot.itemId = itemId;
+
+    if (template.stackable) {
+      const toAdd = Math.min(remaining, template.maxStack);
+      slot.quantity = toAdd;
+      remaining -= toAdd;
+    } else {
+      slot.quantity = 1;
+      remaining -= 1;
+    }
+
+    player.inventory.push(slot);
+  }
+
+  return true;
+}
+
+/**
+ * Remove a quantity of items from a specific inventory slot.
+ * If quantity reaches 0, the slot is removed from the array.
+ * @returns true if the removal succeeded, false if slot doesn't exist or insufficient quantity.
+ */
+export function removeItem(player: PlayerState, slotIndex: number, qty: number = 1): boolean {
+  if (slotIndex < 0 || slotIndex >= player.inventory.length) return false;
+
+  const slot = player.inventory[slotIndex];
+  if (slot.quantity < qty) return false;
+
+  slot.quantity -= qty;
+  if (slot.quantity <= 0) {
+    player.inventory.splice(slotIndex, 1);
+  }
+
+  return true;
+}
+
+/**
+ * Check whether a player has at least one of a given item.
+ */
+export function hasItem(player: PlayerState, itemId: ItemId): boolean {
+  for (let i = 0; i < player.inventory.length; i++) {
+    if (player.inventory[i].itemId === itemId) return true;
+  }
+  return false;
+}
+
+/**
+ * Count the total quantity of a given item across all inventory slots.
+ */
+export function getItemCount(player: PlayerState, itemId: ItemId): number {
+  let total = 0;
+  for (let i = 0; i < player.inventory.length; i++) {
+    if (player.inventory[i].itemId === itemId) {
+      total += player.inventory[i].quantity;
+    }
+  }
+  return total;
+}
+
+// ── Equipment Helpers ─────────────────────────────────────────
+
+/** Read the equipped itemId for a given slot type. */
+function getEquipField(player: PlayerState, slotType: EquipSlotType): string {
+  switch (slotType) {
+    case EquipSlotType.WEAPON: return player.equipWeapon;
+    case EquipSlotType.HELM:   return player.equipHelm;
+    case EquipSlotType.CHEST:  return player.equipChest;
+    case EquipSlotType.LEGS:   return player.equipLegs;
+    case EquipSlotType.BOOTS:  return player.equipBoots;
+    case EquipSlotType.RING:   return player.equipRing;
+    default: return '';
+  }
+}
+
+/** Set the equipped itemId for a given slot type. */
+function setEquipField(player: PlayerState, slotType: EquipSlotType, itemId: string): void {
+  switch (slotType) {
+    case EquipSlotType.WEAPON: player.equipWeapon = itemId; break;
+    case EquipSlotType.HELM:   player.equipHelm = itemId;   break;
+    case EquipSlotType.CHEST:  player.equipChest = itemId;  break;
+    case EquipSlotType.LEGS:   player.equipLegs = itemId;   break;
+    case EquipSlotType.BOOTS:  player.equipBoots = itemId;  break;
+    case EquipSlotType.RING:   player.equipRing = itemId;   break;
+  }
+}
+
+/**
+ * Equip an item from inventory.
+ * Removes it from the inventory slot and places it in the correct equip field.
+ * If something is already equipped in that slot, swaps it back into inventory.
+ * @returns true if the item was equipped successfully.
+ */
+export function equipItem(player: PlayerState, inventorySlotIndex: number): boolean {
+  if (inventorySlotIndex < 0 || inventorySlotIndex >= player.inventory.length) return false;
+
+  const slot = player.inventory[inventorySlotIndex];
+  const template = ITEM_CATALOG[slot.itemId as ItemId];
+  if (!template || !template.equipSlot) return false; // Not equippable
+
+  const slotType = template.equipSlot;
+  const currentlyEquipped = getEquipField(player, slotType);
+
+  // Remove item from inventory (always qty 1 for equipment)
+  player.inventory.splice(inventorySlotIndex, 1);
+
+  // If something was already equipped, put it back in inventory
+  if (currentlyEquipped) {
+    const returnSlot = new InventorySlotState();
+    returnSlot.itemId = currentlyEquipped;
+    returnSlot.quantity = 1;
+    player.inventory.push(returnSlot);
+  }
+
+  // Equip the new item
+  setEquipField(player, slotType, template.id);
+
+  return true;
+}
+
+/**
+ * Unequip an item and return it to inventory.
+ * @returns true if the item was unequipped successfully, false if inventory full or slot empty.
+ */
+export function unequipItem(player: PlayerState, slotType: EquipSlotType): boolean {
+  const currentlyEquipped = getEquipField(player, slotType);
+  if (!currentlyEquipped) return false; // Nothing equipped
+
+  // Check if inventory has room
+  if (player.inventory.length >= INVENTORY_MAX_SLOTS) return false;
+
+  // Move to inventory
+  const slot = new InventorySlotState();
+  slot.itemId = currentlyEquipped;
+  slot.quantity = 1;
+  player.inventory.push(slot);
+
+  // Clear equip slot
+  setEquipField(player, slotType, '');
+
+  return true;
+}

@@ -1,6 +1,17 @@
-import { Schema, defineTypes } from '@colyseus/schema';
+import { Schema, ArraySchema, defineTypes } from '@colyseus/schema';
 import { PLAYER_MAX_HP } from '@valhalla/shared';
 import type { ResolvedStats } from '@valhalla/shared';
+
+// ── Inventory Slot Schema (synced to client) ─────────────────
+export class InventorySlotState extends Schema {
+  itemId: string = '';
+  quantity: number = 1;
+}
+
+defineTypes(InventorySlotState, {
+  itemId: 'string',
+  quantity: 'uint8',
+});
 
 export class PlayerState extends Schema {
   id: string = '';
@@ -20,6 +31,17 @@ export class PlayerState extends Schema {
   mana: number = 0;
   maxMana: number = 0;
   alive: boolean = true;
+
+  // ── Equipment (synced) — empty string = nothing equipped ──
+  equipWeapon: string = '';
+  equipHelm: string = '';
+  equipChest: string = '';
+  equipLegs: string = '';
+  equipBoots: string = '';
+  equipRing: string = '';
+
+  // ── Inventory (synced) ───────────────────────────────
+  inventory: ArraySchema<InventorySlotState> = new ArraySchema<InventorySlotState>();
 
   // ── Server-only (not synced) ──────────────────────────
   inputSeq: number = 0;
@@ -51,4 +73,11 @@ defineTypes(PlayerState, {
   maxMana: 'int16',
   alive: 'boolean',
   inputSeq: 'uint32',
+  equipWeapon: 'string',
+  equipHelm: 'string',
+  equipChest: 'string',
+  equipLegs: 'string',
+  equipBoots: 'string',
+  equipRing: 'string',
+  inventory: [InventorySlotState],
 });

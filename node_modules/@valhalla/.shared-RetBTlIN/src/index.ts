@@ -3,3 +3,4 @@ export * from './types.js';
 export * from './utils.js';
 export * from './classes.js';
 export * from './stats.js';
+export * from './items.js';

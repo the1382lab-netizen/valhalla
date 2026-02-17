@@ -20,6 +20,13 @@ import {
   normalise,
   CLASS_TEMPLATES,
   ClassId,
+  ITEM_CATALOG,
+  RARITY_COLORS,
+  INVENTORY_MAX_SLOTS,
+  ItemId,
+  EquipSlotType,
+  computeDerivedStats,
+  xpRequiredForLevel,
 } from '@valhalla/shared';
 
 interface PendingInput {
@@ -76,13 +83,39 @@ export class GameScene extends Phaser.Scene {
   // Class selection (passed from ClassSelectScene)
   private selectedClassId: string = 'warrior';
 
+  // Inventory & Character Panel UI
+  private inventoryOpen: boolean = false;
+  private inventoryItems: { itemId: string; quantity: number }[] = [];
+  private localEquipment: Record<string, string> = { weapon: '', helm: '', chest: '', legs: '', boots: '', ring: '' };
+  private localXp: number = 0;
+  private invContainer!: Phaser.GameObjects.Container;
+  private panelGfx!: Phaser.GameObjects.Graphics;
+  private invSlotTexts: Phaser.GameObjects.Text[] = [];
+  private invQtyTexts: Phaser.GameObjects.Text[] = [];
+  private invTooltipText!: Phaser.GameObjects.Text;
+  private invTitleText!: Phaser.GameObjects.Text;
+  // Character panel elements
+  private charInfoText!: Phaser.GameObjects.Text;
+  private charEquipTexts: Phaser.GameObjects.Text[] = [];
+  private charStatTexts: Phaser.GameObjects.Text[] = [];
+  private charBarsGfx!: Phaser.GameObjects.Graphics;
+
   constructor() {
     super({ key: 'GameScene' });
   }
 
-  init(data?: { classId?: string }): void {
+  private characterId: number = 0;
+  private authToken: string = '';
+
+  init(data?: { classId?: string; characterId?: number; token?: string }): void {
     if (data?.classId) {
       this.selectedClassId = data.classId;
+    }
+    if (data?.characterId) {
+      this.characterId = data.characterId;
+    }
+    if (data?.token) {
+      this.authToken = data.token;
     }
   }
 
@@ -146,11 +179,22 @@ export class GameScene extends Phaser.Scene {
     this.classHudText.setScrollFactor(0);
     this.classHudText.setDepth(100);
 
+    // Create inventory panel (hidden initially)
+    this.createInventoryPanel();
+
+    // Inventory toggle key (I)
+    this.input.keyboard!.on('keydown-I', () => {
+      this.toggleInventory();
+    });
+
     // Setup network callbacks
     this.setupNetworkCallbacks();
 
-    // Connect with class selection
-    this.network.connect({ classId: this.selectedClassId }).catch((err) => {
+    // Connect with auth token and character ID
+    this.network.connect({
+      characterId: this.characterId,
+      token: this.authToken,
+    }).catch((err) => {
       this.statusText.setText('Connection failed — is the server running?');
       console.error(err);
     });
@@ -180,6 +224,7 @@ export class GameScene extends Phaser.Scene {
         this.localSpeed = player.speed ?? 200;
         this.localClassId = player.classId ?? 'warrior';
         this.localLevel = player.level ?? 1;
+        this.localXp = player.xp ?? 0;
         this.createLocalPlayer();
         this.connected = true;
         this.statusText.setText('WASD move | Mouse aim | Left-click shoot | Space melee');
@@ -205,6 +250,7 @@ export class GameScene extends Phaser.Scene {
         this.localMaxMana = player.maxMana ?? 0;
         this.localSpeed = player.speed ?? this.localSpeed;
         this.localLevel = player.level ?? this.localLevel;
+        this.localXp = player.xp ?? this.localXp;
         const wasAlive = this.localAlive;
         this.localAlive = player.alive;
 
@@ -297,6 +343,22 @@ export class GameScene extends Phaser.Scene {
     this.network.onBlocked = (data: CombatFeedbackData) => {
       const pos = this.getCombatTextPosition(data.targetId);
       if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'BLOCK', '#4488ff');
+    };
+
+    // Inventory sync
+    this.network.onInventoryChange = (items: any[]) => {
+      this.inventoryItems = items;
+      if (this.inventoryOpen) {
+        this.renderInventorySlots();
+      }
+    };
+
+    // Equipment sync
+    this.network.onEquipmentChange = (equipment: Record<string, string>) => {
+      this.localEquipment = equipment;
+      if (this.inventoryOpen) {
+        this.renderCharacterPanel();
+      }
     };
   }
 
@@ -433,6 +495,410 @@ export class GameScene extends Phaser.Scene {
     this.classHudText.setY(topBarY);
   }
 
+  // ── Inventory & Character Panel UI ───────────────────────
+
+  // Layout constants
+  private readonly INV_COLS = 8;
+  private readonly INV_ROWS = 4;
+  private readonly SLOT_SIZE = 48;
+  private readonly SLOT_GAP = 4;
+  private readonly CHAR_PANEL_W = 220;
+  private readonly PANEL_GAP = 8;
+
+  private get invPanelW(): number {
+    return this.INV_COLS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 16;
+  }
+
+  private get invPanelH(): number {
+    return this.INV_ROWS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 48;
+  }
+
+  private readonly CHAR_PANEL_H = 340;
+
+  private get totalPanelW(): number {
+    return this.CHAR_PANEL_W + this.PANEL_GAP + this.invPanelW;
+  }
+
+  private createInventoryPanel(): void {
+    const cam = this.cameras.main;
+    this.invContainer = this.add.container(0, 0);
+    this.invContainer.setScrollFactor(0);
+    this.invContainer.setDepth(300);
+    this.invContainer.setVisible(false);
+
+    // Shared graphics layer for both panels
+    this.panelGfx = this.add.graphics();
+    this.charBarsGfx = this.add.graphics();
+
+    // Fullscreen dim overlay
+    const dimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.4);
+    this.invContainer.add(dimBg);
+
+    // Panel positions — both centered together, using the taller panel for vertical centering
+    const maxPanelH = Math.max(this.CHAR_PANEL_H, this.invPanelH);
+    const startX = Math.floor((cam.width - this.totalPanelW) / 2);
+    const panelY = Math.floor((cam.height - maxPanelH) / 2);
+    const charX = startX;
+    const invX = startX + this.CHAR_PANEL_W + this.PANEL_GAP;
+
+    // ── Character Panel Background ──
+    const charBg = this.add.rectangle(
+      charX + this.CHAR_PANEL_W / 2, panelY + this.CHAR_PANEL_H / 2,
+      this.CHAR_PANEL_W, this.CHAR_PANEL_H,
+      0x1a1a2e, 0.95,
+    );
+    charBg.setStrokeStyle(2, 0x555588);
+    this.invContainer.add(charBg);
+
+    // ── Inventory Panel Background ──
+    const invBg = this.add.rectangle(
+      invX + this.invPanelW / 2, panelY + this.invPanelH / 2,
+      this.invPanelW, this.invPanelH,
+      0x1a1a2e, 0.95,
+    );
+    invBg.setStrokeStyle(2, 0x555588);
+    this.invContainer.add(invBg);
+
+    // Add graphics layers
+    this.invContainer.add(this.panelGfx);
+    this.invContainer.add(this.charBarsGfx);
+
+    // ── Build Character Panel ──
+    this.createCharacterPanelContent(charX, panelY);
+
+    // ── Build Inventory Panel ──
+    this.invTitleText = this.add.text(invX + 8, panelY + 8, 'Inventory', {
+      fontSize: '14px',
+      color: '#ffcc00',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.invContainer.add(this.invTitleText);
+
+    // Inventory slot texts
+    this.invSlotTexts = [];
+    this.invQtyTexts = [];
+    for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
+      const col = i % this.INV_COLS;
+      const row = Math.floor(i / this.INV_COLS);
+      const sx = invX + this.SLOT_GAP + 8 + col * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_SIZE / 2;
+      const sy = panelY + 36 + this.SLOT_GAP + row * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_SIZE / 2;
+
+      const nameText = this.add.text(sx, sy - 6, '', {
+        fontSize: '10px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 1,
+        align: 'center',
+      });
+      nameText.setOrigin(0.5, 0.5);
+      this.invContainer.add(nameText);
+      this.invSlotTexts.push(nameText);
+
+      const qtyText = this.add.text(sx + this.SLOT_SIZE / 2 - 6, sy + this.SLOT_SIZE / 2 - 10, '', {
+        fontSize: '10px',
+        color: '#ffff00',
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'right',
+      });
+      qtyText.setOrigin(1, 1);
+      this.invContainer.add(qtyText);
+      this.invQtyTexts.push(qtyText);
+    }
+
+    // Tooltip below both panels
+    this.invTooltipText = this.add.text(startX, panelY + maxPanelH + 8, '', {
+      fontSize: '12px',
+      color: '#cccccc',
+      stroke: '#000000',
+      strokeThickness: 2,
+      wordWrap: { width: this.totalPanelW },
+    });
+    this.invContainer.add(this.invTooltipText);
+  }
+
+  private createCharacterPanelContent(charX: number, panelY: number): void {
+    const x = charX + 10;
+    let y = panelY + 8;
+
+    // Title
+    const titleText = this.add.text(x, y, 'Character', {
+      fontSize: '14px',
+      color: '#ffcc00',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.invContainer.add(titleText);
+    y += 22;
+
+    // Class + Level + XP/HP/Mana info (one text block, updated dynamically)
+    this.charInfoText = this.add.text(x, y, '', {
+      fontSize: '11px',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 1,
+      lineSpacing: 4,
+    });
+    this.invContainer.add(this.charInfoText);
+    // charInfoText height depends on mana — reserve ~60px
+    y += 60;
+
+    // ── Equipment Section ──
+    const equipLabel = this.add.text(x, y, '── Equipment ──', {
+      fontSize: '10px',
+      color: '#aaaacc',
+      stroke: '#000000',
+      strokeThickness: 1,
+    });
+    this.invContainer.add(equipLabel);
+    y += 16;
+
+    const slotLabels = ['Weapon', 'Helm', 'Chest', 'Legs', 'Boots', 'Ring'];
+    this.charEquipTexts = [];
+    for (const label of slotLabels) {
+      const slotLabel = this.add.text(x, y, `${label}:`, {
+        fontSize: '10px',
+        color: '#888888',
+        stroke: '#000000',
+        strokeThickness: 1,
+      });
+      this.invContainer.add(slotLabel);
+
+      const itemText = this.add.text(x + 55, y, 'empty', {
+        fontSize: '10px',
+        color: '#555555',
+        stroke: '#000000',
+        strokeThickness: 1,
+      });
+      this.invContainer.add(itemText);
+      this.charEquipTexts.push(itemText);
+      y += 14;
+    }
+
+    y += 6;
+
+    // ── Stats Section ──
+    const statsLabel = this.add.text(x, y, '── Stats ──', {
+      fontSize: '10px',
+      color: '#aaaacc',
+      stroke: '#000000',
+      strokeThickness: 1,
+    });
+    this.invContainer.add(statsLabel);
+    y += 16;
+
+    // 2-column layout: 7 rows of 2 stats each
+    const statDefs: { label: string; key: string; pct?: boolean }[] = [
+      { label: 'STR', key: 'strength' },
+      { label: 'INT', key: 'intelligence' },
+      { label: 'STA', key: 'stamina' },
+      { label: 'WIS', key: 'wisdom' },
+      { label: 'DEX', key: 'dexterity' },
+      { label: 'P.Res', key: 'physicalResist' },
+      { label: 'Crit', key: 'critChance', pct: true },
+      { label: 'S.Res', key: 'spellResist' },
+      { label: 'CDmg', key: 'critDamage', pct: true },
+      { label: 'P.Def', key: 'physicalDefense' },
+      { label: 'Block', key: 'blockRating', pct: true },
+      { label: 'Dodge', key: 'dodgeRating', pct: true },
+      { label: 'HP', key: 'hp' },
+      { label: 'Mana', key: 'mana' },
+    ];
+
+    this.charStatTexts = [];
+    for (let i = 0; i < statDefs.length; i += 2) {
+      const col2X = x + 105;
+      // Left column
+      const leftText = this.add.text(x, y, '', {
+        fontSize: '10px',
+        color: '#cccccc',
+        stroke: '#000000',
+        strokeThickness: 1,
+      });
+      this.invContainer.add(leftText);
+      this.charStatTexts.push(leftText);
+
+      // Right column
+      if (i + 1 < statDefs.length) {
+        const rightText = this.add.text(col2X, y, '', {
+          fontSize: '10px',
+          color: '#cccccc',
+          stroke: '#000000',
+          strokeThickness: 1,
+        });
+        this.invContainer.add(rightText);
+        this.charStatTexts.push(rightText);
+      }
+
+      y += 14;
+    }
+  }
+
+  private toggleInventory(): void {
+    this.inventoryOpen = !this.inventoryOpen;
+    this.invContainer.setVisible(this.inventoryOpen);
+    if (this.inventoryOpen) {
+      this.renderInventorySlots();
+      this.renderCharacterPanel();
+    }
+  }
+
+  private renderCharacterPanel(): void {
+    // ── Player Info ──
+    const template = CLASS_TEMPLATES[this.localClassId as ClassId];
+    const className = template?.name ?? this.localClassId;
+    const xpNeeded = xpRequiredForLevel(this.localLevel);
+    const xpStr = xpNeeded === Infinity ? 'MAX' : `${this.localXp}/${xpNeeded}`;
+
+    let info = `${className}  Lv.${this.localLevel}\n`;
+    info += `XP: ${xpStr}\n`;
+    info += `HP: ${this.localHp}/${this.localMaxHp}`;
+    if (this.localMaxMana > 0) {
+      info += `\nMP: ${this.localMana}/${this.localMaxMana}`;
+    }
+    this.charInfoText.setText(info);
+
+    // ── Equipment Slots ──
+    const slotKeys = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+    for (let i = 0; i < slotKeys.length; i++) {
+      const equippedId = this.localEquipment[slotKeys[i]] || '';
+      if (equippedId) {
+        const itemTemplate = ITEM_CATALOG[equippedId as ItemId];
+        if (itemTemplate) {
+          this.charEquipTexts[i].setText(itemTemplate.name);
+          this.charEquipTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+        } else {
+          this.charEquipTexts[i].setText(equippedId);
+          this.charEquipTexts[i].setColor('#ffffff');
+        }
+      } else {
+        this.charEquipTexts[i].setText('empty');
+        this.charEquipTexts[i].setColor('#555555');
+      }
+    }
+
+    // ── Stats ──
+    // Compute base stats from class + level
+    const baseStats = computeDerivedStats(this.localClassId as ClassId, this.localLevel);
+
+    // Add equipment bonuses (display-only — server is authoritative)
+    const finalStats = { ...baseStats };
+    for (const key of slotKeys) {
+      const equippedId = this.localEquipment[key] || '';
+      if (equippedId) {
+        const itemTemplate = ITEM_CATALOG[equippedId as ItemId];
+        if (itemTemplate?.statBonuses) {
+          for (const [stat, bonus] of Object.entries(itemTemplate.statBonuses)) {
+            if (stat in finalStats) {
+              (finalStats as any)[stat] += bonus;
+            }
+          }
+        }
+      }
+    }
+
+    // Stat display definitions (must match createCharacterPanelContent order)
+    const statDefs: { label: string; key: string; pct?: boolean }[] = [
+      { label: 'STR', key: 'strength' },
+      { label: 'INT', key: 'intelligence' },
+      { label: 'STA', key: 'stamina' },
+      { label: 'WIS', key: 'wisdom' },
+      { label: 'DEX', key: 'dexterity' },
+      { label: 'P.Res', key: 'physicalResist' },
+      { label: 'Crit', key: 'critChance', pct: true },
+      { label: 'S.Res', key: 'spellResist' },
+      { label: 'CDmg', key: 'critDamage', pct: true },
+      { label: 'P.Def', key: 'physicalDefense' },
+      { label: 'Block', key: 'blockRating', pct: true },
+      { label: 'Dodge', key: 'dodgeRating', pct: true },
+      { label: 'HP', key: 'hp' },
+      { label: 'Mana', key: 'mana' },
+    ];
+
+    for (let i = 0; i < statDefs.length; i++) {
+      const def = statDefs[i];
+      const val = (finalStats as any)[def.key] ?? 0;
+      const baseVal = (baseStats as any)[def.key] ?? 0;
+      const bonus = val - baseVal;
+
+      let display: string;
+      if (def.pct) {
+        display = `${def.label}  ${(val * 100).toFixed(0)}%`;
+      } else {
+        display = `${def.label}  ${Math.round(val)}`;
+      }
+
+      // Show bonus in green if gear adds to this stat
+      if (bonus > 0) {
+        if (def.pct) {
+          display += ` (+${(bonus * 100).toFixed(0)}%)`;
+        } else {
+          display += ` (+${Math.round(bonus)})`;
+        }
+        this.charStatTexts[i].setColor('#44ff44');
+      } else {
+        this.charStatTexts[i].setColor('#cccccc');
+      }
+
+      this.charStatTexts[i].setText(display);
+    }
+  }
+
+  private renderInventorySlots(): void {
+    const cam = this.cameras.main;
+    const startX = Math.floor((cam.width - this.totalPanelW) / 2);
+    const panelY = Math.floor((cam.height - this.invPanelH) / 2);
+    const invX = startX + this.CHAR_PANEL_W + this.PANEL_GAP;
+
+    this.panelGfx.clear();
+
+    for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
+      const col = i % this.INV_COLS;
+      const row = Math.floor(i / this.INV_COLS);
+      const sx = invX + this.SLOT_GAP + 8 + col * (this.SLOT_SIZE + this.SLOT_GAP);
+      const sy = panelY + 36 + this.SLOT_GAP + row * (this.SLOT_SIZE + this.SLOT_GAP);
+
+      const item = this.inventoryItems[i];
+      const itemTemplate = item ? ITEM_CATALOG[item.itemId as ItemId] : null;
+
+      // Slot background
+      if (itemTemplate) {
+        const rarityColor = RARITY_COLORS[itemTemplate.rarity] ?? '#333333';
+        this.panelGfx.fillStyle(Phaser.Display.Color.HexStringToColor(rarityColor).color, 0.25);
+      } else {
+        this.panelGfx.fillStyle(0x222244, 0.6);
+      }
+      this.panelGfx.fillRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
+
+      // Slot border
+      this.panelGfx.lineStyle(1, itemTemplate ? 0x888888 : 0x444466, 1);
+      this.panelGfx.strokeRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
+
+      // Update text
+      if (itemTemplate) {
+        const abbr = itemTemplate.name.length > 8 ? itemTemplate.name.slice(0, 7) + '.' : itemTemplate.name;
+        this.invSlotTexts[i].setText(abbr);
+        this.invSlotTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+        this.invQtyTexts[i].setText(item.quantity > 1 ? `${item.quantity}` : '');
+      } else {
+        this.invSlotTexts[i].setText('');
+        this.invQtyTexts[i].setText('');
+      }
+    }
+
+    // Tooltip
+    if (this.inventoryItems.length > 0) {
+      const first = this.inventoryItems[0];
+      const t = ITEM_CATALOG[first.itemId as ItemId];
+      if (t) {
+        this.invTooltipText.setText(`${t.name} — ${t.description}`);
+      }
+    } else {
+      this.invTooltipText.setText('Your inventory is empty.');
+    }
+  }
+
   update(_time: number, delta: number): void {
     if (!this.connected || !this.playerSprite) return;
 
@@ -445,28 +911,31 @@ export class GameScene extends Phaser.Scene {
       this.deathText.setText(`YOU DIED\nRespawning in ${secs}...`);
     }
 
-    // ── Sample input ────────────────────────────────────────
-    const input = this.inputManager.getInput(this.localX, this.localY);
+    // ── Skip gameplay input while inventory is open ─────────
+    if (!this.inventoryOpen) {
+      // ── Sample input ────────────────────────────────────────
+      const input = this.inputManager.getInput(this.localX, this.localY);
 
-    // ── Client-side prediction (only if alive) ──────────────
-    if (this.localAlive) {
-      this.applyInputLocally(input, dt);
-    }
+      // ── Client-side prediction (only if alive) ──────────────
+      if (this.localAlive) {
+        this.applyInputLocally(input, dt);
+      }
 
-    // ── Send to server (always, so server knows aim angle) ──
-    this.network.sendInput(input);
+      // ── Send to server (always, so server knows aim angle) ──
+      this.network.sendInput(input);
 
-    // ── Store for reconciliation ────────────────────────────
-    this.pendingInputs.push({ input, dt });
+      // ── Store for reconciliation ────────────────────────────
+      this.pendingInputs.push({ input, dt });
 
-    // ── Update local sprite ─────────────────────────────────
-    if (this.localAlive) {
-      this.playerSprite.x = this.localX;
-      this.playerSprite.y = this.localY;
-      this.playerSprite.rotation = input.aimAngle;
+      // ── Update local sprite ─────────────────────────────────
+      if (this.localAlive) {
+        this.playerSprite.x = this.localX;
+        this.playerSprite.y = this.localY;
+        this.playerSprite.rotation = input.aimAngle;
 
-      // ── Draw aim line ─────────────────────────────────────
-      this.drawAimLine(input.aimAngle);
+        // ── Draw aim line ─────────────────────────────────────
+        this.drawAimLine(input.aimAngle);
+      }
     }
 
     // ── Draw HUD ────────────────────────────────────────────

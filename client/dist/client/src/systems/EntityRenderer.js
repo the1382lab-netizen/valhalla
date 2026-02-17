@@ -1,7 +1,7 @@
-import { INTERPOLATION_BUFFER_MS, PLAYER_MAX_HP, lerp } from '@valhalla/shared';
+import { INTERPOLATION_BUFFER_MS, lerp, CLASS_TEMPLATES, CLASS_COLORS, } from '@valhalla/shared';
 /**
  * Manages rendering and interpolation for remote player entities,
- * projectiles, HP bars, and melee visual effects.
+ * projectiles, HP bars, class labels, and combat visual effects.
  */
 export class EntityRenderer {
     scene;
@@ -11,11 +11,17 @@ export class EntityRenderer {
         this.scene = scene;
     }
     // ── Remote Players ────────────────────────────────────────
-    addRemotePlayer(sessionId, x, y) {
+    addRemotePlayer(sessionId, x, y, classId = 'warrior', level = 1, characterName = '') {
         const sprite = this.scene.add.sprite(x, y, 'remote_player');
         sprite.setDepth(5);
-        const nameText = this.scene.add.text(x, y - 32, sessionId.slice(0, 6), {
-            fontSize: '12px',
+        // Tint sprite by class
+        const color = CLASS_COLORS[classId] ?? 0xffffff;
+        sprite.setTint(color);
+        // Name label: "CharName Lv.X" or fallback to "ClassName Lv.X"
+        const displayName = characterName || (CLASS_TEMPLATES[classId]?.name ?? classId);
+        const labelText = `${displayName} Lv.${level}`;
+        const nameText = this.scene.add.text(x, y - 38, labelText, {
+            fontSize: '11px',
             color: '#ffffff',
             stroke: '#000000',
             strokeThickness: 2,
@@ -34,9 +40,12 @@ export class EntityRenderer {
             previousY: y,
             targetAngle: 0,
             lastUpdateTime: Date.now(),
-            hp: PLAYER_MAX_HP,
-            maxHp: PLAYER_MAX_HP,
+            hp: 100,
+            maxHp: 100,
             alive: true,
+            classId,
+            level,
+            characterName,
         });
     }
     removeRemotePlayer(sessionId) {
@@ -59,7 +68,7 @@ export class EntityRenderer {
         data.targetAngle = aimAngle;
         data.lastUpdateTime = Date.now();
     }
-    updateRemotePlayerHp(sessionId, hp, maxHp, alive) {
+    updateRemotePlayerHp(sessionId, hp, maxHp, alive, level) {
         const data = this.remotePlayers.get(sessionId);
         if (!data)
             return;
@@ -68,6 +77,12 @@ export class EntityRenderer {
         data.alive = alive;
         data.sprite.setVisible(alive);
         data.nameText.setVisible(alive);
+        // Update level if changed
+        if (level !== undefined && level !== data.level) {
+            data.level = level;
+            const displayName = data.characterName || (CLASS_TEMPLATES[data.classId]?.name ?? data.classId);
+            data.nameText.setText(`${displayName} Lv.${level}`);
+        }
     }
     // ── Projectiles ───────────────────────────────────────────
     addProjectile(id, x, y) {
@@ -116,10 +131,13 @@ export class EntityRenderer {
         });
     }
     // ── Damage Flash Effect ───────────────────────────────────
-    showDamageFlash(x, y, damage) {
-        const dmgText = this.scene.add.text(x, y - 20, `-${damage}`, {
-            fontSize: '16px',
-            color: '#ff4444',
+    showDamageFlash(x, y, damage, isCrit) {
+        const text = isCrit ? `-${damage}!` : `-${damage}`;
+        const fontSize = isCrit ? '22px' : '16px';
+        const color = isCrit ? '#ffaa00' : '#ff4444';
+        const dmgText = this.scene.add.text(x, y - 20, text, {
+            fontSize,
+            color,
             stroke: '#000000',
             strokeThickness: 3,
             fontStyle: 'bold',
@@ -130,9 +148,29 @@ export class EntityRenderer {
             targets: dmgText,
             y: y - 60,
             alpha: 0,
-            duration: 800,
+            duration: isCrit ? 1000 : 800,
             ease: 'Power2',
             onComplete: () => dmgText.destroy(),
+        });
+    }
+    // ── Combat Feedback Text (Miss / Dodge / Block) ──────────
+    showCombatText(x, y, label, color) {
+        const txt = this.scene.add.text(x, y - 20, label, {
+            fontSize: '14px',
+            color,
+            stroke: '#000000',
+            strokeThickness: 3,
+            fontStyle: 'bold',
+        });
+        txt.setOrigin(0.5, 0.5);
+        txt.setDepth(50);
+        this.scene.tweens.add({
+            targets: txt,
+            y: y - 55,
+            alpha: 0,
+            duration: 700,
+            ease: 'Power2',
+            onComplete: () => txt.destroy(),
         });
     }
     // ── HP Bar Drawing ────────────────────────────────────────
@@ -159,7 +197,7 @@ export class EntityRenderer {
         const now = Date.now();
         // Remote players
         this.remotePlayers.forEach((data) => {
-            if (!data.alive || !data.sprite.visible) {
+            if (!data.alive) {
                 data.hpBar.clear();
                 return;
             }
@@ -170,7 +208,7 @@ export class EntityRenderer {
             data.sprite.rotation = data.targetAngle;
             data.nameText.x = data.sprite.x;
             data.nameText.y = data.sprite.y - 38;
-            // Draw HP bar (only if visible)
+            // Draw HP bar
             this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp);
         });
         // Projectiles — interpolate positions
@@ -184,29 +222,7 @@ export class EntityRenderer {
     hasPlayer(sessionId) {
         return this.remotePlayers.has(sessionId);
     }
-    // ── Visibility Filtering ──────────────────────────────────
-    /**
-     * Show/hide remote players and projectiles based on server visibility data.
-     */
-    applyVisibility(visiblePlayers, visibleProjectiles) {
-        // Remote players
-        this.remotePlayers.forEach((data, sessionId) => {
-            const isVisible = visiblePlayers.has(sessionId);
-            data.sprite.setVisible(isVisible && data.alive);
-            data.nameText.setVisible(isVisible && data.alive);
-            // HP bar is handled in update() — it just won't draw if sprite is invisible
-        });
-        // Projectiles
-        this.projectiles.forEach((data, projId) => {
-            const isVisible = visibleProjectiles.has(projId);
-            data.sprite.setVisible(isVisible);
-        });
-    }
-    /**
-     * Get the current interpolated position of a remote player.
-     * Returns null if the player is not tracked.
-     */
-    getRemotePlayerPosition(sessionId) {
+    getPlayerPosition(sessionId) {
         const data = this.remotePlayers.get(sessionId);
         if (!data)
             return null;

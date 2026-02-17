@@ -4,15 +4,17 @@ import { PlayerState, InventorySlotState } from '../schema/PlayerState.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem, CombatEvent } from '../systems/CombatSystem.js';
+import { MapManager } from '../systems/MapManager.js';
 import {
   InputPayload,
   MessageType,
-  TILE_SIZE,
   SERVER_TICK_RATE,
   ClassId,
   EquipSlotType,
   SAVE_INTERVAL_MS,
   computeDerivedStats,
+  ZoneId,
+  ZoneConnection,
 } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken, JwtPayload } from '../services/AuthService.js';
@@ -30,10 +32,17 @@ interface SessionData {
   username: string;
 }
 
+/** Cached per-zone data for multi-zone support within a single room. */
+interface ZoneCacheEntry {
+  collision: CollisionSystem;
+  connections: ZoneConnection[];
+  respawnPoint: { x: number; y: number };
+}
+
 export class GameRoom extends Room<{ state: GameState }> {
-  private collision!: CollisionSystem;
   private movement!: MovementSystem;
   private combat!: CombatSystem;
+  private mapManager!: MapManager;
   private inputQueues: Map<string, InputPayload[]> = new Map();
 
   /** Maps sessionId → persistent character data for save/load. */
@@ -42,11 +51,22 @@ export class GameRoom extends Room<{ state: GameState }> {
   /** Interval handle for periodic saves. */
   private saveInterval: ReturnType<typeof setInterval> | null = null;
 
+  /** Default zone for new players. */
+  private defaultZoneId: string = ZoneId.GRASSLANDS;
+
+  /** Per-zone collision, connections, and respawn caches. */
+  private zoneCache: Map<string, ZoneCacheEntry> = new Map();
+
   onCreate(): void {
     this.setState(new GameState());
-    this.collision = new CollisionSystem();
-    this.movement = new MovementSystem(this.collision);
-    this.combat = new CombatSystem(this.collision);
+
+    // Initialize map system
+    this.mapManager = new MapManager();
+
+    // Pre-load the default zone
+    const defaultEntry = this.loadZoneCache(this.defaultZoneId);
+    this.movement = new MovementSystem(defaultEntry.collision);
+    this.combat = new CombatSystem(defaultEntry.collision);
 
     // Set the simulation interval (server tick)
     this.setSimulationInterval((dt) => this.update(dt), 1000 / SERVER_TICK_RATE);
@@ -103,7 +123,31 @@ export class GameRoom extends Room<{ state: GameState }> {
       swapInventorySlots(player, data.fromIndex, data.toIndex);
     });
 
-    console.log(`[GameRoom] Room created. Tick rate: ${SERVER_TICK_RATE}Hz, Save interval: ${SAVE_INTERVAL_MS / 1000}s`);
+    console.log(`[GameRoom] Room created. Default zone: ${this.defaultZoneId}, Tick: ${SERVER_TICK_RATE}Hz`);
+  }
+
+  /**
+   * Lazily load and cache a zone's collision, connections, and respawn point.
+   */
+  private loadZoneCache(zoneId: string): ZoneCacheEntry {
+    const existing = this.zoneCache.get(zoneId);
+    if (existing) return existing;
+
+    const mapData = this.mapManager.loadZone(zoneId);
+    const entry: ZoneCacheEntry = {
+      collision: CollisionSystem.fromParsedMap(mapData),
+      connections: this.mapManager.getZoneConnections(zoneId),
+      respawnPoint: this.mapManager.getPlayerSpawn(zoneId),
+    };
+    this.zoneCache.set(zoneId, entry);
+    return entry;
+  }
+
+  /**
+   * Get the cached zone entry for a player's current zone.
+   */
+  private getPlayerZone(player: PlayerState): ZoneCacheEntry {
+    return this.loadZoneCache(player.zoneId || this.defaultZoneId);
   }
 
   /**
@@ -162,6 +206,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.classId = charData.classId;
     player.level = charData.level;
     player.xp = charData.xp;
+    player.zoneId = this.defaultZoneId;
 
     // Compute stats from class + level
     const stats = computeDerivedStats(charData.classId as ClassId, charData.level);
@@ -179,13 +224,14 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.x = charData.positionX;
     player.y = charData.positionY;
 
-    // If the character was dead, respawn them fresh
+    // If the character was dead, respawn them fresh at zone spawn
+    const playerZone = this.getPlayerZone(player);
     if (!player.alive) {
       player.alive = true;
       player.hp = stats.maxHp;
       player.mana = stats.maxMana;
-      player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
-      player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
+      player.x = playerZone.respawnPoint.x;
+      player.y = playerZone.respawnPoint.y;
     }
 
     // ── Restore equipment ──
@@ -219,13 +265,9 @@ export class GameRoom extends Room<{ state: GameState }> {
       username: auth.username,
     });
 
-    // Send collision grid to the client so it can do client-side prediction
-    client.send('collisionGrid', {
-      grid: this.collision.getGrid(),
-      width: 32,
-      height: 32,
-      tileSize: TILE_SIZE,
-    });
+    // Send full map data to the client for their zone
+    const mapPayload = this.mapManager.getMapDataForClient(player.zoneId);
+    client.send(MessageType.MAP_DATA, mapPayload);
 
     console.log(`[GameRoom] Player ${auth.username} joined as ${charData.classId} "${charData.name}" (Lv.${player.level}, HP:${player.hp}/${player.maxHp})`);
   }
@@ -262,7 +304,7 @@ export class GameRoom extends Room<{ state: GameState }> {
   }
 
   /**
-   * Main server update loop — processes inputs, combat, projectiles, respawns.
+   * Main server update loop — processes inputs, combat, projectiles, respawns, zone transitions.
    */
   private update(dt: number): void {
     const dtSec = dt / 1000;
@@ -273,10 +315,13 @@ export class GameRoom extends Room<{ state: GameState }> {
       const queue = this.inputQueues.get(sessionId);
       if (!queue || queue.length === 0) return;
 
+      // Get the collision system for this player's zone
+      const zoneEntry = this.getPlayerZone(player);
+
       for (const input of queue) {
         // Only process movement if alive
         if (player.alive) {
-          this.movement.processInput(player, input, dtSec);
+          this.movement.processInput(player, input, dtSec, zoneEntry.collision);
         }
 
         // Handle fire input
@@ -314,9 +359,93 @@ export class GameRoom extends Room<{ state: GameState }> {
     // Broadcast combat events (hits, kills)
     this.broadcastCombatEvents(events);
 
-    // 3. Check respawns
-    const respawnEvents = this.combat.checkRespawns(this.state.players, now);
+    // 3. Check respawns — handle per-player zone respawn points
+    const respawnEvents = this.checkRespawnsMultiZone(now);
     this.broadcastCombatEvents(respawnEvents);
+
+    // 4. Check zone transitions (portal triggers)
+    this.checkZoneTransitions();
+  }
+
+  /**
+   * Check if any player has walked into a zone portal trigger rect.
+   * On transition: loads the target zone, updates player state, and sends new map data to the client.
+   */
+  private checkZoneTransitions(): void {
+    this.state.players.forEach((player, sessionId) => {
+      if (!player.alive) return;
+
+      const zoneEntry = this.getPlayerZone(player);
+      if (zoneEntry.connections.length === 0) return;
+
+      for (const portal of zoneEntry.connections) {
+        const rect = portal.triggerRect;
+        if (
+          player.x >= rect.x &&
+          player.x <= rect.x + rect.width &&
+          player.y >= rect.y &&
+          player.y <= rect.y + rect.height
+        ) {
+          const client = this.clients.find(c => c.sessionId === sessionId);
+          if (!client) break;
+
+          const fromZone = player.zoneId;
+          const toZone = portal.targetZone;
+
+          // Ensure the target zone is loaded
+          this.loadZoneCache(toZone);
+
+          // Move player to the target zone
+          player.zoneId = toZone;
+          player.x = portal.targetSpawn.x;
+          player.y = portal.targetSpawn.y;
+
+          // Send the full map data for the new zone so the client can rebuild its tile map
+          const mapPayload = this.mapManager.getMapDataForClient(toZone);
+          client.send(MessageType.MAP_DATA, mapPayload);
+
+          // Also send the zone change notification (with spawn coords for immediate repositioning)
+          client.send(MessageType.ZONE_CHANGE, {
+            zoneId: toZone,
+            spawnX: portal.targetSpawn.x,
+            spawnY: portal.targetSpawn.y,
+          });
+
+          console.log(`[GameRoom] Player ${sessionId} zone transition: ${fromZone} → ${toZone} via "${portal.id}"`);
+          break; // Only one portal per tick
+        }
+      }
+    });
+  }
+
+  /**
+   * Multi-zone respawn: each dead player respawns at their zone's spawn point.
+   */
+  private checkRespawnsMultiZone(now: number): CombatEvent[] {
+    const events: CombatEvent[] = [];
+
+    this.state.players.forEach((player) => {
+      if (player.alive) return;
+      if (player.respawnAt === 0 || now < player.respawnAt) return;
+
+      const zone = this.getPlayerZone(player);
+
+      player.alive = true;
+      player.hp = player.maxHp;
+      player.mana = player.maxMana;
+      player.respawnAt = 0;
+      player.invulnerableUntil = now + 6000; // extra i-frames on respawn
+
+      player.x = zone.respawnPoint.x;
+      player.y = zone.respawnPoint.y;
+
+      events.push({
+        type: 'playerRespawned',
+        data: { playerId: player.id },
+      });
+    });
+
+    return events;
   }
 
   /**

@@ -25,6 +25,7 @@ export class PlayerState extends Schema {
   classId: string = 'warrior';
   level: number = 1;
   xp: number = 0;
+  zoneId: string = 'grasslands';
 
   // ── Vitals (synced) ──────────────────────────────────
   hp: number = PLAYER_MAX_HP;
@@ -69,6 +70,7 @@ defineTypes(PlayerState, {
   classId: 'string',
   level: 'uint8',
   xp: 'uint16',
+  zoneId: 'string',
   hp: 'int16',
   maxHp: 'int16',
   mana: 'int16',

@@ -1,5 +1,8 @@
 import Phaser from 'phaser';
 import { BootScene } from './scenes/BootScene.js';
+import { LoginScene } from './scenes/LoginScene.js';
+import { CharacterSelectScene } from './scenes/CharacterSelectScene.js';
+import { ClassSelectScene } from './scenes/ClassSelectScene.js';
 import { GameScene } from './scenes/GameScene.js';
 const config = {
     type: Phaser.AUTO,
@@ -12,7 +15,7 @@ const config = {
         mode: Phaser.Scale.RESIZE,
         autoCenter: Phaser.Scale.CENTER_BOTH,
     },
-    scene: [BootScene, GameScene],
+    scene: [BootScene, LoginScene, CharacterSelectScene, ClassSelectScene, GameScene],
 };
 new Phaser.Game(config);
 //# sourceMappingURL=main.js.map

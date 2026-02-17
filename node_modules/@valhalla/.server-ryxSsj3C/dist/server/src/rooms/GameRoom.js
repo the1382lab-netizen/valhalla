@@ -1,27 +1,44 @@
 import { Room } from '@colyseus/core';
 import { GameState } from '../schema/GameState.js';
-import { PlayerState } from '../schema/PlayerState.js';
+import { PlayerState, InventorySlotState } from '../schema/PlayerState.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem } from '../systems/CombatSystem.js';
-import { VisibilitySystem } from '../systems/VisibilitySystem.js';
-import { MessageType, TILE_SIZE, SERVER_TICK_RATE, PLAYER_SPEED, PLAYER_MAX_HP, VISION_RADIUS, VISIBILITY_UPDATE_RATE, PLAYER_COLLISION_RADIUS, } from '@valhalla/shared';
+import { MapManager } from '../systems/MapManager.js';
+import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, } from '@valhalla/shared';
+import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
+import { verifyToken } from '../services/AuthService.js';
+import { loadCharacter, saveCharacter, } from '../services/CharacterService.js';
 export class GameRoom extends Room {
     constructor() {
         super(...arguments);
         this.inputQueues = new Map();
-        // Visibility update throttle
-        this.visibilityAccumulator = 0;
-        this.visibilityIntervalMs = 1000 / VISIBILITY_UPDATE_RATE;
+        /** Maps sessionId → persistent character data for save/load. */
+        this.sessionData = new Map();
+        /** Interval handle for periodic saves. */
+        this.saveInterval = null;
+        /** Current zone ID and spawn point for this room. */
+        this.currentZoneId = ZoneId.GRASSLANDS;
+        this.respawnPoint = { x: 352, y: 352 };
+        /** Zone connections for portal detection. */
+        this.zoneConnections = [];
     }
     onCreate() {
         this.setState(new GameState());
-        this.collision = new CollisionSystem();
+        // Initialize map system
+        this.mapManager = new MapManager();
+        const mapData = this.mapManager.loadZone(this.currentZoneId);
+        // Build collision from loaded map
+        this.collision = CollisionSystem.fromParsedMap(mapData);
         this.movement = new MovementSystem(this.collision);
         this.combat = new CombatSystem(this.collision);
-        this.visibility = new VisibilitySystem(this.collision.getGrid());
+        // Cache spawn point and zone connections
+        this.respawnPoint = this.mapManager.getPlayerSpawn(this.currentZoneId);
+        this.zoneConnections = this.mapManager.getZoneConnections(this.currentZoneId);
         // Set the simulation interval (server tick)
         this.setSimulationInterval((dt) => this.update(dt), 1000 / SERVER_TICK_RATE);
+        // Periodic save — every 30 seconds, persist all active players
+        this.saveInterval = setInterval(() => this.saveAllPlayers(), SAVE_INTERVAL_MS);
         // Listen for player input messages
         this.onMessage(MessageType.INPUT, (client, input) => {
             const queue = this.inputQueues.get(client.sessionId);
@@ -32,39 +49,191 @@ export class GameRoom extends Room {
                 }
             }
         });
-        console.log(`[GameRoom] Room created. Tick rate: ${SERVER_TICK_RATE}Hz, Vis rate: ${VISIBILITY_UPDATE_RATE}Hz`);
-    }
-    onJoin(client) {
-        console.log(`[GameRoom] Player joined: ${client.sessionId}`);
-        const player = new PlayerState();
-        player.id = client.sessionId;
-        // Spawn in the middle of the map (avoiding walls)
-        player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
-        player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
-        player.speed = PLAYER_SPEED;
-        player.hp = PLAYER_MAX_HP;
-        player.maxHp = PLAYER_MAX_HP;
-        player.alive = true;
-        this.state.players.set(client.sessionId, player);
-        this.inputQueues.set(client.sessionId, []);
-        // Send collision grid to the client so it can do client-side prediction
-        client.send('collisionGrid', {
-            grid: this.collision.getGrid(),
-            width: 32,
-            height: 32,
-            tileSize: TILE_SIZE,
+        // Listen for equip/unequip messages
+        this.onMessage(MessageType.EQUIP_ITEM, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (player && player.alive) {
+                equipItem(player, data.slotIndex);
+            }
         });
-        // Send initial visibility polygon (facing right by default)
-        const polygon = this.visibility.computeVisibilityPolygon(player.x, player.y, player.aimAngle, VISION_RADIUS);
-        client.send('visibility', { polygon, visiblePlayers: [], visibleProjectiles: [] });
-    }
-    onLeave(client) {
-        console.log(`[GameRoom] Player left: ${client.sessionId}`);
-        this.state.players.delete(client.sessionId);
-        this.inputQueues.delete(client.sessionId);
+        this.onMessage(MessageType.UNEQUIP_ITEM, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (player && player.alive) {
+                if (data.targetIndex !== undefined && data.targetIndex >= 0) {
+                    unequipItemToSlot(player, data.slotType, data.targetIndex);
+                }
+                else {
+                    unequipItem(player, data.slotType);
+                }
+            }
+        });
+        // Drop item (from inventory or equipment)
+        this.onMessage(MessageType.DROP_ITEM, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || !player.alive)
+                return;
+            if (data.source === 'inventory' && data.slotIndex !== undefined) {
+                dropInventoryItem(player, data.slotIndex);
+            }
+            else if (data.source === 'equipment' && data.slotType) {
+                dropEquippedItem(player, data.slotType);
+            }
+        });
+        // Swap inventory slots
+        this.onMessage(MessageType.SWAP_INVENTORY, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || !player.alive)
+                return;
+            swapInventorySlots(player, data.fromIndex, data.toIndex);
+        });
+        console.log(`[GameRoom] Room created. Zone: ${this.currentZoneId}, Map: ${mapData.width}×${mapData.height}, Tick: ${SERVER_TICK_RATE}Hz`);
     }
     /**
-     * Main server update loop — processes inputs, combat, projectiles, respawns, visibility.
+     * Colyseus auth hook — validates JWT before allowing the client to join.
+     * Returned value is stored on client.auth.
+     */
+    async onAuth(client, options) {
+        if (!options?.token) {
+            throw new Error('Authentication required.');
+        }
+        const payload = verifyToken(options.token);
+        return payload;
+    }
+    onJoin(client, options) {
+        const auth = client.auth;
+        const characterId = options?.characterId;
+        if (!characterId) {
+            throw new Error('Character ID required.');
+        }
+        console.log(`[GameRoom] Player joining: ${auth.username} (user=${auth.userId}, char=${characterId})`);
+        // ── Duplicate login prevention ──
+        // If this user already has an active session, kick the old one
+        for (const [existingSessionId, data] of this.sessionData) {
+            if (data.userId === auth.userId) {
+                const existingClient = this.clients.find(c => c.sessionId === existingSessionId);
+                if (existingClient) {
+                    console.log(`[GameRoom] Kicking duplicate session for user ${auth.userId}`);
+                    existingClient.send('kicked', { reason: 'Logged in from another location.' });
+                    existingClient.leave(4001); // Custom close code
+                }
+                // Clean up old session data
+                this.state.players.delete(existingSessionId);
+                this.inputQueues.delete(existingSessionId);
+                this.sessionData.delete(existingSessionId);
+                break;
+            }
+        }
+        // ── Load character from database ──
+        let charData;
+        try {
+            charData = loadCharacter(characterId, auth.userId);
+        }
+        catch (err) {
+            throw new Error(`Failed to load character: ${err.message}`);
+        }
+        // ── Build PlayerState from loaded data ──
+        const player = new PlayerState();
+        player.id = client.sessionId;
+        player.characterName = charData.name;
+        player.classId = charData.classId;
+        player.level = charData.level;
+        player.xp = charData.xp;
+        player.zoneId = this.currentZoneId;
+        // Compute stats from class + level
+        const stats = computeDerivedStats(charData.classId, charData.level);
+        player.stats = stats;
+        player.maxHp = stats.maxHp;
+        player.maxMana = stats.maxMana;
+        player.speed = stats.speed;
+        // Restore vitals (clamped to max)
+        player.hp = Math.min(charData.hp, stats.maxHp);
+        player.mana = Math.min(charData.mana, stats.maxMana);
+        player.alive = charData.alive;
+        // Restore position
+        player.x = charData.positionX;
+        player.y = charData.positionY;
+        // If the character was dead, respawn them fresh at zone spawn
+        if (!player.alive) {
+            player.alive = true;
+            player.hp = stats.maxHp;
+            player.mana = stats.maxMana;
+            player.x = this.respawnPoint.x;
+            player.y = this.respawnPoint.y;
+        }
+        // ── Restore equipment ──
+        for (const equip of charData.equipment) {
+            switch (equip.slotType) {
+                case EquipSlotType.WEAPON:
+                    player.equipWeapon = equip.itemId;
+                    break;
+                case EquipSlotType.HELM:
+                    player.equipHelm = equip.itemId;
+                    break;
+                case EquipSlotType.CHEST:
+                    player.equipChest = equip.itemId;
+                    break;
+                case EquipSlotType.LEGS:
+                    player.equipLegs = equip.itemId;
+                    break;
+                case EquipSlotType.BOOTS:
+                    player.equipBoots = equip.itemId;
+                    break;
+                case EquipSlotType.RING:
+                    player.equipRing = equip.itemId;
+                    break;
+            }
+        }
+        // ── Restore inventory ──
+        // Sort by slotIndex to maintain order
+        const sortedInv = [...charData.inventory].sort((a, b) => a.slotIndex - b.slotIndex);
+        for (const slot of sortedInv) {
+            const invSlot = new InventorySlotState();
+            invSlot.itemId = slot.itemId;
+            invSlot.quantity = slot.quantity;
+            player.inventory.push(invSlot);
+        }
+        // Register player in room state
+        this.state.players.set(client.sessionId, player);
+        this.inputQueues.set(client.sessionId, []);
+        this.sessionData.set(client.sessionId, {
+            characterId,
+            userId: auth.userId,
+            username: auth.username,
+        });
+        // Send full map data to the client (replaces old collisionGrid message)
+        const mapPayload = this.mapManager.getMapDataForClient(this.currentZoneId);
+        client.send(MessageType.MAP_DATA, mapPayload);
+        console.log(`[GameRoom] Player ${auth.username} joined as ${charData.classId} "${charData.name}" (Lv.${player.level}, HP:${player.hp}/${player.maxHp})`);
+    }
+    onLeave(client) {
+        const data = this.sessionData.get(client.sessionId);
+        // Save character state on disconnect
+        if (data) {
+            const player = this.state.players.get(client.sessionId);
+            if (player) {
+                this.savePlayer(client.sessionId, player, data.characterId);
+                console.log(`[GameRoom] Saved and disconnected: ${data.username} (char=${data.characterId})`);
+            }
+        }
+        this.state.players.delete(client.sessionId);
+        this.inputQueues.delete(client.sessionId);
+        this.sessionData.delete(client.sessionId);
+    }
+    /**
+     * Compute and apply derived stats from class + level.
+     * Call this on level-up and (later) gear changes.
+     */
+    applyStats(player) {
+        const stats = computeDerivedStats(player.classId, player.level);
+        player.stats = stats;
+        player.maxHp = stats.maxHp;
+        player.hp = stats.maxHp; // Full heal on stat recompute
+        player.maxMana = stats.maxMana;
+        player.mana = stats.maxMana;
+        player.speed = stats.speed;
+    }
+    /**
+     * Main server update loop — processes inputs, combat, projectiles, respawns, zone transitions.
      */
     update(dt) {
         const dtSec = dt / 1000;
@@ -104,51 +273,44 @@ export class GameRoom extends Room {
         // Broadcast combat events (hits, kills)
         this.broadcastCombatEvents(events);
         // 3. Check respawns
-        const respawnEvents = this.combat.checkRespawns(this.state.players, now);
+        const respawnEvents = this.combat.checkRespawns(this.state.players, now, this.respawnPoint);
         this.broadcastCombatEvents(respawnEvents);
-        // 4. Visibility updates (throttled to VISIBILITY_UPDATE_RATE)
-        this.visibilityAccumulator += dt;
-        if (this.visibilityAccumulator >= this.visibilityIntervalMs) {
-            this.visibilityAccumulator -= this.visibilityIntervalMs;
-            this.updateVisibility();
-        }
+        // 4. Check zone transitions (portal triggers)
+        this.checkZoneTransitions();
     }
     /**
-     * Compute and send visibility polygons to each connected client.
-     * Also sends which entities are visible to each player.
+     * Check if any player has walked into a zone portal trigger rect.
      */
-    updateVisibility() {
+    checkZoneTransitions() {
+        if (this.zoneConnections.length === 0)
+            return;
         this.state.players.forEach((player, sessionId) => {
             if (!player.alive)
                 return;
-            // Compute visibility polygon for this player (cone follows aim direction)
-            const polygon = this.visibility.computeVisibilityPolygon(player.x, player.y, player.aimAngle, VISION_RADIUS);
-            // Determine which other players are visible
-            const visiblePlayers = [];
-            this.state.players.forEach((other, otherId) => {
-                if (otherId === sessionId)
-                    return; // always see yourself
-                if (!other.alive)
-                    return;
-                if (this.visibility.isCircleVisible(polygon, other.x, other.y, PLAYER_COLLISION_RADIUS)) {
-                    visiblePlayers.push(otherId);
+            for (const portal of this.zoneConnections) {
+                const rect = portal.triggerRect;
+                if (player.x >= rect.x &&
+                    player.x <= rect.x + rect.width &&
+                    player.y >= rect.y &&
+                    player.y <= rect.y + rect.height) {
+                    // Player stepped into a portal!
+                    // For now, teleport them to the target spawn within the same zone
+                    // (full zone transition to different rooms comes in a later phase)
+                    const client = this.clients.find(c => c.sessionId === sessionId);
+                    if (client) {
+                        // Teleport to target spawn
+                        player.x = portal.targetSpawn.x;
+                        player.y = portal.targetSpawn.y;
+                        // Notify client about the zone change
+                        client.send(MessageType.ZONE_CHANGE, {
+                            zoneId: portal.targetZone,
+                            spawnX: portal.targetSpawn.x,
+                            spawnY: portal.targetSpawn.y,
+                        });
+                        console.log(`[GameRoom] Player ${sessionId} triggered portal "${portal.id}" → ${portal.targetZone}`);
+                    }
+                    break; // Only one portal per tick
                 }
-            });
-            // Determine which projectiles are visible
-            const visibleProjectiles = [];
-            this.state.projectiles.forEach((proj, projId) => {
-                if (this.visibility.isCircleVisible(polygon, proj.x, proj.y, 6)) {
-                    visibleProjectiles.push(projId);
-                }
-            });
-            // Send visibility data to the client
-            const client = this.clients.find((c) => c.sessionId === sessionId);
-            if (client) {
-                client.send('visibility', {
-                    polygon,
-                    visiblePlayers,
-                    visibleProjectiles,
-                });
             }
         });
     }
@@ -160,7 +322,77 @@ export class GameRoom extends Room {
             this.broadcast(event.type, event.data);
         }
     }
+    // ── Persistence Helpers ──────────────────────────────────
+    /**
+     * Extract current player state and save to database.
+     */
+    savePlayer(sessionId, player, characterId) {
+        try {
+            // Build inventory data from ArraySchema
+            const inventory = [];
+            for (let i = 0; i < player.inventory.length; i++) {
+                const slot = player.inventory[i];
+                inventory.push({
+                    slotIndex: i,
+                    itemId: slot.itemId,
+                    quantity: slot.quantity,
+                });
+            }
+            // Build equipment data
+            const equipment = [];
+            if (player.equipWeapon)
+                equipment.push({ slotType: EquipSlotType.WEAPON, itemId: player.equipWeapon });
+            if (player.equipHelm)
+                equipment.push({ slotType: EquipSlotType.HELM, itemId: player.equipHelm });
+            if (player.equipChest)
+                equipment.push({ slotType: EquipSlotType.CHEST, itemId: player.equipChest });
+            if (player.equipLegs)
+                equipment.push({ slotType: EquipSlotType.LEGS, itemId: player.equipLegs });
+            if (player.equipBoots)
+                equipment.push({ slotType: EquipSlotType.BOOTS, itemId: player.equipBoots });
+            if (player.equipRing)
+                equipment.push({ slotType: EquipSlotType.RING, itemId: player.equipRing });
+            const data = {
+                hp: player.hp,
+                mana: player.mana,
+                xp: player.xp,
+                level: player.level,
+                positionX: player.x,
+                positionY: player.y,
+                alive: player.alive,
+                inventory,
+                equipment,
+            };
+            saveCharacter(characterId, data);
+        }
+        catch (err) {
+            console.error(`[GameRoom] Failed to save player ${sessionId}: ${err.message}`);
+        }
+    }
+    /**
+     * Save all connected players. Called periodically by the save interval.
+     */
+    saveAllPlayers() {
+        let saved = 0;
+        this.state.players.forEach((player, sessionId) => {
+            const data = this.sessionData.get(sessionId);
+            if (data) {
+                this.savePlayer(sessionId, player, data.characterId);
+                saved++;
+            }
+        });
+        if (saved > 0) {
+            console.log(`[GameRoom] Periodic save: ${saved} player(s) saved.`);
+        }
+    }
     onDispose() {
+        // Save all players on room dispose
+        this.saveAllPlayers();
+        // Clear the save interval
+        if (this.saveInterval) {
+            clearInterval(this.saveInterval);
+            this.saveInterval = null;
+        }
         console.log('[GameRoom] Room disposed.');
     }
 }

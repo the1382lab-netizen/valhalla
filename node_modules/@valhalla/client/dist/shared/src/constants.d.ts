@@ -1,14 +1,20 @@
+export declare const DEFAULT_TILE_SIZE = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.tileSize instead. */
 export declare const TILE_SIZE = 64;
-export declare const MAP_WIDTH_TILES = 32;
-export declare const MAP_HEIGHT_TILES = 32;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.width instead. */
+export declare const MAP_WIDTH_TILES = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.height instead. */
+export declare const MAP_HEIGHT_TILES = 64;
 export declare const MAP_WIDTH_PX: number;
 export declare const MAP_HEIGHT_PX: number;
 export declare const SERVER_TICK_RATE = 60;
 export declare const SERVER_TICK_MS: number;
 export declare const SERVER_PORT = 2567;
-export declare const PLAYER_SPEED = 200;
+/** @deprecated Use CLASS_TEMPLATES[classId].baseSpeed instead for class-aware speed */
+export declare const PLAYER_SPEED = 160;
 export declare const PLAYER_SIZE = 48;
 export declare const PLAYER_COLLISION_RADIUS = 20;
+/** @deprecated Use computeDerivedStats() for class-aware max HP */
 export declare const PLAYER_MAX_HP = 100;
 export declare const PROJECTILE_SPEED = 400;
 export declare const PROJECTILE_RADIUS = 6;
@@ -21,12 +27,13 @@ export declare const MELEE_DAMAGE = 25;
 export declare const MELEE_RANGE = 60;
 export declare const MELEE_ARC: number;
 export declare const MELEE_COOLDOWN_MS = 600;
-export declare const VISION_RADIUS = 500;
-export declare const VISION_CONE_ANGLE: number;
-export declare const VISIBILITY_UPDATE_RATE = 15;
-export declare const FOG_EXPLORED_ALPHA = 0.65;
-export declare const FOG_HIDDEN_ALPHA = 0.95;
 export declare const INTERPOLATION_BUFFER_MS = 100;
 export declare const SERVER_URL: string;
 export declare const ROOM_NAME = "game_room";
+export declare const SAVE_INTERVAL_MS = 30000;
+export declare const JWT_EXPIRY = "24h";
+export declare const MIN_USERNAME_LENGTH = 3;
+export declare const MAX_USERNAME_LENGTH = 20;
+export declare const MIN_PASSWORD_LENGTH = 6;
+export declare const MAX_CHARACTERS_PER_USER = 4;
 //# sourceMappingURL=constants.d.ts.map

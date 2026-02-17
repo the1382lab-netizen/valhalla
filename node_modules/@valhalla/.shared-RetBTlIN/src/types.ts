@@ -68,4 +68,6 @@ export enum MessageType {
   UNEQUIP_ITEM = 'unequipItem',
   DROP_ITEM = 'dropItem',
   SWAP_INVENTORY = 'swapInventory',
+  MAP_DATA = 'mapData',
+  ZONE_CHANGE = 'zoneChange',
 }

@@ -1,19 +1,29 @@
+import { ParsedMapData } from '@valhalla/shared';
 /**
  * Server-side collision system.
- * Loads a collision grid and provides circle-vs-tile collision resolution.
+ * Loads a collision grid (from a parsed map or provided data) and provides
+ * circle-vs-tile collision resolution.
  */
 export declare class CollisionSystem {
     private grid;
     private mapW;
     private mapH;
-    constructor();
+    private tileSize;
+    private mapWidthPx;
+    private mapHeightPx;
+    constructor(grid: number[], mapW: number, mapH: number, tileSize: number);
     /**
-     * Build a simple collision grid: walls around the perimeter,
-     * plus a few interior walls for testing.
+     * Create a CollisionSystem from a ParsedMapData object.
      */
-    private buildDefaultCollisionGrid;
+    static fromParsedMap(mapData: ParsedMapData): CollisionSystem;
     /** Get the collision grid (for sharing with clients). */
     getGrid(): number[];
+    /** Get map dimensions. */
+    getMapWidth(): number;
+    getMapHeight(): number;
+    getTileSize(): number;
+    getMapWidthPx(): number;
+    getMapHeightPx(): number;
     /**
      * Check if a circle at (cx, cy) with the given radius overlaps any wall tile.
      * Uses AABB of the circle to determine which tiles to check, then

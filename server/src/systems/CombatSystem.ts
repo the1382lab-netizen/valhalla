@@ -13,7 +13,6 @@ import {
   MELEE_RANGE,
   MELEE_ARC,
   MELEE_COOLDOWN_MS,
-  TILE_SIZE,
   ClassId,
   isRangedMagic,
   computePhysicalDamage,
@@ -341,8 +340,11 @@ export class CombatSystem {
   checkRespawns(
     players: MapSchema<PlayerState>,
     now: number,
+    respawnPoint?: { x: number; y: number },
   ): CombatEvent[] {
     const events: CombatEvent[] = [];
+    const spawnX = respawnPoint?.x ?? 352;
+    const spawnY = respawnPoint?.y ?? 352;
 
     players.forEach((player) => {
       if (player.alive) return;
@@ -355,9 +357,9 @@ export class CombatSystem {
       player.respawnAt = 0;
       player.invulnerableUntil = now + INVULNERABILITY_MS * 2; // extra i-frames on respawn
 
-      // Respawn at a safe position (near spawn point)
-      player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
-      player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
+      // Respawn at the zone's spawn point
+      player.x = spawnX;
+      player.y = spawnY;
 
       events.push({
         type: 'playerRespawned',

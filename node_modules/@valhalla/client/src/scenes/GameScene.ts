@@ -11,10 +11,7 @@ import {
 import { InputManager } from '../systems/InputManager.js';
 import { EntityRenderer } from '../systems/EntityRenderer.js';
 import {
-  TILE_SIZE,
   PLAYER_COLLISION_RADIUS,
-  MAP_WIDTH_PX,
-  MAP_HEIGHT_PX,
   RESPAWN_TIME_MS,
   InputPayload,
   normalise,
@@ -27,6 +24,8 @@ import {
   EquipSlotType,
   computeDerivedStats,
   xpRequiredForLevel,
+  MapDataPayload,
+  TileLayerInfo,
 } from '@valhalla/shared';
 
 interface PendingInput {
@@ -71,10 +70,15 @@ export class GameScene extends Phaser.Scene {
   private pendingInputs: PendingInput[] = [];
   private lastServerSeq: number = 0;
 
-  // Collision (received from server)
+  // Map data (received from server)
   private collisionGrid: number[] = [];
   private collisionMapW: number = 0;
   private collisionMapH: number = 0;
+  private mapTileSize: number = 64;
+  private mapWidthPx: number = 4096;
+  private mapHeightPx: number = 4096;
+  private tileSprites: Phaser.GameObjects.Sprite[] = [];
+  private currentZoneId: string = 'grasslands';
 
   // Connection state
   private connected: boolean = false;
@@ -213,16 +217,56 @@ export class GameScene extends Phaser.Scene {
       console.error(err);
     });
 
-    // Set world bounds
-    this.cameras.main.setBounds(0, 0, MAP_WIDTH_PX, MAP_HEIGHT_PX);
+    // Set world bounds (will be updated when map data arrives)
+    this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
   }
 
   private setupNetworkCallbacks(): void {
-    this.network.onCollisionGrid = (data: CollisionGridData) => {
-      this.collisionGrid = data.grid;
+    // Handle full map data (new multi-layer system)
+    this.network.onMapData = (data: MapDataPayload) => {
+      this.collisionGrid = data.collisionGrid;
       this.collisionMapW = data.width;
       this.collisionMapH = data.height;
-      this.buildTileMap(data);
+      this.mapTileSize = data.tileSize;
+      this.mapWidthPx = data.width * data.tileSize;
+      this.mapHeightPx = data.height * data.tileSize;
+      this.currentZoneId = data.zoneId;
+
+      // Update camera bounds for the new map size
+      this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+
+      this.buildTileMapFromData(data);
+    };
+
+    // Legacy fallback
+    this.network.onCollisionGrid = (data) => {
+      // Only use if onMapData hasn't already been handled
+      if (this.collisionGrid.length === 0) {
+        this.collisionGrid = data.grid;
+        this.collisionMapW = data.width;
+        this.collisionMapH = data.height;
+        this.mapTileSize = data.tileSize;
+        this.mapWidthPx = data.width * data.tileSize;
+        this.mapHeightPx = data.height * data.tileSize;
+        this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+        this.buildTileMapLegacy(data);
+      }
+    };
+
+    // Handle zone change notifications
+    this.network.onZoneChange = (data) => {
+      console.log(`[GameScene] Zone change → ${data.zoneId} (spawn: ${data.spawnX}, ${data.spawnY})`);
+      this.currentZoneId = data.zoneId;
+
+      // Teleport the local player to the new spawn
+      this.localX = data.spawnX;
+      this.localY = data.spawnY;
+      if (this.playerSprite) {
+        this.playerSprite.setPosition(this.localX, this.localY);
+      }
+
+      // Clear pending inputs — server position is authoritative after zone change
+      this.pendingInputs = [];
     };
 
     this.network.onPlayerAdd = (player: any, sessionId: string) => {
@@ -419,18 +463,94 @@ export class GameScene extends Phaser.Scene {
   /**
    * Build the visual tilemap from the collision grid data.
    */
-  private buildTileMap(data: CollisionGridData): void {
-    const { grid, width, height, tileSize } = data;
+  /** GID → texture key mapping for all tilesets. */
+  private static readonly GID_TEXTURE_MAP: Record<number, string> = {
+    // Default tileset (GID 1–10)
+    1: 'tile_grass_light',
+    2: 'tile_grass_dark',
+    3: 'tile_dirt',
+    4: 'tile_water',
+    5: 'tile_stone_wall',
+    6: 'tile_wood_fence',
+    7: 'tile_tree',
+    8: 'tile_stone_floor',
+    9: 'tile_portal',
+    10: 'tile_void',
+    // Desert tileset (GID 11–20)
+    11: 'tile_sand_light',
+    12: 'tile_sand_dark',
+    13: 'tile_sand_road',
+    14: 'tile_oasis_water',
+    15: 'tile_sandstone_wall',
+    16: 'tile_cactus',
+    17: 'tile_dead_tree',
+    18: 'tile_desert_rock',
+    19: 'tile_ruins_floor',
+    20: 'tile_quicksand',
+  };
 
+  /**
+   * Build multi-layer tile map from server MapDataPayload.
+   * Renders each tile layer in order, with proper depth sorting.
+   */
+  private buildTileMapFromData(data: MapDataPayload): void {
+    // Clear existing tiles
+    for (const sprite of this.tileSprites) {
+      sprite.destroy();
+    }
+    this.tileSprites = [];
+
+    const { tileLayers, tileSize, width, height } = data;
+
+    let layerDepth = 0;
+    for (const layer of tileLayers) {
+      if (!layer.visible) {
+        layerDepth++;
+        continue;
+      }
+
+      for (let y = 0; y < layer.height; y++) {
+        for (let x = 0; x < layer.width; x++) {
+          const gid = layer.data[y * layer.width + x];
+          if (gid === 0) continue; // Empty tile, skip
+
+          const textureKey = GameScene.GID_TEXTURE_MAP[gid] ?? 'tile_void';
+          const sprite = this.add.sprite(
+            x * tileSize + tileSize / 2,
+            y * tileSize + tileSize / 2,
+            textureKey,
+          );
+          sprite.setDepth(layerDepth);
+          if (layer.opacity < 1) {
+            sprite.setAlpha(layer.opacity);
+          }
+          this.tileSprites.push(sprite);
+        }
+      }
+      layerDepth++;
+    }
+  }
+
+  /**
+   * Legacy tile map builder (old collision-grid-only format).
+   */
+  private buildTileMapLegacy(data: { grid: number[]; width: number; height: number; tileSize: number }): void {
+    for (const sprite of this.tileSprites) {
+      sprite.destroy();
+    }
+    this.tileSprites = [];
+
+    const { grid, width, height, tileSize } = data;
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const isWall = grid[y * width + x] === 1;
-        const tile = this.add.sprite(
+        const sprite = this.add.sprite(
           x * tileSize + tileSize / 2,
           y * tileSize + tileSize / 2,
           isWall ? 'tile_wall' : 'tile_ground',
         );
-        tile.setDepth(isWall ? 1 : 0);
+        sprite.setDepth(isWall ? 1 : 0);
+        this.tileSprites.push(sprite);
       }
     }
   }
@@ -1304,21 +1424,22 @@ export class GameScene extends Phaser.Scene {
   ): { x: number; y: number } {
     const radius = PLAYER_COLLISION_RADIUS;
 
+    const ts = this.mapTileSize;
     const isBlocked = (cx: number, cy: number): boolean => {
-      const minTX = Math.floor((cx - radius) / TILE_SIZE);
-      const maxTX = Math.floor((cx + radius) / TILE_SIZE);
-      const minTY = Math.floor((cy - radius) / TILE_SIZE);
-      const maxTY = Math.floor((cy + radius) / TILE_SIZE);
+      const minTX = Math.floor((cx - radius) / ts);
+      const maxTX = Math.floor((cx + radius) / ts);
+      const minTY = Math.floor((cy - radius) / ts);
+      const maxTY = Math.floor((cy + radius) / ts);
 
       for (let ty = minTY; ty <= maxTY; ty++) {
         for (let tx = minTX; tx <= maxTX; tx++) {
           if (tx < 0 || tx >= this.collisionMapW || ty < 0 || ty >= this.collisionMapH) return true;
           if (this.collisionGrid[ty * this.collisionMapW + tx] !== 1) continue;
 
-          const tileLeft = tx * TILE_SIZE;
-          const tileTop = ty * TILE_SIZE;
-          const closestX = Math.max(tileLeft, Math.min(cx, tileLeft + TILE_SIZE));
-          const closestY = Math.max(tileTop, Math.min(cy, tileTop + TILE_SIZE));
+          const tileLeft = tx * ts;
+          const tileTop = ty * ts;
+          const closestX = Math.max(tileLeft, Math.min(cx, tileLeft + ts));
+          const closestY = Math.max(tileTop, Math.min(cy, tileTop + ts));
           const ddx = cx - closestX;
           const ddy = cy - closestY;
           if (ddx * ddx + ddy * ddy < radius * radius) return true;

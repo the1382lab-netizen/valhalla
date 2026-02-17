@@ -21,8 +21,13 @@ export interface IPlayerState {
     speed: number;
     hp: number;
     maxHp: number;
+    mana: number;
+    maxMana: number;
     alive: boolean;
     inputSeq: number;
+    classId: string;
+    level: number;
+    xp: number;
 }
 export interface TileMapData {
     width: number;
@@ -45,6 +50,16 @@ export declare enum MessageType {
     PLAYER_HIT = "playerHit",
     PLAYER_DIED = "playerDied",
     PLAYER_RESPAWNED = "playerRespawned",
-    MELEE_ATTACK = "meleeAttack"
+    MELEE_ATTACK = "meleeAttack",
+    MISSED = "missed",
+    DODGED = "dodged",
+    BLOCKED = "blocked",
+    INVENTORY_ACTION = "inventoryAction",
+    EQUIP_ITEM = "equipItem",
+    UNEQUIP_ITEM = "unequipItem",
+    DROP_ITEM = "dropItem",
+    SWAP_INVENTORY = "swapInventory",
+    MAP_DATA = "mapData",
+    ZONE_CHANGE = "zoneChange"
 }
 //# sourceMappingURL=types.d.ts.map

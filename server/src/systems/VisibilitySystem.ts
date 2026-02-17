@@ -2,9 +2,11 @@ import {
   TILE_SIZE,
   MAP_WIDTH_TILES,
   MAP_HEIGHT_TILES,
-  VISION_RADIUS,
-  VISION_CONE_ANGLE,
 } from '@valhalla/shared';
+
+// These constants aren't in shared yet — define locally until the FoW system is fully integrated
+const VISION_RADIUS = 400;
+const VISION_CONE_ANGLE = Math.PI;
 
 /**
  * A point in 2D space.

@@ -1,7 +1,11 @@
 // ── World & Tiles ──────────────────────────────────────────
+export const DEFAULT_TILE_SIZE = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.tileSize instead. */
 export const TILE_SIZE = 64;
-export const MAP_WIDTH_TILES = 32;
-export const MAP_HEIGHT_TILES = 32;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.width instead. */
+export const MAP_WIDTH_TILES = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.height instead. */
+export const MAP_HEIGHT_TILES = 64;
 export const MAP_WIDTH_PX = MAP_WIDTH_TILES * TILE_SIZE;
 export const MAP_HEIGHT_PX = MAP_HEIGHT_TILES * TILE_SIZE;
 // ── Server ─────────────────────────────────────────────────
@@ -9,11 +13,13 @@ export const SERVER_TICK_RATE = 60;
 export const SERVER_TICK_MS = 1000 / SERVER_TICK_RATE;
 export const SERVER_PORT = 2567;
 // ── Player ─────────────────────────────────────────────────
-export const PLAYER_SPEED = 200; // pixels per second
+/** @deprecated Use CLASS_TEMPLATES[classId].baseSpeed instead for class-aware speed */
+export const PLAYER_SPEED = 160; // pixels per second (legacy fallback)
 export const PLAYER_SIZE = 48; // sprite size in pixels
 export const PLAYER_COLLISION_RADIUS = 20; // collision circle radius
 // ── Combat ─────────────────────────────────────────────────
-export const PLAYER_MAX_HP = 100;
+/** @deprecated Use computeDerivedStats() for class-aware max HP */
+export const PLAYER_MAX_HP = 100; // legacy fallback
 export const PROJECTILE_SPEED = 400; // pixels per second
 export const PROJECTILE_RADIUS = 6;
 export const PROJECTILE_MAX_RANGE = 600; // pixels before despawning
@@ -25,12 +31,6 @@ export const MELEE_DAMAGE = 25;
 export const MELEE_RANGE = 60; // pixels
 export const MELEE_ARC = Math.PI / 2; // 90 degree arc
 export const MELEE_COOLDOWN_MS = 600;
-// ── Visibility / Field of Vision ─────────────────────────
-export const VISION_RADIUS = 500; // max sight distance in pixels
-export const VISION_CONE_ANGLE = (100 / 180) * Math.PI; // 100° field of vision cone
-export const VISIBILITY_UPDATE_RATE = 15; // how many times per second to recompute visibility
-export const FOG_EXPLORED_ALPHA = 0.65; // alpha for explored-but-not-visible fog
-export const FOG_HIDDEN_ALPHA = 0.95; // alpha for never-seen fog
 // ── Network ────────────────────────────────────────────────
 export const INTERPOLATION_BUFFER_MS = 100; // ms of interpolation delay for remote entities
 // Dynamically resolve the game server URL so LAN clients connect to the right host.
@@ -40,4 +40,11 @@ export const SERVER_URL = typeof window !== 'undefined'
     ? `http://${window.location.hostname}:2567`
     : 'http://localhost:2567';
 export const ROOM_NAME = 'game_room';
+// ── Persistence & Auth ────────────────────────────────────
+export const SAVE_INTERVAL_MS = 30_000; // auto-save every 30 seconds
+export const JWT_EXPIRY = '24h'; // token lifetime
+export const MIN_USERNAME_LENGTH = 3;
+export const MAX_USERNAME_LENGTH = 20;
+export const MIN_PASSWORD_LENGTH = 6;
+export const MAX_CHARACTERS_PER_USER = 4;
 //# sourceMappingURL=constants.js.map

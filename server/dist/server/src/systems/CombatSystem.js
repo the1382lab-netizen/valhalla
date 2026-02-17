@@ -1,8 +1,9 @@
 import { ProjectileState } from '../schema/ProjectileState.js';
-import { PROJECTILE_SPEED, PROJECTILE_RADIUS, PROJECTILE_MAX_RANGE, PROJECTILE_DAMAGE, FIRE_COOLDOWN_MS, INVULNERABILITY_MS, RESPAWN_TIME_MS, PLAYER_COLLISION_RADIUS, MELEE_DAMAGE, MELEE_RANGE, MELEE_ARC, MELEE_COOLDOWN_MS, TILE_SIZE, } from '@valhalla/shared';
+import { PROJECTILE_SPEED, PROJECTILE_RADIUS, PROJECTILE_MAX_RANGE, FIRE_COOLDOWN_MS, INVULNERABILITY_MS, RESPAWN_TIME_MS, PLAYER_COLLISION_RADIUS, MELEE_RANGE, MELEE_ARC, MELEE_COOLDOWN_MS, isRangedMagic, computePhysicalDamage, computeSpellDamage, applyDefenseReduction, rollHit, rollCrit, rollDodge, rollBlock, computeFireCooldown, computeMeleeCooldown, BASE_MELEE_DAMAGE, BASE_RANGED_DAMAGE, BASE_SPELL_DAMAGE, } from '@valhalla/shared';
 let nextProjectileId = 0;
 /**
  * Handles projectile spawning, movement, collision, damage, and melee attacks.
+ * All damage is now stat-driven: uses attacker stats for offense, target stats for defense.
  */
 export class CombatSystem {
     constructor(collision) {
@@ -10,14 +11,29 @@ export class CombatSystem {
     }
     /**
      * Try to fire a projectile for the given player.
-     * Returns the new ProjectileState if successful, null otherwise.
+     * Damage and cooldown scale with player stats.
      */
     tryFire(player, now) {
         if (!player.alive)
             return null;
         if (now < player.fireCooldown)
             return null;
-        player.fireCooldown = now + FIRE_COOLDOWN_MS;
+        const stats = player.stats;
+        const dex = stats?.dexterity ?? 10;
+        // Cooldown scales with dexterity
+        player.fireCooldown = now + computeFireCooldown(FIRE_COOLDOWN_MS, dex);
+        // Compute projectile damage based on class type
+        const classId = player.classId;
+        let damage;
+        let damageType;
+        if (isRangedMagic(classId)) {
+            damage = computeSpellDamage(stats?.intelligence ?? 10, BASE_SPELL_DAMAGE);
+            damageType = 'magical';
+        }
+        else {
+            damage = computePhysicalDamage(stats?.strength ?? 10, BASE_RANGED_DAMAGE);
+            damageType = 'physical';
+        }
         const proj = new ProjectileState();
         proj.id = `proj_${nextProjectileId++}`;
         proj.ownerId = player.id;
@@ -27,12 +43,19 @@ export class CombatSystem {
         proj.y = player.y + Math.sin(player.aimAngle) * spawnOffset;
         proj.angle = player.aimAngle;
         proj.speed = PROJECTILE_SPEED;
-        proj.damage = PROJECTILE_DAMAGE;
+        proj.damage = damage;
         proj.distanceTravelled = 0;
+        // Store damage type on the projectile for defense calculations on hit
+        proj._damageType = damageType;
+        // Store attacker stats for resolution on hit
+        proj._attackerDex = dex;
+        proj._critChance = stats?.critChance ?? 0.05;
+        proj._critDamage = stats?.critDamage ?? 0.5;
         return proj;
     }
     /**
-     * Try to perform a melee attack. Returns a list of hit player IDs.
+     * Try to perform a melee attack. Returns a list of combat events.
+     * Melee is always physical damage.
      */
     tryMelee(attacker, players, now) {
         const events = [];
@@ -40,12 +63,16 @@ export class CombatSystem {
             return events;
         if (now < attacker.meleeCooldown)
             return events;
-        attacker.meleeCooldown = now + MELEE_COOLDOWN_MS;
+        const stats = attacker.stats;
+        const dex = stats?.dexterity ?? 10;
+        attacker.meleeCooldown = now + computeMeleeCooldown(MELEE_COOLDOWN_MS, dex);
         // Broadcast melee swing visual
         events.push({
             type: 'meleeAttack',
             data: { attackerId: attacker.id, angle: attacker.aimAngle },
         });
+        // Compute melee damage from strength
+        const rawDamage = computePhysicalDamage(stats?.strength ?? 10, BASE_MELEE_DAMAGE);
         // Check all players in range and within the arc
         players.forEach((target, targetId) => {
             if (targetId === attacker.id)
@@ -69,15 +96,14 @@ export class CombatSystem {
                 angleDiff += 2 * Math.PI;
             if (Math.abs(angleDiff) > MELEE_ARC / 2)
                 return;
-            // Hit!
-            const hitEvents = this.applyDamage(target, MELEE_DAMAGE, attacker.id, now);
+            // Hit! Apply stat-driven damage
+            const hitEvents = this.applyStatDamage(target, rawDamage, 'physical', dex, stats?.critChance ?? 0.05, stats?.critDamage ?? 0.5, attacker.id, now);
             events.push(...hitEvents);
         });
         return events;
     }
     /**
      * Update all projectiles: move, check wall collision, check player collision.
-     * Returns projectile IDs to remove and any combat events.
      */
     updateProjectiles(projectiles, players, dt, now) {
         const toRemove = [];
@@ -116,7 +142,12 @@ export class CombatSystem {
                 if (dist < hitDist) {
                     hitPlayer = true;
                     toRemove.push(projId);
-                    const hitEvents = this.applyDamage(player, proj.damage, proj.ownerId, now);
+                    // Stat-driven damage with projectile's stored attacker stats
+                    const damageType = proj._damageType ?? 'physical';
+                    const attackerDex = proj._attackerDex ?? 10;
+                    const critChance = proj._critChance ?? 0.05;
+                    const critDamage = proj._critDamage ?? 0.5;
+                    const hitEvents = this.applyStatDamage(player, proj.damage, damageType, attackerDex, critChance, critDamage, proj.ownerId, now);
                     events.push(...hitEvents);
                 }
             });
@@ -124,12 +155,58 @@ export class CombatSystem {
         return { toRemove, events };
     }
     /**
-     * Apply damage to a player. Returns events generated (hit, and possibly death).
+     * Apply stat-driven damage to a target.
+     * Rolls hit → dodge → block → crit → defense reduction.
+     *
+     * Hit chance is determined by the attacker's dexterity.
+     * If the attack misses, nothing else is checked.
+     * If it hits, the target can still dodge (based on dodgeRating)
+     * or block (based on blockRating, reduces damage by 50%).
      */
-    applyDamage(target, damage, attackerId, now) {
+    applyStatDamage(target, rawDamage, damageType, attackerDex, attackerCritChance, attackerCritDamage, attackerId, now) {
         const events = [];
+        const tStats = target.stats;
+        // 1. Hit roll — attacker's dexterity determines chance to connect
+        if (!rollHit(attackerDex)) {
+            events.push({
+                type: 'missed',
+                data: { targetId: target.id, attackerId },
+            });
+            return events;
+        }
+        // 2. Dodge roll — target's dodge rating
+        if (rollDodge(tStats?.dodgeRating ?? 0)) {
+            events.push({
+                type: 'dodged',
+                data: { targetId: target.id, attackerId },
+            });
+            return events;
+        }
+        // 4. Crit roll
+        const crit = rollCrit(attackerCritChance, attackerCritDamage);
+        let damage = rawDamage * crit.multiplier;
+        // 5. Block roll (only reduces, doesn't negate)
+        let blocked = false;
+        if (rollBlock(tStats?.blockRating ?? 0)) {
+            damage *= 0.5;
+            blocked = true;
+        }
+        // 6. Defense reduction
+        const defense = damageType === 'physical'
+            ? (tStats?.physicalDefense ?? 0)
+            : (tStats?.spellResist ?? 0);
+        damage = applyDefenseReduction(damage, defense);
+        // Floor the final damage (minimum 1)
+        damage = Math.max(1, Math.floor(damage));
+        // Apply
         target.hp -= damage;
         target.invulnerableUntil = now + INVULNERABILITY_MS;
+        if (blocked) {
+            events.push({
+                type: 'blocked',
+                data: { targetId: target.id, attackerId },
+            });
+        }
         events.push({
             type: 'playerHit',
             data: {
@@ -137,6 +214,8 @@ export class CombatSystem {
                 attackerId,
                 damage,
                 remainingHp: target.hp,
+                isCrit: crit.isCrit,
+                blocked,
             },
         });
         if (target.hp <= 0) {
@@ -156,8 +235,10 @@ export class CombatSystem {
     /**
      * Check for dead players ready to respawn.
      */
-    checkRespawns(players, now) {
+    checkRespawns(players, now, respawnPoint) {
         const events = [];
+        const spawnX = respawnPoint?.x ?? 352;
+        const spawnY = respawnPoint?.y ?? 352;
         players.forEach((player) => {
             if (player.alive)
                 return;
@@ -166,11 +247,12 @@ export class CombatSystem {
             // Respawn!
             player.alive = true;
             player.hp = player.maxHp;
+            player.mana = player.maxMana;
             player.respawnAt = 0;
             player.invulnerableUntil = now + INVULNERABILITY_MS * 2; // extra i-frames on respawn
-            // Respawn at a safe position (near spawn point)
-            player.x = 5 * TILE_SIZE + TILE_SIZE / 2;
-            player.y = 5 * TILE_SIZE + TILE_SIZE / 2;
+            // Respawn at the zone's spawn point
+            player.x = spawnX;
+            player.y = spawnY;
             events.push({
                 type: 'playerRespawned',
                 data: { playerId: player.id },

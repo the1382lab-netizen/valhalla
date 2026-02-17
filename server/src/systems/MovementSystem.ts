@@ -6,16 +6,19 @@ import { CollisionSystem } from './CollisionSystem.js';
  * Processes player input and updates authoritative positions.
  */
 export class MovementSystem {
-  private collision: CollisionSystem;
+  private defaultCollision: CollisionSystem;
 
   constructor(collision: CollisionSystem) {
-    this.collision = collision;
+    this.defaultCollision = collision;
   }
 
   /**
    * Apply a single input to a player, advancing their position by dt seconds.
+   * @param collision Optional override collision system (for multi-zone support).
    */
-  processInput(player: PlayerState, input: InputPayload, dt: number): void {
+  processInput(player: PlayerState, input: InputPayload, dt: number, collision?: CollisionSystem): void {
+    const col = collision ?? this.defaultCollision;
+
     // Build direction vector from input flags
     let mx = 0;
     let my = 0;
@@ -29,8 +32,8 @@ export class MovementSystem {
     const dy = dir.y * player.speed * dt;
 
     if (dx !== 0 || dy !== 0) {
-      const resolved = this.collision.resolveMovement(player.x, player.y, dx, dy);
-      const clamped = this.collision.clampToMap(resolved.x, resolved.y);
+      const resolved = col.resolveMovement(player.x, player.y, dx, dy);
+      const clamped = col.clampToMap(resolved.x, resolved.y);
       player.x = clamped.x;
       player.y = clamped.y;
     }

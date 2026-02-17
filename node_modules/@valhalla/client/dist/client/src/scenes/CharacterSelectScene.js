@@ -1,0 +1,171 @@
+import Phaser from 'phaser';
+import { CLASS_TEMPLATES, CLASS_COLORS } from '@valhalla/shared';
+import { AuthClient } from '../systems/AuthClient.js';
+/**
+ * Character selection screen.
+ * Shows existing characters as clickable cards. Allows playing, deleting,
+ * or creating a new character.
+ */
+export class CharacterSelectScene extends Phaser.Scene {
+    characters = [];
+    token = '';
+    username = '';
+    constructor() {
+        super({ key: 'CharacterSelectScene' });
+    }
+    init(data) {
+        this.characters = data.characters || [];
+        this.token = data.token || '';
+        this.username = data.username || '';
+    }
+    create() {
+        const { width, height } = this.cameras.main;
+        // Title
+        this.add.text(width / 2, 40, 'VALHALLA', {
+            fontSize: '48px',
+            color: '#ffcc00',
+            stroke: '#000000',
+            strokeThickness: 4,
+            fontStyle: 'bold',
+        }).setOrigin(0.5);
+        // Subtitle
+        this.add.text(width / 2, 90, `Welcome back, ${this.username}`, {
+            fontSize: '16px',
+            color: '#888888',
+        }).setOrigin(0.5);
+        this.add.text(width / 2, 115, 'Select Your Character', {
+            fontSize: '20px',
+            color: '#cccccc',
+            stroke: '#000000',
+            strokeThickness: 2,
+        }).setOrigin(0.5);
+        // Character cards
+        const cardW = 280;
+        const cardH = 80;
+        const gapY = 12;
+        const startY = 160;
+        this.characters.forEach((char, i) => {
+            const y = startY + i * (cardH + gapY);
+            this.createCharacterCard(width / 2, y, cardW, cardH, char);
+        });
+        // "Create New Character" button
+        const newBtnY = startY + this.characters.length * (cardH + gapY) + 20;
+        this.createNewCharacterButton(width / 2, newBtnY, cardW);
+        // Logout button (bottom-left)
+        const logoutBtn = this.add.text(20, height - 30, 'Logout', {
+            fontSize: '13px',
+            color: '#666666',
+        }).setInteractive({ useHandCursor: true });
+        logoutBtn.on('pointerover', () => logoutBtn.setColor('#aaaaaa'));
+        logoutBtn.on('pointerout', () => logoutBtn.setColor('#666666'));
+        logoutBtn.on('pointerdown', () => {
+            AuthClient.clearToken();
+            this.scene.start('LoginScene');
+        });
+    }
+    createCharacterCard(cx, y, w, h, char) {
+        const classColor = CLASS_COLORS[char.classId] ?? 0xcccccc;
+        const hexColor = '#' + classColor.toString(16).padStart(6, '0');
+        const template = CLASS_TEMPLATES[char.classId];
+        const className = template?.name ?? char.classId;
+        const x = cx - w / 2;
+        // Card background
+        const bg = this.add.rectangle(cx, y + h / 2, w, h, 0x1a1a2e);
+        bg.setStrokeStyle(2, classColor, 0.8);
+        bg.setInteractive({ useHandCursor: true });
+        // Hover
+        bg.on('pointerover', () => {
+            bg.setFillStyle(0x2a2a4e);
+            bg.setStrokeStyle(3, classColor, 1);
+        });
+        bg.on('pointerout', () => {
+            bg.setFillStyle(0x1a1a2e);
+            bg.setStrokeStyle(2, classColor, 0.8);
+        });
+        // Click → play this character
+        bg.on('pointerdown', () => {
+            this.scene.start('GameScene', {
+                characterId: char.id,
+                token: this.token,
+            });
+        });
+        // Class icon (colored circle)
+        const gfx = this.add.graphics();
+        gfx.fillStyle(classColor, 1);
+        gfx.fillCircle(x + 30, y + h / 2, 14);
+        gfx.lineStyle(2, 0xffffff, 0.3);
+        gfx.strokeCircle(x + 30, y + h / 2, 14);
+        // Character name
+        this.add.text(x + 55, y + 14, char.name, {
+            fontSize: '16px',
+            color: '#ffffff',
+            fontStyle: 'bold',
+        });
+        // Class + level
+        this.add.text(x + 55, y + 38, `${className}  Lv.${char.level}`, {
+            fontSize: '12px',
+            color: hexColor,
+        });
+        // Delete button (small X in top-right)
+        const delBtn = this.add.text(x + w - 20, y + 8, 'X', {
+            fontSize: '14px',
+            color: '#664444',
+            fontStyle: 'bold',
+        }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+        delBtn.on('pointerover', () => delBtn.setColor('#ff4444'));
+        delBtn.on('pointerout', () => delBtn.setColor('#664444'));
+        delBtn.on('pointerdown', async (pointer) => {
+            pointer.event.stopPropagation();
+            // Simple confirmation via prompt
+            if (confirm(`Delete "${char.name}"? This cannot be undone.`)) {
+                try {
+                    await AuthClient.deleteCharacter(char.id);
+                    // Refresh the character list
+                    const updatedChars = await AuthClient.getCharacters();
+                    if (updatedChars.length > 0) {
+                        this.scene.restart({
+                            characters: updatedChars,
+                            token: this.token,
+                            username: this.username,
+                        });
+                    }
+                    else {
+                        // No characters left, go to class select
+                        this.scene.start('ClassSelectScene', {
+                            token: this.token,
+                            isNewAccount: false,
+                        });
+                    }
+                }
+                catch (err) {
+                    console.error('Failed to delete character:', err);
+                }
+            }
+        });
+    }
+    createNewCharacterButton(cx, y, w) {
+        const h = 48;
+        const bg = this.add.rectangle(cx, y + h / 2, w, h, 0x0d0d1a);
+        bg.setStrokeStyle(2, 0x555555, 0.6);
+        bg.setInteractive({ useHandCursor: true });
+        bg.on('pointerover', () => {
+            bg.setFillStyle(0x1a1a2e);
+            bg.setStrokeStyle(2, 0xffcc00, 0.8);
+        });
+        bg.on('pointerout', () => {
+            bg.setFillStyle(0x0d0d1a);
+            bg.setStrokeStyle(2, 0x555555, 0.6);
+        });
+        bg.on('pointerdown', () => {
+            this.scene.start('ClassSelectScene', {
+                token: this.token,
+                isNewAccount: false,
+            });
+        });
+        this.add.text(cx, y + h / 2, '+ Create New Character', {
+            fontSize: '15px',
+            color: '#ffcc00',
+        }).setOrigin(0.5);
+    }
+}
+//# sourceMappingURL=CharacterSelectScene.js.map

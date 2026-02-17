@@ -12,6 +12,8 @@ export class NetworkClient {
     onPlayerRemove = null;
     onPlayerChange = null;
     onCollisionGrid = null;
+    onMapData = null;
+    onZoneChange = null;
     // Projectile callbacks
     onProjectileAdd = null;
     onProjectileRemove = null;
@@ -21,26 +23,43 @@ export class NetworkClient {
     onPlayerDied = null;
     onPlayerRespawned = null;
     onMeleeAttack = null;
-    // Visibility callbacks
-    onVisibility = null;
+    onMissed = null;
+    onDodged = null;
+    onBlocked = null;
+    // Inventory & equipment callbacks
+    onInventoryChange = null;
+    onEquipmentChange = null;
     constructor() {
         this.client = new Client(SERVER_URL);
     }
     get sessionId() {
         return this.room?.sessionId;
     }
-    async connect() {
+    async connect(options) {
         try {
-            this.room = await this.client.joinOrCreate(ROOM_NAME);
+            this.room = await this.client.joinOrCreate(ROOM_NAME, options);
             console.log(`[Network] Connected as ${this.room.sessionId}`);
-            // Listen for collision grid
-            this.room.onMessage('collisionGrid', (data) => {
-                console.log('[Network] Received collision grid');
-                this.onCollisionGrid?.(data);
+            // Listen for map data (new multi-layer system)
+            this.room.onMessage(MessageType.MAP_DATA, (data) => {
+                console.log(`[Network] Received map data for zone "${data.zoneId}" (${data.width}×${data.height})`);
+                this.onMapData?.(data);
+                // Also fire legacy callback for backward compatibility
+                this.onCollisionGrid?.({
+                    grid: data.collisionGrid,
+                    width: data.width,
+                    height: data.height,
+                    tileSize: data.tileSize,
+                });
             });
-            // Listen for visibility updates
-            this.room.onMessage('visibility', (data) => {
-                this.onVisibility?.(data);
+            // Listen for zone change notifications
+            this.room.onMessage(MessageType.ZONE_CHANGE, (data) => {
+                console.log(`[Network] Zone change → ${data.zoneId}`);
+                this.onZoneChange?.(data);
+            });
+            // Legacy collision grid handler (in case server still sends old format)
+            this.room.onMessage('collisionGrid', (data) => {
+                console.log('[Network] Received legacy collision grid');
+                this.onCollisionGrid?.(data);
             });
             // Combat event messages
             this.room.onMessage(MessageType.PLAYER_HIT, (data) => {
@@ -55,14 +74,63 @@ export class NetworkClient {
             this.room.onMessage(MessageType.MELEE_ATTACK, (data) => {
                 this.onMeleeAttack?.(data);
             });
+            this.room.onMessage(MessageType.MISSED, (data) => {
+                this.onMissed?.(data);
+            });
+            this.room.onMessage(MessageType.DODGED, (data) => {
+                this.onDodged?.(data);
+            });
+            this.room.onMessage(MessageType.BLOCKED, (data) => {
+                this.onBlocked?.(data);
+            });
             // Use Colyseus 0.17 Callbacks API for state change listeners
             const callbacks = Callbacks.get(this.room);
             callbacks.onAdd('players', (player, key) => {
                 const sessionId = key;
+                const isLocal = sessionId === this.room?.sessionId;
                 this.onPlayerAdd?.(player, sessionId);
+                // Helpers for local player sync
+                const fireInventoryChange = isLocal ? () => {
+                    if (!player.inventory)
+                        return;
+                    const items = [];
+                    for (let i = 0; i < player.inventory.length; i++) {
+                        const slot = player.inventory[i];
+                        items.push({ itemId: slot.itemId, quantity: slot.quantity });
+                    }
+                    this.onInventoryChange?.(items);
+                } : null;
+                const fireEquipmentChange = isLocal ? () => {
+                    this.onEquipmentChange?.({
+                        weapon: player.equipWeapon ?? '',
+                        helm: player.equipHelm ?? '',
+                        chest: player.equipChest ?? '',
+                        legs: player.equipLegs ?? '',
+                        boots: player.equipBoots ?? '',
+                        ring: player.equipRing ?? '',
+                    });
+                } : null;
                 callbacks.onChange(player, () => {
                     this.onPlayerChange?.(player, sessionId);
+                    // Equipment fields are regular schema props — onChange fires for them
+                    fireEquipmentChange?.();
+                    // Also refresh inventory on any player change to catch splice-replace swaps
+                    fireInventoryChange?.();
                 });
+                if (isLocal) {
+                    // Fire once immediately with current state
+                    fireInventoryChange();
+                    fireEquipmentChange();
+                    // Listen for add/remove on the inventory ArraySchema
+                    if (player.inventory) {
+                        callbacks.onAdd(player.inventory, () => {
+                            fireInventoryChange();
+                        });
+                        callbacks.onRemove(player.inventory, () => {
+                            fireInventoryChange();
+                        });
+                    }
+                }
             });
             callbacks.onRemove('players', (_player, key) => {
                 this.onPlayerRemove?.(key);
@@ -86,6 +154,18 @@ export class NetworkClient {
     }
     sendInput(input) {
         this.room?.send(MessageType.INPUT, input);
+    }
+    sendEquipItem(slotIndex) {
+        this.room?.send(MessageType.EQUIP_ITEM, { slotIndex });
+    }
+    sendUnequipItem(slotType, targetIndex) {
+        this.room?.send(MessageType.UNEQUIP_ITEM, { slotType, targetIndex });
+    }
+    sendDropItem(source, slotIndex, slotType) {
+        this.room?.send(MessageType.DROP_ITEM, { source, slotIndex, slotType });
+    }
+    sendSwapInventory(fromIndex, toIndex) {
+        this.room?.send(MessageType.SWAP_INVENTORY, { fromIndex, toIndex });
     }
     disconnect() {
         this.room?.leave();

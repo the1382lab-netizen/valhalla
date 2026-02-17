@@ -1,7 +1,11 @@
 // ── World & Tiles ──────────────────────────────────────────
+export const DEFAULT_TILE_SIZE = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.tileSize instead. */
 export const TILE_SIZE = 64;
-export const MAP_WIDTH_TILES = 32;
-export const MAP_HEIGHT_TILES = 32;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.width instead. */
+export const MAP_WIDTH_TILES = 64;
+/** @deprecated Maps now define their own dimensions. Use ParsedMapData.height instead. */
+export const MAP_HEIGHT_TILES = 64;
 export const MAP_WIDTH_PX = MAP_WIDTH_TILES * TILE_SIZE;
 export const MAP_HEIGHT_PX = MAP_HEIGHT_TILES * TILE_SIZE;
 

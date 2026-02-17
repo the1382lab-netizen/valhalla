@@ -1,6 +1,7 @@
 import { Client, Room, Callbacks } from '@colyseus/sdk';
-import { SERVER_URL, ROOM_NAME, InputPayload, MessageType } from '@valhalla/shared';
+import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload } from '@valhalla/shared';
 
+/** @deprecated Use MapDataPayload instead */
 export interface CollisionGridData {
   grid: number[];
   width: number;
@@ -49,6 +50,8 @@ export class NetworkClient {
   onPlayerRemove: ((sessionId: string) => void) | null = null;
   onPlayerChange: ((player: any, sessionId: string) => void) | null = null;
   onCollisionGrid: ((data: CollisionGridData) => void) | null = null;
+  onMapData: ((data: MapDataPayload) => void) | null = null;
+  onZoneChange: ((data: { zoneId: string; spawnX: number; spawnY: number }) => void) | null = null;
 
   // Projectile callbacks
   onProjectileAdd: ((proj: any, id: string) => void) | null = null;
@@ -81,9 +84,28 @@ export class NetworkClient {
       this.room = await this.client.joinOrCreate(ROOM_NAME, options);
       console.log(`[Network] Connected as ${this.room.sessionId}`);
 
-      // Listen for collision grid
+      // Listen for map data (new multi-layer system)
+      this.room.onMessage(MessageType.MAP_DATA, (data: MapDataPayload) => {
+        console.log(`[Network] Received map data for zone "${data.zoneId}" (${data.width}×${data.height})`);
+        this.onMapData?.(data);
+        // Also fire legacy callback for backward compatibility
+        this.onCollisionGrid?.({
+          grid: data.collisionGrid,
+          width: data.width,
+          height: data.height,
+          tileSize: data.tileSize,
+        });
+      });
+
+      // Listen for zone change notifications
+      this.room.onMessage(MessageType.ZONE_CHANGE, (data: { zoneId: string; spawnX: number; spawnY: number }) => {
+        console.log(`[Network] Zone change → ${data.zoneId}`);
+        this.onZoneChange?.(data);
+      });
+
+      // Legacy collision grid handler (in case server still sends old format)
       this.room.onMessage('collisionGrid', (data: CollisionGridData) => {
-        console.log('[Network] Received collision grid');
+        console.log('[Network] Received legacy collision grid');
         this.onCollisionGrid?.(data);
       });
 

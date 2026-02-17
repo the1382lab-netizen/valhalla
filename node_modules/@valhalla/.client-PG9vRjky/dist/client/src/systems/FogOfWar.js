@@ -1,4 +1,7 @@
-import { MAP_WIDTH_PX, MAP_HEIGHT_PX, FOG_EXPLORED_ALPHA, FOG_HIDDEN_ALPHA, } from '@valhalla/shared';
+import { MAP_WIDTH_PX, MAP_HEIGHT_PX, } from '@valhalla/shared';
+// These constants aren't in shared yet — define locally until the FoW system is fully integrated
+const FOG_EXPLORED_ALPHA = 0.5;
+const FOG_HIDDEN_ALPHA = 0.95;
 /**
  * FogOfWar — renders a fog overlay on the game world.
  *

@@ -1,4 +1,4 @@
-import { PLAYER_SPEED, normalise } from '@valhalla/shared';
+import { normalise } from '@valhalla/shared';
 /**
  * Processes player input and updates authoritative positions.
  */
@@ -22,8 +22,8 @@ export class MovementSystem {
         if (input.right)
             mx += 1;
         const dir = normalise(mx, my);
-        const dx = dir.x * PLAYER_SPEED * dt;
-        const dy = dir.y * PLAYER_SPEED * dt;
+        const dx = dir.x * player.speed * dt;
+        const dy = dir.y * player.speed * dt;
         if (dx !== 0 || dy !== 0) {
             const resolved = this.collision.resolveMovement(player.x, player.y, dx, dy);
             const clamped = this.collision.clampToMap(resolved.x, resolved.y);

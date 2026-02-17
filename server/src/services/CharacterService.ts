@@ -10,8 +10,9 @@ import {
   computeDerivedStats,
   ItemId,
   EquipSlotType,
-  TILE_SIZE,
   MAX_CHARACTERS_PER_USER,
+  ZoneId,
+  ZONE_REGISTRY,
 } from '@valhalla/shared';
 
 // ── Types ───────────────────────────────────────────────────
@@ -58,6 +59,7 @@ export interface SaveCharacterData {
   level: number;
   positionX: number;
   positionY: number;
+  zoneId: string;
   alive: boolean;
   inventory: InventorySlotData[];
   equipment: EquipmentData[];
@@ -141,14 +143,15 @@ export function createCharacter(userId: number, name: string, classId: string): 
   // Compute initial stats
   const stats = computeDerivedStats(classId as ClassId, 1);
   const now = Date.now();
-  const spawnX = 5 * TILE_SIZE + TILE_SIZE / 2;
-  const spawnY = 5 * TILE_SIZE + TILE_SIZE / 2;
+  const startZone = ZONE_REGISTRY[ZoneId.GRASSLANDS];
+  const spawnX = startZone.defaultSpawn.x;
+  const spawnY = startZone.defaultSpawn.y;
 
   // Insert character
   db.run(
     `INSERT INTO characters (user_id, name, class_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
-     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, 'main', 1, ?, ?)`,
-    [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, now, now],
+     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now],
   );
 
   const charIdResult = db.exec('SELECT last_insert_rowid() as id');
@@ -254,13 +257,13 @@ export function loadCharacter(characterId: number, userId: number): LoadedCharac
 export function saveCharacter(characterId: number, data: SaveCharacterData): void {
   const db = getDb();
 
-  // Update character fields
+  // Update character fields (including zone_id for position persistence)
   db.run(
     `UPDATE characters SET hp = ?, mana = ?, xp = ?, level = ?,
-     position_x = ?, position_y = ?, alive = ?, updated_at = ?
+     position_x = ?, position_y = ?, zone_id = ?, alive = ?, updated_at = ?
      WHERE id = ?`,
     [data.hp, data.mana, data.xp, data.level,
-     data.positionX, data.positionY, data.alive ? 1 : 0, Date.now(),
+     data.positionX, data.positionY, data.zoneId, data.alive ? 1 : 0, Date.now(),
      characterId],
   );
 

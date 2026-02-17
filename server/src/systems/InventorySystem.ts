@@ -185,9 +185,17 @@ export function swapInventorySlots(player: PlayerState, fromIndex: number, toInd
   newToSlot.itemId = fromItemId;
   newToSlot.quantity = fromQty;
 
-  // Replace via splice (triggers onRemove + onAdd for Colyseus change detection)
-  player.inventory.splice(fromIndex, 1, newFromSlot);
-  player.inventory.splice(toIndex, 1, newToSlot);
+  // IMPORTANT: Process the HIGHER index first so the first splice doesn't
+  // corrupt Colyseus ArraySchema's internal ChangeTree tracking for the
+  // lower index. Two sequential splices at arbitrary order can cause the
+  // ChangeTree to try deleting a stale/non-existing index.
+  const hi = Math.max(fromIndex, toIndex);
+  const lo = Math.min(fromIndex, toIndex);
+  const hiSlot = hi === fromIndex ? newFromSlot : newToSlot;
+  const loSlot = hi === fromIndex ? newToSlot : newFromSlot;
+
+  player.inventory.splice(hi, 1, hiSlot);
+  player.inventory.splice(lo, 1, loSlot);
 
   return true;
 }

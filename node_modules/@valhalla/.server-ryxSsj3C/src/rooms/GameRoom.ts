@@ -15,6 +15,7 @@ import {
   computeDerivedStats,
   ZoneId,
   ZoneConnection,
+  ZONE_REGISTRY,
 } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken, JwtPayload } from '../services/AuthService.js';
@@ -151,6 +152,37 @@ export class GameRoom extends Room<{ state: GameState }> {
   }
 
   /**
+   * Find a safe (non-colliding) position near the given coordinates.
+   * Uses a spiral search pattern, expanding outward by one tile at a time.
+   * Returns the original position if already safe, or the zone respawn as last resort.
+   */
+  private findSafeSpawn(x: number, y: number, collision: CollisionSystem, fallback: { x: number; y: number }): { x: number; y: number } {
+    if (!collision.isCircleBlocked(x, y)) {
+      return { x, y };
+    }
+
+    const ts = collision.getTileSize();
+    // Spiral outward up to 10 tiles away
+    for (let dist = 1; dist <= 10; dist++) {
+      for (let dx = -dist; dx <= dist; dx++) {
+        for (let dy = -dist; dy <= dist; dy++) {
+          // Only check the ring at this distance, not interior
+          if (Math.abs(dx) !== dist && Math.abs(dy) !== dist) continue;
+          const testX = x + dx * ts;
+          const testY = y + dy * ts;
+          if (!collision.isCircleBlocked(testX, testY)) {
+            return { x: testX, y: testY };
+          }
+        }
+      }
+    }
+
+    // Couldn't find safe spot nearby — use zone respawn point
+    console.warn(`[GameRoom] Could not find safe spawn near (${x}, ${y}), using zone respawn`);
+    return fallback;
+  }
+
+  /**
    * Colyseus auth hook — validates JWT before allowing the client to join.
    * Returned value is stored on client.auth.
    */
@@ -206,7 +238,10 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.classId = charData.classId;
     player.level = charData.level;
     player.xp = charData.xp;
-    player.zoneId = this.defaultZoneId;
+    // Restore saved zone — fall back to default if unknown/missing/invalid
+    const savedZone = charData.zoneId;
+    const isValidZone = savedZone && savedZone in ZONE_REGISTRY;
+    player.zoneId = isValidZone ? savedZone : this.defaultZoneId;
 
     // Compute stats from class + level
     const stats = computeDerivedStats(charData.classId as ClassId, charData.level);
@@ -224,8 +259,10 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.x = charData.positionX;
     player.y = charData.positionY;
 
-    // If the character was dead, respawn them fresh at zone spawn
+    // Load the player's zone collision data
     const playerZone = this.getPlayerZone(player);
+
+    // If the character was dead, respawn them fresh at zone spawn
     if (!player.alive) {
       player.alive = true;
       player.hp = stats.maxHp;
@@ -233,6 +270,11 @@ export class GameRoom extends Room<{ state: GameState }> {
       player.x = playerZone.respawnPoint.x;
       player.y = playerZone.respawnPoint.y;
     }
+
+    // Validate restored position — nudge out of walls if stuck
+    const safePos = this.findSafeSpawn(player.x, player.y, playerZone.collision, playerZone.respawnPoint);
+    player.x = safePos.x;
+    player.y = safePos.y;
 
     // ── Restore equipment ──
     for (const equip of charData.equipment) {
@@ -392,13 +434,15 @@ export class GameRoom extends Room<{ state: GameState }> {
           const fromZone = player.zoneId;
           const toZone = portal.targetZone;
 
-          // Ensure the target zone is loaded
-          this.loadZoneCache(toZone);
-
-          // Move player to the target zone
+          // Load the target zone and find a safe spawn position
+          const targetEntry = this.loadZoneCache(toZone);
+          const safeSpawn = this.findSafeSpawn(
+            portal.targetSpawn.x, portal.targetSpawn.y,
+            targetEntry.collision, targetEntry.respawnPoint,
+          );
           player.zoneId = toZone;
-          player.x = portal.targetSpawn.x;
-          player.y = portal.targetSpawn.y;
+          player.x = safeSpawn.x;
+          player.y = safeSpawn.y;
 
           // Send the full map data for the new zone so the client can rebuild its tile map
           const mapPayload = this.mapManager.getMapDataForClient(toZone);
@@ -407,8 +451,8 @@ export class GameRoom extends Room<{ state: GameState }> {
           // Also send the zone change notification (with spawn coords for immediate repositioning)
           client.send(MessageType.ZONE_CHANGE, {
             zoneId: toZone,
-            spawnX: portal.targetSpawn.x,
-            spawnY: portal.targetSpawn.y,
+            spawnX: safeSpawn.x,
+            spawnY: safeSpawn.y,
           });
 
           console.log(`[GameRoom] Player ${sessionId} zone transition: ${fromZone} → ${toZone} via "${portal.id}"`);
@@ -436,8 +480,12 @@ export class GameRoom extends Room<{ state: GameState }> {
       player.respawnAt = 0;
       player.invulnerableUntil = now + 6000; // extra i-frames on respawn
 
-      player.x = zone.respawnPoint.x;
-      player.y = zone.respawnPoint.y;
+      const safeRespawn = this.findSafeSpawn(
+        zone.respawnPoint.x, zone.respawnPoint.y,
+        zone.collision, zone.respawnPoint,
+      );
+      player.x = safeRespawn.x;
+      player.y = safeRespawn.y;
 
       events.push({
         type: 'playerRespawned',
@@ -491,6 +539,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         level: player.level,
         positionX: player.x,
         positionY: player.y,
+        zoneId: player.zoneId || this.defaultZoneId,
         alive: player.alive,
         inventory,
         equipment,

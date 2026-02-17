@@ -62,7 +62,7 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
       mana INTEGER NOT NULL,
       position_x REAL NOT NULL,
       position_y REAL NOT NULL,
-      zone_id TEXT NOT NULL DEFAULT 'main',
+      zone_id TEXT NOT NULL DEFAULT 'grasslands',
       alive INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -92,6 +92,10 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
   db.run('CREATE INDEX IF NOT EXISTS idx_characters_user_id ON characters(user_id);');
   db.run('CREATE INDEX IF NOT EXISTS idx_inventory_character_id ON inventory_items(character_id);');
   db.run('CREATE INDEX IF NOT EXISTS idx_equipment_character_id ON character_equipment(character_id);');
+
+  // ── Migrations ──
+  // Fix legacy 'main' zone_id to 'grasslands'
+  db.run("UPDATE characters SET zone_id = 'grasslands' WHERE zone_id = 'main'");
 
   saveToDisk();
   console.log(`[DB] SQLite database initialized (sql.js WASM)`);

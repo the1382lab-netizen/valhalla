@@ -1,5 +1,5 @@
 import { Client, Room, Callbacks } from '@colyseus/sdk';
-import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload, ChatMessagePayload } from '@valhalla/shared';
+import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload, ChatMessagePayload, SpellImpactPayload } from '@valhalla/shared';
 
 /** @deprecated Use MapDataPayload instead */
 export interface CollisionGridData {
@@ -57,6 +57,14 @@ export class NetworkClient {
   onProjectileAdd: ((proj: any, id: string) => void) | null = null;
   onProjectileRemove: ((id: string) => void) | null = null;
   onProjectileChange: ((proj: any, id: string) => void) | null = null;
+
+  // Spell projectile callbacks (e.g. Fireball)
+  onSpellProjectileAdd: ((proj: any, id: string) => void) | null = null;
+  onSpellProjectileRemove: ((id: string) => void) | null = null;
+  onSpellProjectileChange: ((proj: any, id: string) => void) | null = null;
+
+  // Spell impact VFX callback
+  onSpellImpact: ((data: SpellImpactPayload) => void) | null = null;
 
   // NPC callbacks
   onNpcAdd: ((npc: any, id: string) => void) | null = null;
@@ -197,6 +205,11 @@ export class NetworkClient {
         this.onActionBarData?.(data);
       });
 
+      // Spell impact VFX
+      this.room.onMessage(MessageType.SPELL_IMPACT, (data: SpellImpactPayload) => {
+        this.onSpellImpact?.(data);
+      });
+
       // Chat messages
       this.room.onMessage(MessageType.CHAT_MESSAGE, (data: ChatMessagePayload) => {
         this.onChatMessage?.(data);
@@ -276,6 +289,20 @@ export class NetworkClient {
         this.onProjectileRemove?.(key as string);
       });
 
+      // Spell projectile state sync (Fireball, etc.)
+      callbacks.onAdd('spellProjectiles', (proj: any, key: any) => {
+        const projId = key as string;
+        this.onSpellProjectileAdd?.(proj, projId);
+
+        callbacks.onChange(proj, () => {
+          this.onSpellProjectileChange?.(proj, projId);
+        });
+      });
+
+      callbacks.onRemove('spellProjectiles', (_proj: any, key: any) => {
+        this.onSpellProjectileRemove?.(key as string);
+      });
+
       // NPC state sync
       callbacks.onAdd('npcs', (npc: any, key: any) => {
         const npcId = key as string;
@@ -315,8 +342,8 @@ export class NetworkClient {
     this.room?.send(MessageType.SWAP_INVENTORY, { fromIndex, toIndex });
   }
 
-  sendCastSkill(skillId: string, targetId?: string): void {
-    this.room?.send(MessageType.CAST_SKILL, { skillId, targetId });
+  sendCastSkill(skillId: string, targetId?: string, groundX?: number, groundY?: number): void {
+    this.room?.send(MessageType.CAST_SKILL, { skillId, targetId, groundX, groundY });
   }
 
   sendCancelCast(): void {

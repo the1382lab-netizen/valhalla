@@ -55,11 +55,24 @@ interface ProjectileData {
  * Manages rendering and interpolation for remote player entities,
  * projectiles, HP bars, class labels, and combat visual effects.
  */
+/** Spell projectile visual data (interpolated, direction-aware) */
+interface SpellProjectileData {
+  sprite: Phaser.GameObjects.Graphics;
+  targetX: number;
+  targetY: number;
+  previousX: number;
+  previousY: number;
+  angle: number; // radians — used to orient the projectile gfx
+  lastUpdateTime: number;
+  skillId: string;
+}
+
 export class EntityRenderer {
   private scene: Phaser.Scene;
   private remotePlayers: Map<string, RemotePlayerData> = new Map();
   private npcs: Map<string, NPCData> = new Map();
   private projectiles: Map<string, ProjectileData> = new Map();
+  private spellProjectiles: Map<string, SpellProjectileData> = new Map();
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -297,6 +310,115 @@ export class EntityRenderer {
     data.lastUpdateTime = Date.now();
   }
 
+  // ── Spell Projectiles (e.g. Fireball) ─────────────────────
+
+  addSpellProjectile(id: string, x: number, y: number, targetX: number, targetY: number, skillId: string): void {
+    // Draw at (0, 0) relative to the Graphics object, then position the object in world space.
+    // This lets us move the fireball by setting gfx.x / gfx.y, and lets Phaser tweens
+    // scale/rotate around the correct world-space origin.
+    const gfx = this.drawFireball();
+    gfx.x = x;
+    gfx.y = y;
+
+    this.spellProjectiles.set(id, {
+      sprite: gfx,
+      targetX: x,
+      targetY: y,
+      previousX: x,
+      previousY: y,
+      angle: Math.atan2(targetY - y, targetX - x),
+      lastUpdateTime: Date.now(),
+      skillId,
+    });
+  }
+
+  updateSpellProjectileTarget(id: string, x: number, y: number): void {
+    const data = this.spellProjectiles.get(id);
+    if (!data) return;
+
+    // sprite.x / sprite.y now correctly return the Graphics world position
+    data.previousX = data.sprite.x;
+    data.previousY = data.sprite.y;
+
+    data.targetX = x;
+    data.targetY = y;
+    data.lastUpdateTime = Date.now();
+  }
+
+  removeSpellProjectile(id: string): void {
+    const data = this.spellProjectiles.get(id);
+    if (data) {
+      data.sprite.destroy();
+      this.spellProjectiles.delete(id);
+    }
+  }
+
+  /**
+   * Play a fireball explosion at the given world position.
+   * Called when the server sends a SPELL_IMPACT event.
+   *
+   * Graphics are drawn at (0, 0) in local space; the objects are positioned
+   * at (x, y) in world space. Phaser's tween then scales around (x, y),
+   * not around the world origin.
+   */
+  showSpellImpact(x: number, y: number, radius: number, _skillId: string): void {
+    // Outer blast ring — positioned at the detonation point
+    const ring = this.scene.add.graphics();
+    ring.setDepth(10);
+    ring.x = x;
+    ring.y = y;
+    ring.lineStyle(4, 0xff6600, 1);
+    ring.fillStyle(0xff4400, 0.55);
+    ring.strokeCircle(0, 0, radius);
+    ring.fillCircle(0, 0, radius);
+
+    // Inner bright core — also centred on the detonation point
+    const core = this.scene.add.graphics();
+    core.setDepth(11);
+    core.x = x;
+    core.y = y;
+    core.fillStyle(0xffee00, 0.9);
+    core.fillCircle(0, 0, radius * 0.3);
+
+    // Animate: expand + fade — scales around the Graphics origin, which is now (x, y)
+    this.scene.tweens.add({
+      targets: ring,
+      alpha: 0,
+      scaleX: 1.4,
+      scaleY: 1.4,
+      duration: 350,
+      ease: 'Cubic.Out',
+      onComplete: () => ring.destroy(),
+    });
+
+    this.scene.tweens.add({
+      targets: core,
+      alpha: 0,
+      scaleX: 1.8,
+      scaleY: 1.8,
+      duration: 200,
+      ease: 'Cubic.Out',
+      onComplete: () => core.destroy(),
+    });
+  }
+
+  /**
+   * Draw the fireball visual at local origin (0, 0).
+   * The caller is responsible for positioning the returned Graphics object
+   * in world space by setting gfx.x / gfx.y.
+   */
+  private drawFireball(): Phaser.GameObjects.Graphics {
+    const gfx = this.scene.add.graphics();
+    gfx.setDepth(8);
+    // Outer glow
+    gfx.fillStyle(0xff6600, 0.5);
+    gfx.fillCircle(0, 0, 14);
+    // Core
+    gfx.fillStyle(0xffdd00, 1);
+    gfx.fillCircle(0, 0, 8);
+    return gfx;
+  }
+
   // ── Melee Visual Effect ───────────────────────────────────
 
   showMeleeSlash(x: number, y: number, angle: number): void {
@@ -461,6 +583,16 @@ export class EntityRenderer {
 
     // Projectiles — interpolate positions
     this.projectiles.forEach((data) => {
+      const elapsed = now - data.lastUpdateTime;
+      const t = Math.min(elapsed / INTERPOLATION_BUFFER_MS, 1);
+
+      data.sprite.x = lerp(data.previousX, data.targetX, t);
+      data.sprite.y = lerp(data.previousY, data.targetY, t);
+    });
+
+    // Spell projectiles — interpolate by moving the Graphics object's world position.
+    // The circles are drawn at (0, 0) in local space, so moving .x/.y is all we need.
+    this.spellProjectiles.forEach((data) => {
       const elapsed = now - data.lastUpdateTime;
       const t = Math.min(elapsed / INTERPOLATION_BUFFER_MS, 1);
 

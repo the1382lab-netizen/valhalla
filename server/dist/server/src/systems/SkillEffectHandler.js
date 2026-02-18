@@ -6,16 +6,14 @@
  * This gives us hook points to add unique per-skill mechanics later
  * without refactoring the core casting engine.
  */
-import { SkillCategory, } from '@valhalla/shared';
+import { SkillId, SkillCategory, FIREBALL_PROJECTILE_SPEED, FIREBALL_AOE_RADIUS, FIREBALL_PROJECTILE_RADIUS, PLAYER_COLLISION_RADIUS, } from '@valhalla/shared';
+import { SpellProjectileState } from '../schema/SpellProjectileState.js';
 // ── Handler Registry ───────────────────────────────────────
 /**
  * Custom per-skill handlers. Register specific skill logic here.
  * If a skill has no registered handler, defaultEffect() is used.
  */
-const EFFECT_HANDLERS = {
-// Example: future custom handler
-// [SkillId.WIZARD_BLINK]: blinkHandler,
-};
+const EFFECT_HANDLERS = {};
 /**
  * Register a custom effect handler for a skill.
  */
@@ -27,15 +25,15 @@ export function registerEffectHandler(skillId, handler) {
  * Execute the effect of a completed skill cast.
  * Looks up a custom handler first, then falls back to default.
  */
-export function executeSkillEffect(caster, target, skill, allPlayers, now) {
+export function executeSkillEffect(caster, target, skill, allPlayers, now, ctx) {
     const handler = EFFECT_HANDLERS[skill.id];
     if (handler) {
-        return handler(caster, target, skill, allPlayers, now);
+        return handler(caster, target, skill, allPlayers, now, ctx);
     }
-    return defaultEffect(caster, target, skill, allPlayers, now);
+    return defaultEffect(caster, target, skill, allPlayers, now, ctx);
 }
 // ── Default Effect Handler ─────────────────────────────────
-function defaultEffect(caster, target, skill, allPlayers, now) {
+function defaultEffect(caster, target, skill, allPlayers, now, _ctx) {
     const events = [];
     // ── Damage skills ──
     if (skill.baseDamage) {
@@ -165,10 +163,56 @@ function getAffectedTargets(caster, target, skill, allPlayers) {
             return targets;
         }
         case 'aoeGround':
-            // For now, treat as single target (ground targeting needs position data)
-            return target && target.id !== caster.id ? [target] : [];
+            // Ground-targeted AoE — handled by custom per-skill handlers that spawn spell projectiles.
+            // The default effect handler doesn't apply damage here; see e.g. fireballHandler below.
+            return [];
         default:
             return target ? [target] : [];
     }
 }
+// ── Fireball Handler ───────────────────────────────────────
+let _nextSpellProjId = 0;
+/**
+ * Fireball effect handler.
+ *
+ * Instead of dealing damage immediately, this spawns a SpellProjectileState
+ * that travels toward the ground target. The SpellProjectileSystem handles
+ * movement, collision, and AoE detonation each tick.
+ */
+function fireballHandler(caster, _target, skill, _allPlayers, _now, ctx) {
+    if (!ctx?.spellProjectiles || ctx.groundX == null || ctx.groundY == null) {
+        // Fallback: no projectile map or no target position — skip silently
+        return [];
+    }
+    // Roll damage (will be applied at detonation)
+    const [min, max] = skill.baseDamage;
+    const rawDamage = min + Math.random() * (max - min);
+    const intel = getStatValue(caster, skill.scalingStat);
+    const scaledDamage = rawDamage + intel * 0.8;
+    // Spawn offset: start the fireball just ahead of the caster
+    const spawnOffset = PLAYER_COLLISION_RADIUS + FIREBALL_PROJECTILE_RADIUS + 2;
+    const angle = Math.atan2(ctx.groundY - caster.y, ctx.groundX - caster.x);
+    const proj = new SpellProjectileState();
+    proj.id = `spell_${_nextSpellProjId++}`;
+    proj.ownerId = caster.id;
+    proj.skillId = skill.id;
+    proj.x = caster.x + Math.cos(angle) * spawnOffset;
+    proj.y = caster.y + Math.sin(angle) * spawnOffset;
+    proj.targetX = ctx.groundX;
+    proj.targetY = ctx.groundY;
+    proj.speed = FIREBALL_PROJECTILE_SPEED;
+    // Server-only payload for detonation
+    proj._damage = scaledDamage;
+    proj._aoeRadius = FIREBALL_AOE_RADIUS;
+    proj._critChance = caster.stats?.critChance ?? 0.05;
+    proj._critDamage = caster.stats?.critDamage ?? 0.5;
+    proj._attackerDex = caster.stats?.dexterity ?? 10;
+    proj._distanceTravelled = 0;
+    proj._zoneId = caster.zoneId ?? '';
+    ctx.spellProjectiles.set(proj.id, proj);
+    // Return no immediate skill events — damage fires on detonation
+    return [];
+}
+// Register the Fireball handler
+registerEffectHandler(SkillId.WIZARD_FIREBALL, fireballHandler);
 //# sourceMappingURL=SkillEffectHandler.js.map

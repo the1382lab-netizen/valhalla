@@ -22,6 +22,8 @@ interface SkillTemplate {
   buffDurationMs?: number;
   dotDamagePerSec?: number;
   hotHealPerSec?: number;
+  /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
+  aoeRadius?: number;
   effectNotes: string;
 }
 
@@ -408,6 +410,20 @@ export const SkillEditor: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {/* AoE Radius — only for ground-targeted skills */}
+              {selectedSkill.targetType === 'aoeGround' && (
+                <div className="form-group">
+                  <label className="form-label">AoE Radius (px)</label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    min={1}
+                    value={selectedSkill.aoeRadius || 96}
+                    onChange={(e) => handleUpdateSkill({ aoeRadius: parseInt(e.target.value, 10) || 96 })}
+                  />
+                </div>
+              )}
 
               {/* Category and Scaling */}
               <div className="form-row">

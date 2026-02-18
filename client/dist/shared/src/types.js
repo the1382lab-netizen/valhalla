@@ -27,6 +27,11 @@ export var MessageType;
     MessageType["BUFF_REMOVED"] = "buffRemoved";
     MessageType["SET_ACTION_BAR"] = "setActionBar";
     MessageType["ACTION_BAR_DATA"] = "actionBarData";
+    // ── Spell Projectiles ──
+    MessageType["SPELL_IMPACT"] = "spellImpact";
+    // ── NPC Combat ──
+    MessageType["NPC_HIT"] = "npcHit";
+    MessageType["NPC_DIED"] = "npcDied";
     // ── Chat ──
     MessageType["CHAT_MESSAGE"] = "chatMessage";
 })(MessageType || (MessageType = {}));

@@ -8,6 +8,7 @@ import { MapManager } from '../systems/MapManager.js';
 import { SkillSystem } from '../systems/SkillSystem.js';
 import { DataManager } from '../systems/DataManager.js';
 import { NPCSystem } from '../systems/NPCSystem.js';
+import { SpellProjectileSystem } from '../systems/SpellProjectileSystem.js';
 import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, hasRangedAttack, } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken } from '../services/AuthService.js';
@@ -35,6 +36,7 @@ export class GameRoom extends Room {
         const defaultEntry = this.loadZoneCache(this.defaultZoneId);
         this.movement = new MovementSystem(defaultEntry.collision);
         this.combat = new CombatSystem(defaultEntry.collision);
+        this.spellProjectileSystem = new SpellProjectileSystem(defaultEntry.collision);
         this.skillSystem = new SkillSystem();
         this.npcSystem = new NPCSystem();
         // Spawn NPCs for all known zones
@@ -100,7 +102,7 @@ export class GameRoom extends Room {
             if (!player)
                 return;
             const now = Date.now();
-            const events = this.skillSystem.tryStartCast(player, data.skillId, data.targetId ?? null, this.state.players, now);
+            const events = this.skillSystem.tryStartCast(player, data.skillId, data.targetId ?? null, this.state.players, now, this.state.spellProjectiles, data.groundX ?? null, data.groundY ?? null);
             this.broadcastSkillEvents(events, client);
         });
         // Cancel an active cast
@@ -432,7 +434,7 @@ export class GameRoom extends Room {
                 }
                 // Handle melee input
                 if (input.melee && player.alive) {
-                    const events = this.combat.tryMelee(player, this.state.players, now);
+                    const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now);
                     this.broadcastCombatEvents(events);
                 }
             }
@@ -440,22 +442,29 @@ export class GameRoom extends Room {
             queue.length = 0;
         });
         // 2. Update projectiles (movement + collision)
-        const { toRemove, events } = this.combat.updateProjectiles(this.state.projectiles, this.state.players, dtSec, now);
+        const { toRemove, events } = this.combat.updateProjectiles(this.state.projectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now);
         // Remove destroyed projectiles
         for (const id of toRemove) {
             this.state.projectiles.delete(id);
         }
         // Broadcast combat events (hits, kills)
         this.broadcastCombatEvents(events);
-        // 3. Skill system update (cast progression, energy regen, buff ticking)
-        const skillEvents = this.skillSystem.update(this.state.players, dtSec, now);
+        // 3. Spell projectile update (Fireball and other spell projectiles)
+        const { toRemove: spellToRemove, events: spellEvents } = this.spellProjectileSystem.update(this.state.spellProjectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now);
+        for (const id of spellToRemove) {
+            this.state.spellProjectiles.delete(id);
+        }
+        this.broadcastSpellProjectileEvents(spellEvents);
+        // 4. Skill system update (cast progression, energy regen, buff ticking)
+        const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles);
         this.broadcastSkillEvents(skillEvents);
-        // 4. Check respawns — handle per-player zone respawn points
+        // 5. Check respawns — handle per-player zone respawn points
         const respawnEvents = this.checkRespawnsMultiZone(now);
         this.broadcastCombatEvents(respawnEvents);
-        // 5. Update NPC system (aggro, movement, respawns)
-        this.npcSystem.update(dtSec, now, this.state.players, this.state.npcs, (zoneId) => this.zoneCache.get(zoneId)?.collision ?? null);
-        // 6. Check zone transitions (portal triggers)
+        // 6. Update NPC system (aggro, movement, respawns, NPC attacks)
+        const npcEvents = this.npcSystem.update(dtSec, now, this.state.players, this.state.npcs, (zoneId) => this.zoneCache.get(zoneId)?.collision ?? null);
+        this.broadcastCombatEvents(npcEvents);
+        // 7. Check zone transitions (portal triggers)
         this.checkZoneTransitions();
     }
     /**
@@ -533,6 +542,22 @@ export class GameRoom extends Room {
     broadcastCombatEvents(events) {
         for (const event of events) {
             this.broadcast(event.type, event.data);
+        }
+    }
+    /**
+     * Send spell projectile events to all clients.
+     * playerHit/playerDied/npcHit/npcDied use the same message types as combat.
+     * spellImpact is a new VFX event the client uses to play the explosion.
+     */
+    broadcastSpellProjectileEvents(events) {
+        for (const event of events) {
+            if (event.type === 'spellImpact') {
+                this.broadcast(MessageType.SPELL_IMPACT, event.data);
+            }
+            else {
+                // playerHit, playerDied, npcHit, npcDied — reuse existing message types
+                this.broadcast(event.type, event.data);
+            }
         }
     }
     /**

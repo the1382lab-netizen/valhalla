@@ -18,6 +18,16 @@ export class NetworkClient {
     onProjectileAdd = null;
     onProjectileRemove = null;
     onProjectileChange = null;
+    // Spell projectile callbacks (e.g. Fireball)
+    onSpellProjectileAdd = null;
+    onSpellProjectileRemove = null;
+    onSpellProjectileChange = null;
+    // Spell impact VFX callback
+    onSpellImpact = null;
+    // NPC callbacks
+    onNpcAdd = null;
+    onNpcRemove = null;
+    onNpcChange = null;
     // Combat event callbacks
     onPlayerHit = null;
     onPlayerDied = null;
@@ -26,6 +36,9 @@ export class NetworkClient {
     onMissed = null;
     onDodged = null;
     onBlocked = null;
+    // NPC combat callbacks
+    onNpcHit = null;
+    onNpcDied = null;
     // Inventory & equipment callbacks
     onInventoryChange = null;
     onEquipmentChange = null;
@@ -93,6 +106,13 @@ export class NetworkClient {
             this.room.onMessage(MessageType.BLOCKED, (data) => {
                 this.onBlocked?.(data);
             });
+            // NPC combat events
+            this.room.onMessage(MessageType.NPC_HIT, (data) => {
+                this.onNpcHit?.(data);
+            });
+            this.room.onMessage(MessageType.NPC_DIED, (data) => {
+                this.onNpcDied?.(data);
+            });
             // ── Skill system messages ──
             this.room.onMessage(MessageType.SKILL_STARTED, (data) => {
                 this.onSkillStarted?.(data);
@@ -114,6 +134,10 @@ export class NetworkClient {
             });
             this.room.onMessage(MessageType.ACTION_BAR_DATA, (data) => {
                 this.onActionBarData?.(data);
+            });
+            // Spell impact VFX
+            this.room.onMessage(MessageType.SPELL_IMPACT, (data) => {
+                this.onSpellImpact?.(data);
             });
             // Chat messages
             this.room.onMessage(MessageType.CHAT_MESSAGE, (data) => {
@@ -182,6 +206,28 @@ export class NetworkClient {
             callbacks.onRemove('projectiles', (_proj, key) => {
                 this.onProjectileRemove?.(key);
             });
+            // Spell projectile state sync (Fireball, etc.)
+            callbacks.onAdd('spellProjectiles', (proj, key) => {
+                const projId = key;
+                this.onSpellProjectileAdd?.(proj, projId);
+                callbacks.onChange(proj, () => {
+                    this.onSpellProjectileChange?.(proj, projId);
+                });
+            });
+            callbacks.onRemove('spellProjectiles', (_proj, key) => {
+                this.onSpellProjectileRemove?.(key);
+            });
+            // NPC state sync
+            callbacks.onAdd('npcs', (npc, key) => {
+                const npcId = key;
+                this.onNpcAdd?.(npc, npcId);
+                callbacks.onChange(npc, () => {
+                    this.onNpcChange?.(npc, npcId);
+                });
+            });
+            callbacks.onRemove('npcs', (_npc, key) => {
+                this.onNpcRemove?.(key);
+            });
         }
         catch (err) {
             console.error('[Network] Connection failed:', err);
@@ -203,8 +249,8 @@ export class NetworkClient {
     sendSwapInventory(fromIndex, toIndex) {
         this.room?.send(MessageType.SWAP_INVENTORY, { fromIndex, toIndex });
     }
-    sendCastSkill(skillId, targetId) {
-        this.room?.send(MessageType.CAST_SKILL, { skillId, targetId });
+    sendCastSkill(skillId, targetId, groundX, groundY) {
+        this.room?.send(MessageType.CAST_SKILL, { skillId, targetId, groundX, groundY });
     }
     sendCancelCast() {
         this.room?.send(MessageType.CANCEL_CAST, {});

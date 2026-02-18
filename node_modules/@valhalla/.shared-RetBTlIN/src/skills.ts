@@ -110,6 +110,8 @@ export interface SkillTemplate {
   buffDurationMs?: number;
   dotDamagePerSec?: number;
   hotHealPerSec?: number;
+  /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
+  aoeRadius?: number;
   effectNotes: string;        // human-readable summary
 }
 
@@ -783,6 +785,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
     iconAbbrev: 'FB',
     scalingStat: 'intelligence',
     baseDamage: [22, 34],
+    aoeRadius: 96,
     effectNotes: 'AoE fire damage at target location',
   },
 
@@ -883,6 +886,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
     iconAbbrev: 'MT',
     scalingStat: 'intelligence',
     baseDamage: [60, 90],
+    aoeRadius: 160,
     effectNotes: 'Massive AoE fire damage at target location',
   },
 };

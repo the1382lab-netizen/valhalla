@@ -7,6 +7,7 @@ export declare class GameRoom extends Room<{
 }> {
     private movement;
     private combat;
+    private spellProjectileSystem;
     private mapManager;
     private skillSystem;
     private npcSystem;
@@ -69,6 +70,12 @@ export declare class GameRoom extends Room<{
      * Send combat events to all clients.
      */
     private broadcastCombatEvents;
+    /**
+     * Send spell projectile events to all clients.
+     * playerHit/playerDied/npcHit/npcDied use the same message types as combat.
+     * spellImpact is a new VFX event the client uses to play the explosion.
+     */
+    private broadcastSpellProjectileEvents;
     /**
      * Send skill system events to relevant clients.
      * Some events go only to the caster, others are broadcast.

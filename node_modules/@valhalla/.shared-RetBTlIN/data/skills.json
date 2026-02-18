@@ -651,7 +651,7 @@
       "resourceCost": 100,
       "castTimeMs": 2500,
       "cooldownMs": 4000,
-      "range": 448,
+      "range": 600,
       "targetType": "aoeGround",
       "category": "offensive",
       "iconColor": 16729088,
@@ -661,6 +661,7 @@
         22,
         34
       ],
+      "aoeRadius": 65,
       "effectNotes": "AoE fire damage at target location"
     },
     "wizard_frost_nova": {
@@ -765,6 +766,7 @@
         60,
         90
       ],
+      "aoeRadius": 160,
       "effectNotes": "Massive AoE fire damage at target location"
     }
   },

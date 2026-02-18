@@ -1,4 +1,4 @@
-import { InputPayload, MapDataPayload, ChatMessagePayload } from '@valhalla/shared';
+import { InputPayload, MapDataPayload, ChatMessagePayload, SpellImpactPayload } from '@valhalla/shared';
 /** @deprecated Use MapDataPayload instead */
 export interface CollisionGridData {
     grid: number[];
@@ -49,6 +49,13 @@ export declare class NetworkClient {
     onProjectileAdd: ((proj: any, id: string) => void) | null;
     onProjectileRemove: ((id: string) => void) | null;
     onProjectileChange: ((proj: any, id: string) => void) | null;
+    onSpellProjectileAdd: ((proj: any, id: string) => void) | null;
+    onSpellProjectileRemove: ((id: string) => void) | null;
+    onSpellProjectileChange: ((proj: any, id: string) => void) | null;
+    onSpellImpact: ((data: SpellImpactPayload) => void) | null;
+    onNpcAdd: ((npc: any, id: string) => void) | null;
+    onNpcRemove: ((id: string) => void) | null;
+    onNpcChange: ((npc: any, id: string) => void) | null;
     onPlayerHit: ((data: PlayerHitData) => void) | null;
     onPlayerDied: ((data: PlayerDiedData) => void) | null;
     onPlayerRespawned: ((data: PlayerRespawnedData) => void) | null;
@@ -56,6 +63,19 @@ export declare class NetworkClient {
     onMissed: ((data: CombatFeedbackData) => void) | null;
     onDodged: ((data: CombatFeedbackData) => void) | null;
     onBlocked: ((data: CombatFeedbackData) => void) | null;
+    onNpcHit: ((data: {
+        targetId: string;
+        attackerId: string;
+        damage: number;
+        remainingHp: number;
+        isCrit?: boolean;
+        blocked?: boolean;
+    }) => void) | null;
+    onNpcDied: ((data: {
+        targetId: string;
+        killerId: string;
+        xpReward: number;
+    }) => void) | null;
     onInventoryChange: ((inventory: any[]) => void) | null;
     onEquipmentChange: ((equipment: Record<string, string>) => void) | null;
     onSkillStarted: ((data: {
@@ -95,7 +115,7 @@ export declare class NetworkClient {
     sendUnequipItem(slotType: string, targetIndex?: number): void;
     sendDropItem(source: 'inventory' | 'equipment', slotIndex?: number, slotType?: string): void;
     sendSwapInventory(fromIndex: number, toIndex: number): void;
-    sendCastSkill(skillId: string, targetId?: string): void;
+    sendCastSkill(skillId: string, targetId?: string, groundX?: number, groundY?: number): void;
     sendCancelCast(): void;
     sendSetActionBar(slots: string[]): void;
     sendChatMessage(channel: 'general' | 'world' | 'whisper', message: string, targetName?: string): void;

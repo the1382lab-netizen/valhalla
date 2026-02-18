@@ -32,6 +32,8 @@ export class BootScene extends Phaser.Scene {
         this.generatePlayerTexture();
         // ── Generate projectile texture ──────────────────────────
         this.generateProjectileTexture();
+        // ── Generate NPC sprite texture ──────────────────────────
+        this.generateNpcTexture();
         // ── Generate melee slash texture ─────────────────────────
         this.generateMeleeTexture();
         // ── Generate skill icon textures ───────────────────────
@@ -444,6 +446,20 @@ export class BootScene extends Phaser.Scene {
             rt.destroy();
             text.destroy();
         }
+    }
+    generateNpcTexture() {
+        const size = 24;
+        const gfx = this.add.graphics();
+        // Diamond shape to visually distinguish NPCs from circular players
+        const half = size / 2;
+        gfx.fillStyle(0xffffff, 1);
+        gfx.fillTriangle(half, 2, size - 2, half, half, size - 2);
+        gfx.fillTriangle(half, 2, 2, half, half, size - 2);
+        gfx.lineStyle(2, 0x888888, 1);
+        gfx.strokeTriangle(half, 2, size - 2, half, half, size - 2);
+        gfx.strokeTriangle(half, 2, 2, half, half, size - 2);
+        gfx.generateTexture('npc_sprite', size, size);
+        gfx.destroy();
     }
     generateMeleeTexture() {
         // A simple arc/slash shape for melee visual feedback

@@ -91,6 +91,7 @@ export class GameScene extends Phaser.Scene {
   // Zone-filtering for projectiles: track which projectile IDs are currently
   // rendered (i.e. their owner is in our zone).
   private visibleProjectiles: Set<string> = new Set();
+  private visibleSpellProjectiles: Set<string> = new Set();
   // Zone-filtering for NPCs: track each NPC's zone and cache data so we can
   // re-render them when the local player changes zones.
   private npcZones: Map<string, string> = new Map();
@@ -358,7 +359,19 @@ export class GameScene extends Phaser.Scene {
     this.inputManager.onActionBarKeyPressed = (slotIndex: number) => {
       if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen) return;
       const skillId = this.actionBar[slotIndex];
-      if (skillId) {
+      if (!skillId) return;
+
+      const skill = ClientDataManager.instance.getSkill(skillId);
+
+      // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
+      // Use the current mouse/cursor world position as the target.
+      if (skill?.targetType === 'aoeGround') {
+        const cam = this.cameras.main;
+        const pointer = this.input.activePointer;
+        const worldX = pointer.x + cam.scrollX;
+        const worldY = pointer.y + cam.scrollY;
+        this.network.sendCastSkill(skillId, undefined, worldX, worldY);
+      } else {
         this.network.sendCastSkill(skillId);
       }
     };
@@ -426,6 +439,10 @@ export class GameScene extends Phaser.Scene {
         this.entityRenderer.removeProjectile(pid);
       }
       this.visibleProjectiles.clear();
+      for (const sid of this.visibleSpellProjectiles) {
+        this.entityRenderer.removeSpellProjectile(sid);
+      }
+      this.visibleSpellProjectiles.clear();
       for (const nid of this.visibleNpcs) {
         this.entityRenderer.removeNPC(nid);
       }
@@ -648,6 +665,36 @@ export class GameScene extends Phaser.Scene {
       if (this.visibleProjectiles.has(id)) {
         this.entityRenderer.updateProjectileTarget(id, proj.x, proj.y);
       }
+    };
+
+    // Spell projectile callbacks (Fireball, etc.)
+    // Like basic projectiles we derive zone from ownerId; zoneId is stored server-only.
+    this.network.onSpellProjectileAdd = (proj: any, id: string) => {
+      const ownerZone = proj.ownerId === this.network.sessionId
+        ? this.currentZoneId
+        : (this.remotePlayerZones.get(proj.ownerId) ?? null);
+      if (ownerZone === this.currentZoneId) {
+        this.entityRenderer.addSpellProjectile(id, proj.x, proj.y, proj.targetX, proj.targetY, proj.skillId);
+        this.visibleSpellProjectiles.add(id);
+      }
+    };
+
+    this.network.onSpellProjectileRemove = (id: string) => {
+      if (this.visibleSpellProjectiles.has(id)) {
+        this.entityRenderer.removeSpellProjectile(id);
+        this.visibleSpellProjectiles.delete(id);
+      }
+    };
+
+    this.network.onSpellProjectileChange = (proj: any, id: string) => {
+      if (this.visibleSpellProjectiles.has(id)) {
+        this.entityRenderer.updateSpellProjectileTarget(id, proj.x, proj.y);
+      }
+    };
+
+    // Spell impact — play explosion VFX at the detonation point
+    this.network.onSpellImpact = (data) => {
+      this.entityRenderer.showSpellImpact(data.x, data.y, data.radius, data.skillId);
     };
 
     // NPC callbacks — NPCs have a zoneId, so we filter by zone like remote players.

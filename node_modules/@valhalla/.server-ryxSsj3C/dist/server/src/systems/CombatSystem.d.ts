@@ -1,10 +1,12 @@
 import { MapSchema } from '@colyseus/schema';
 import { PlayerState } from '../schema/PlayerState.js';
 import { ProjectileState } from '../schema/ProjectileState.js';
+import { NPCState } from '../schema/NPCState.js';
 import { CollisionSystem } from './CollisionSystem.js';
+import type { NPCSystem } from './NPCSystem.js';
 export type DamageType = 'physical' | 'magical';
 export interface CombatEvent {
-    type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'missed' | 'dodged' | 'blocked';
+    type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'missed' | 'dodged' | 'blocked' | 'npcHit' | 'npcDied';
     data: any;
 }
 /**
@@ -23,11 +25,11 @@ export declare class CombatSystem {
      * Try to perform a melee attack. Returns a list of combat events.
      * Melee is always physical damage.
      */
-    tryMelee(attacker: PlayerState, players: MapSchema<PlayerState>, now: number): CombatEvent[];
+    tryMelee(attacker: PlayerState, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, now: number): CombatEvent[];
     /**
      * Update all projectiles: move, check wall collision, check player collision.
      */
-    updateProjectiles(projectiles: MapSchema<ProjectileState>, players: MapSchema<PlayerState>, dt: number, now: number): {
+    updateProjectiles(projectiles: MapSchema<ProjectileState>, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, dt: number, now: number): {
         toRemove: string[];
         events: CombatEvent[];
     };

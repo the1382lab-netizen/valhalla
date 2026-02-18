@@ -18,26 +18,34 @@ export class SkillSystem {
     /**
      * Attempt to start casting a skill.
      * Validates all preconditions. Returns result events.
+     *
+     * @param groundX  World X of the ground target — required for AOE_GROUND skills
+     * @param groundY  World Y of the ground target — required for AOE_GROUND skills
      */
-    tryStartCast(caster, skillId, targetId, allPlayers, now) {
+    tryStartCast(caster, skillId, targetId, allPlayers, now, spellProjectiles, groundX, groundY) {
         const skill = DataManager.instance.getSkill(skillId);
         if (!skill) {
             return [{ type: 'castFailed', casterId: caster.id, reason: 'Unknown skill' }];
         }
         // ── Validation pipeline ──
-        const failReason = this.validateCast(caster, skill, targetId, allPlayers, now);
+        const failReason = this.validateCast(caster, skill, targetId, allPlayers, now, groundX, groundY);
         if (failReason) {
             return [{ type: 'castFailed', casterId: caster.id, reason: failReason }];
         }
         // Resolve target
         const target = targetId ? allPlayers.get(targetId) ?? null : null;
+        const ctx = {
+            spellProjectiles,
+            groundX: groundX ?? null,
+            groundY: groundY ?? null,
+        };
         if (skill.castTimeMs === 0) {
             // ── Instant cast ──
-            return this.executeInstantCast(caster, target, skill, allPlayers, now);
+            return this.executeInstantCast(caster, target, skill, allPlayers, now, ctx);
         }
         else {
             // ── Start channeled/cast-time cast ──
-            return this.startTimedCast(caster, skill, targetId, now);
+            return this.startTimedCast(caster, skill, targetId, now, groundX ?? null, groundY ?? null);
         }
     }
     /**
@@ -60,8 +68,10 @@ export class SkillSystem {
      * - Ticks DoTs and HoTs
      * - Expires finished buffs
      * - Checks for movement interrupts
+     *
+     * @param spellProjectiles  Room's spell projectile map — passed to effect handlers that spawn projectiles
      */
-    update(allPlayers, dt, now) {
+    update(allPlayers, dt, now, spellProjectiles) {
         const events = [];
         // ── Complete casts ──
         for (const [playerId, cast] of this.activeCasts) {
@@ -87,7 +97,12 @@ export class SkillSystem {
                 const skill = DataManager.instance.getSkill(cast.skillId);
                 if (skill) {
                     const target = cast.targetId ? allPlayers.get(cast.targetId) ?? null : null;
-                    const castEvents = this.completeCast(player, target, skill, allPlayers, now);
+                    const ctx = {
+                        spellProjectiles,
+                        groundX: cast.groundX,
+                        groundY: cast.groundY,
+                    };
+                    const castEvents = this.completeCast(player, target, skill, allPlayers, now, ctx);
                     events.push(...castEvents);
                 }
             }
@@ -113,7 +128,7 @@ export class SkillSystem {
         return events;
     }
     // ── Private Methods ──────────────────────────────────────
-    validateCast(caster, skill, targetId, allPlayers, now) {
+    validateCast(caster, skill, targetId, allPlayers, now, groundX, groundY) {
         // Alive check
         if (!caster.alive)
             return 'You are dead';
@@ -145,8 +160,21 @@ export class SkillSystem {
             if (caster.energy < skill.resourceCost)
                 return 'Not enough energy';
         }
-        // Range check (for targeted skills)
-        if (targetId && skill.range > 0) {
+        // Range check for ground-targeted AoE skills
+        if (skill.targetType === 'aoeGround') {
+            if (groundX == null || groundY == null) {
+                return 'No target position provided';
+            }
+            if (skill.range > 0) {
+                const dx = groundX - caster.x;
+                const dy = groundY - caster.y;
+                if (dx * dx + dy * dy > skill.range * skill.range) {
+                    return 'Out of range';
+                }
+            }
+        }
+        // Range check (for single-target skills)
+        if (targetId && skill.range > 0 && skill.targetType !== 'aoeGround') {
             const target = allPlayers.get(targetId);
             if (target) {
                 const dx = target.x - caster.x;
@@ -162,7 +190,7 @@ export class SkillSystem {
         }
         return null; // All checks passed
     }
-    executeInstantCast(caster, target, skill, allPlayers, now) {
+    executeInstantCast(caster, target, skill, allPlayers, now, ctx) {
         // Deduct resource
         this.deductResource(caster, skill);
         // Start cooldown
@@ -170,14 +198,14 @@ export class SkillSystem {
             caster.skillCooldowns.set(skill.id, now + skill.cooldownMs);
         }
         // Execute effect
-        const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now);
+        const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now, ctx);
         return [
             { type: 'castStarted', casterId: caster.id, skillId: skill.id, castTimeMs: 0 },
             { type: 'castComplete', casterId: caster.id, skillId: skill.id, events: skillEvents },
         ];
     }
-    startTimedCast(caster, skill, targetId, now) {
-        // Store active cast
+    startTimedCast(caster, skill, targetId, now, groundX = null, groundY = null) {
+        // Store active cast (including ground target for AOE_GROUND spells)
         this.activeCasts.set(caster.id, {
             playerId: caster.id,
             skillId: skill.id,
@@ -186,6 +214,8 @@ export class SkillSystem {
             durationMs: skill.castTimeMs,
             startX: caster.x,
             startY: caster.y,
+            groundX,
+            groundY,
         });
         // Set synced casting state (drives client cast bar)
         caster.castingSkillId = skill.id;
@@ -195,7 +225,7 @@ export class SkillSystem {
             { type: 'castStarted', casterId: caster.id, skillId: skill.id, castTimeMs: skill.castTimeMs },
         ];
     }
-    completeCast(caster, target, skill, allPlayers, now) {
+    completeCast(caster, target, skill, allPlayers, now, ctx) {
         // Deduct resource
         this.deductResource(caster, skill);
         // Start cooldown
@@ -203,7 +233,7 @@ export class SkillSystem {
             caster.skillCooldowns.set(skill.id, now + skill.cooldownMs);
         }
         // Execute effect
-        const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now);
+        const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now, ctx);
         return [
             { type: 'castComplete', casterId: caster.id, skillId: skill.id, events: skillEvents },
         ];

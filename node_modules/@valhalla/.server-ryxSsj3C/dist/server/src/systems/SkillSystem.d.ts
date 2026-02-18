@@ -8,6 +8,8 @@
  */
 import { PlayerState } from '../schema/PlayerState.js';
 import { SkillEvent } from './SkillEffectHandler.js';
+import { SpellProjectileState } from '../schema/SpellProjectileState.js';
+import { MapSchema } from '@colyseus/schema';
 /** Duck-typed map interface compatible with both Map and Colyseus MapSchema. */
 export interface PlayerMap {
     get(key: string): PlayerState | undefined;
@@ -59,8 +61,11 @@ export declare class SkillSystem {
     /**
      * Attempt to start casting a skill.
      * Validates all preconditions. Returns result events.
+     *
+     * @param groundX  World X of the ground target — required for AOE_GROUND skills
+     * @param groundY  World Y of the ground target — required for AOE_GROUND skills
      */
-    tryStartCast(caster: PlayerState, skillId: string, targetId: string | null, allPlayers: PlayerMap, now: number): SkillSystemEvent[];
+    tryStartCast(caster: PlayerState, skillId: string, targetId: string | null, allPlayers: PlayerMap, now: number, spellProjectiles?: MapSchema<SpellProjectileState>, groundX?: number | null, groundY?: number | null): SkillSystemEvent[];
     /**
      * Cancel an active cast (manual cancel or movement interrupt).
      */
@@ -72,8 +77,10 @@ export declare class SkillSystem {
      * - Ticks DoTs and HoTs
      * - Expires finished buffs
      * - Checks for movement interrupts
+     *
+     * @param spellProjectiles  Room's spell projectile map — passed to effect handlers that spawn projectiles
      */
-    update(allPlayers: PlayerMap, dt: number, now: number): SkillSystemEvent[];
+    update(allPlayers: PlayerMap, dt: number, now: number, spellProjectiles?: MapSchema<SpellProjectileState>): SkillSystemEvent[];
     private validateCast;
     private executeInstantCast;
     private startTimedCast;

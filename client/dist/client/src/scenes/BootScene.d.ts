@@ -17,6 +17,7 @@ export declare class BootScene extends Phaser.Scene {
     private generatePlayerTexture;
     private generateProjectileTexture;
     private generateSkillIcons;
+    private generateNpcTexture;
     private generateMeleeTexture;
 }
 //# sourceMappingURL=BootScene.d.ts.map

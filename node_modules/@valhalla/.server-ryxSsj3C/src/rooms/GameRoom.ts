@@ -8,9 +8,12 @@ import { MapManager } from '../systems/MapManager.js';
 import { SkillSystem, SkillSystemEvent } from '../systems/SkillSystem.js';
 import { DataManager } from '../systems/DataManager.js';
 import { NPCSystem } from '../systems/NPCSystem.js';
+import { SpellProjectileSystem, SpellProjectileEvent } from '../systems/SpellProjectileSystem.js';
 import {
   InputPayload,
   MessageType,
+  CastSkillPayload,
+  SpellImpactPayload,
   SERVER_TICK_RATE,
   ClassId,
   EquipSlotType,
@@ -48,6 +51,7 @@ interface ZoneCacheEntry {
 export class GameRoom extends Room<{ state: GameState }> {
   private movement!: MovementSystem;
   private combat!: CombatSystem;
+  private spellProjectileSystem!: SpellProjectileSystem;
   private mapManager!: MapManager;
   private skillSystem!: SkillSystem;
   private npcSystem!: NPCSystem;
@@ -78,6 +82,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     const defaultEntry = this.loadZoneCache(this.defaultZoneId);
     this.movement = new MovementSystem(defaultEntry.collision);
     this.combat = new CombatSystem(defaultEntry.collision);
+    this.spellProjectileSystem = new SpellProjectileSystem(defaultEntry.collision);
     this.skillSystem = new SkillSystem();
     this.npcSystem = new NPCSystem();
 
@@ -145,7 +150,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     // ── Skill System Messages ──
 
     // Cast a skill
-    this.onMessage(MessageType.CAST_SKILL, (client: Client, data: { skillId: string; targetId?: string }) => {
+    this.onMessage(MessageType.CAST_SKILL, (client: Client, data: CastSkillPayload) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
 
@@ -156,6 +161,9 @@ export class GameRoom extends Room<{ state: GameState }> {
         data.targetId ?? null,
         this.state.players,
         now,
+        this.state.spellProjectiles,
+        data.groundX ?? null,
+        data.groundY ?? null,
       );
       this.broadcastSkillEvents(events, client);
     });
@@ -543,15 +551,29 @@ export class GameRoom extends Room<{ state: GameState }> {
     // Broadcast combat events (hits, kills)
     this.broadcastCombatEvents(events);
 
-    // 3. Skill system update (cast progression, energy regen, buff ticking)
-    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now);
+    // 3. Spell projectile update (Fireball and other spell projectiles)
+    const { toRemove: spellToRemove, events: spellEvents } = this.spellProjectileSystem.update(
+      this.state.spellProjectiles,
+      this.state.players,
+      this.state.npcs,
+      this.npcSystem,
+      dtSec,
+      now,
+    );
+    for (const id of spellToRemove) {
+      this.state.spellProjectiles.delete(id);
+    }
+    this.broadcastSpellProjectileEvents(spellEvents);
+
+    // 4. Skill system update (cast progression, energy regen, buff ticking)
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles);
     this.broadcastSkillEvents(skillEvents);
 
-    // 4. Check respawns — handle per-player zone respawn points
+    // 5. Check respawns — handle per-player zone respawn points
     const respawnEvents = this.checkRespawnsMultiZone(now);
     this.broadcastCombatEvents(respawnEvents);
 
-    // 5. Update NPC system (aggro, movement, respawns, NPC attacks)
+    // 6. Update NPC system (aggro, movement, respawns, NPC attacks)
     const npcEvents = this.npcSystem.update(
       dtSec,
       now,
@@ -561,7 +583,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     );
     this.broadcastCombatEvents(npcEvents);
 
-    // 6. Check zone transitions (portal triggers)
+    // 7. Check zone transitions (portal triggers)
     this.checkZoneTransitions();
   }
 
@@ -658,6 +680,22 @@ export class GameRoom extends Room<{ state: GameState }> {
   private broadcastCombatEvents(events: CombatEvent[]): void {
     for (const event of events) {
       this.broadcast(event.type, event.data);
+    }
+  }
+
+  /**
+   * Send spell projectile events to all clients.
+   * playerHit/playerDied/npcHit/npcDied use the same message types as combat.
+   * spellImpact is a new VFX event the client uses to play the explosion.
+   */
+  private broadcastSpellProjectileEvents(events: SpellProjectileEvent[]): void {
+    for (const event of events) {
+      if (event.type === 'spellImpact') {
+        this.broadcast(MessageType.SPELL_IMPACT, event.data as SpellImpactPayload);
+      } else {
+        // playerHit, playerDied, npcHit, npcDied — reuse existing message types
+        this.broadcast(event.type, event.data);
+      }
     }
   }
 

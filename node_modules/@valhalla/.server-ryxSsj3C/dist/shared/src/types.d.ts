@@ -45,6 +45,29 @@ export interface IProjectileState {
     speed: number;
     damage: number;
 }
+export interface ISpellProjectileState {
+    id: string;
+    ownerId: string;
+    skillId: string;
+    x: number;
+    y: number;
+    targetX: number;
+    targetY: number;
+    speed: number;
+}
+export interface CastSkillPayload {
+    skillId: string;
+    targetId?: string;
+    /** Ground target position — required for AOE_GROUND skills like Fireball */
+    groundX?: number;
+    groundY?: number;
+}
+export interface SpellImpactPayload {
+    skillId: string;
+    x: number;
+    y: number;
+    radius: number;
+}
 export declare enum MessageType {
     INPUT = "input",
     PLAYER_HIT = "playerHit",
@@ -71,6 +94,9 @@ export declare enum MessageType {
     BUFF_REMOVED = "buffRemoved",
     SET_ACTION_BAR = "setActionBar",
     ACTION_BAR_DATA = "actionBarData",
+    SPELL_IMPACT = "spellImpact",
+    NPC_HIT = "npcHit",
+    NPC_DIED = "npcDied",
     CHAT_MESSAGE = "chatMessage"
 }
 export interface ChatMessagePayload {

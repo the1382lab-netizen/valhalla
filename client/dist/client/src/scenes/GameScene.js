@@ -53,6 +53,12 @@ export class GameScene extends Phaser.Scene {
     // Zone-filtering for projectiles: track which projectile IDs are currently
     // rendered (i.e. their owner is in our zone).
     visibleProjectiles = new Set();
+    visibleSpellProjectiles = new Set();
+    // Zone-filtering for NPCs: track each NPC's zone and cache data so we can
+    // re-render them when the local player changes zones.
+    npcZones = new Map();
+    npcCache = new Map();
+    visibleNpcs = new Set();
     // ── Draggable HUD panels ──────────────────────────────────
     // Per-panel offsets from their default computed positions (pixels).
     chatOffset = { x: 0, y: 0 };
@@ -274,7 +280,19 @@ export class GameScene extends Phaser.Scene {
             if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen)
                 return;
             const skillId = this.actionBar[slotIndex];
-            if (skillId) {
+            if (!skillId)
+                return;
+            const skill = ClientDataManager.instance.getSkill(skillId);
+            // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
+            // Use the current mouse/cursor world position as the target.
+            if (skill?.targetType === 'aoeGround') {
+                const cam = this.cameras.main;
+                const pointer = this.input.activePointer;
+                const worldX = pointer.x + cam.scrollX;
+                const worldY = pointer.y + cam.scrollY;
+                this.network.sendCastSkill(skillId, undefined, worldX, worldY);
+            }
+            else {
                 this.network.sendCastSkill(skillId);
             }
         };
@@ -326,7 +344,7 @@ export class GameScene extends Phaser.Scene {
         // Handle zone change notifications
         this.network.onZoneChange = (data) => {
             console.log(`[GameScene] Zone change → ${data.zoneId} (spawn: ${data.spawnX}, ${data.spawnY})`);
-            // 1. Remove all currently-rendered remote players and projectiles
+            // 1. Remove all currently-rendered remote players, projectiles, and NPCs
             for (const sid of this.remotePlayerZones.keys()) {
                 this.entityRenderer.removeRemotePlayer(sid);
             }
@@ -334,12 +352,31 @@ export class GameScene extends Phaser.Scene {
                 this.entityRenderer.removeProjectile(pid);
             }
             this.visibleProjectiles.clear();
+            for (const sid of this.visibleSpellProjectiles) {
+                this.entityRenderer.removeSpellProjectile(sid);
+            }
+            this.visibleSpellProjectiles.clear();
+            for (const nid of this.visibleNpcs) {
+                this.entityRenderer.removeNPC(nid);
+            }
+            this.visibleNpcs.clear();
             // 2. Switch zone
             this.currentZoneId = data.zoneId;
             // 3. Re-add any cached remote players that are already in our new zone
             for (const [sid, cached] of this.remotePlayerCache) {
                 if ((cached.zoneId ?? 'grasslands') === this.currentZoneId) {
                     this.entityRenderer.addRemotePlayer(sid, cached.x, cached.y, cached.classId ?? 'warrior', cached.level ?? 1, cached.characterName ?? '');
+                }
+            }
+            // 4. Re-add NPCs that are in our new zone
+            for (const [nid, npcZone] of this.npcZones) {
+                if (npcZone === this.currentZoneId) {
+                    const cached = this.npcCache.get(nid);
+                    if (cached) {
+                        this.entityRenderer.addNPC(nid, cached.x, cached.y, cached.name ?? 'NPC', cached.level ?? 1, cached.npcType ?? 'enemy', cached.spriteColor ?? 0xff4444, cached.spriteSize ?? 1);
+                        this.entityRenderer.updateNPCHp(nid, cached.hp, cached.maxHp, cached.alive);
+                        this.visibleNpcs.add(nid);
+                    }
                 }
             }
             // 4. Teleport the local player to the new spawn
@@ -491,6 +528,86 @@ export class GameScene extends Phaser.Scene {
                 this.entityRenderer.updateProjectileTarget(id, proj.x, proj.y);
             }
         };
+        // Spell projectile callbacks (Fireball, etc.)
+        // Like basic projectiles we derive zone from ownerId; zoneId is stored server-only.
+        this.network.onSpellProjectileAdd = (proj, id) => {
+            const ownerZone = proj.ownerId === this.network.sessionId
+                ? this.currentZoneId
+                : (this.remotePlayerZones.get(proj.ownerId) ?? null);
+            if (ownerZone === this.currentZoneId) {
+                this.entityRenderer.addSpellProjectile(id, proj.x, proj.y, proj.targetX, proj.targetY, proj.skillId);
+                this.visibleSpellProjectiles.add(id);
+            }
+        };
+        this.network.onSpellProjectileRemove = (id) => {
+            if (this.visibleSpellProjectiles.has(id)) {
+                this.entityRenderer.removeSpellProjectile(id);
+                this.visibleSpellProjectiles.delete(id);
+            }
+        };
+        this.network.onSpellProjectileChange = (proj, id) => {
+            if (this.visibleSpellProjectiles.has(id)) {
+                this.entityRenderer.updateSpellProjectileTarget(id, proj.x, proj.y);
+            }
+        };
+        // Spell impact — play explosion VFX at the detonation point
+        this.network.onSpellImpact = (data) => {
+            this.entityRenderer.showSpellImpact(data.x, data.y, data.radius, data.skillId);
+        };
+        // NPC callbacks — NPCs have a zoneId, so we filter by zone like remote players.
+        this.network.onNpcAdd = (npc, id) => {
+            const npcZone = npc.zoneId ?? 'grasslands';
+            this.npcZones.set(id, npcZone);
+            this.npcCache.set(id, {
+                x: npc.x, y: npc.y,
+                name: npc.name, level: npc.level,
+                npcType: npc.npcType, spriteColor: npc.spriteColor,
+                spriteSize: npc.spriteSize,
+                hp: npc.hp, maxHp: npc.maxHp, alive: npc.alive,
+            });
+            if (npcZone === this.currentZoneId) {
+                this.entityRenderer.addNPC(id, npc.x, npc.y, npc.name ?? 'NPC', npc.level ?? 1, npc.npcType ?? 'enemy', npc.spriteColor ?? 0xff4444, npc.spriteSize ?? 1);
+                this.entityRenderer.updateNPCHp(id, npc.hp, npc.maxHp, npc.alive);
+                this.visibleNpcs.add(id);
+            }
+        };
+        this.network.onNpcChange = (npc, id) => {
+            const prevZone = this.npcZones.get(id) ?? 'grasslands';
+            const newZone = npc.zoneId ?? prevZone;
+            const wasVisible = this.visibleNpcs.has(id);
+            const shouldBeVisible = newZone === this.currentZoneId;
+            // Keep zone + cache up to date
+            this.npcZones.set(id, newZone);
+            this.npcCache.set(id, {
+                x: npc.x, y: npc.y,
+                name: npc.name, level: npc.level,
+                npcType: npc.npcType, spriteColor: npc.spriteColor,
+                spriteSize: npc.spriteSize,
+                hp: npc.hp, maxHp: npc.maxHp, alive: npc.alive,
+            });
+            // Handle zone transitions
+            if (wasVisible && !shouldBeVisible) {
+                this.entityRenderer.removeNPC(id);
+                this.visibleNpcs.delete(id);
+            }
+            else if (!wasVisible && shouldBeVisible) {
+                this.entityRenderer.addNPC(id, npc.x, npc.y, npc.name ?? 'NPC', npc.level ?? 1, npc.npcType ?? 'enemy', npc.spriteColor ?? 0xff4444, npc.spriteSize ?? 1);
+                this.visibleNpcs.add(id);
+            }
+            // Update rendering if currently visible
+            if (this.visibleNpcs.has(id)) {
+                this.entityRenderer.updateNPCTarget(id, npc.x, npc.y, npc.aimAngle ?? 0);
+                this.entityRenderer.updateNPCHp(id, npc.hp, npc.maxHp, npc.alive);
+            }
+        };
+        this.network.onNpcRemove = (id) => {
+            if (this.visibleNpcs.has(id)) {
+                this.entityRenderer.removeNPC(id);
+                this.visibleNpcs.delete(id);
+            }
+            this.npcZones.delete(id);
+            this.npcCache.delete(id);
+        };
         // Combat events
         this.network.onPlayerHit = (data) => {
             if (data.targetId === this.network.sessionId) {
@@ -536,6 +653,16 @@ export class GameScene extends Phaser.Scene {
             const pos = this.getCombatTextPosition(data.targetId);
             if (pos)
                 this.entityRenderer.showCombatText(pos.x, pos.y, 'BLOCK', '#4488ff');
+        };
+        // NPC combat events
+        this.network.onNpcHit = (data) => {
+            const pos = this.entityRenderer.getNPCPosition(data.targetId);
+            if (pos) {
+                this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
+            }
+        };
+        this.network.onNpcDied = (data) => {
+            console.log(`[Combat] NPC ${data.targetId} was killed by ${data.killerId.slice(0, 6)}, +${data.xpReward} XP`);
         };
         // Inventory sync
         this.network.onInventoryChange = (items) => {

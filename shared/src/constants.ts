@@ -35,6 +35,16 @@ export const MELEE_RANGE = 60;              // pixels
 export const MELEE_ARC = Math.PI / 2;       // 90 degree arc
 export const MELEE_COOLDOWN_MS = 600;
 
+// ── Spell Projectiles ───────────────────────────────────────
+/** Travel speed of the Fireball projectile (px/s) */
+export const FIREBALL_PROJECTILE_SPEED = 350;
+/** Blast radius for Fireball AoE damage (px) */
+export const FIREBALL_AOE_RADIUS = 96;
+/** Collision body radius of the Fireball while in flight (px) */
+export const FIREBALL_PROJECTILE_RADIUS = 10;
+/** Minimum damage multiplier at the outer edge of the blast radius (0–1) */
+export const FIREBALL_DAMAGE_FALLOFF_MIN = 0.35;
+
 // ── Network ────────────────────────────────────────────────
 export const INTERPOLATION_BUFFER_MS = 100; // ms of interpolation delay for remote entities
 // Dynamically resolve the game server URL so LAN clients connect to the right host.

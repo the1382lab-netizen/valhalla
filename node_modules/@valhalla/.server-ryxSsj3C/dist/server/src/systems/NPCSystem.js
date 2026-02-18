@@ -9,10 +9,12 @@
  * - Initial spawn of all NPCs for a zone
  * - Respawn timers for dead enemies
  * - Basic AI: aggro detection, movement toward targets, returning to spawn
+ * - NPC melee attacks against aggroed players
  * - Combat integration: NPCs take damage from players, award XP on death
  */
 import { NPCState } from '../schema/NPCState.js';
 import { DataManager } from './DataManager.js';
+import { INVULNERABILITY_MS, RESPAWN_TIME_MS } from '@valhalla/shared';
 export class NPCSystem {
     constructor() {
         this.npcs = new Map();
@@ -29,7 +31,7 @@ export class NPCSystem {
         for (const sp of spawnPoints) {
             if (sp.type !== 'enemy_spawn' && sp.type !== 'npc_spawn')
                 continue;
-            const templateId = sp.properties?.templateId;
+            const templateId = sp.templateId ?? sp.properties?.templateId;
             if (!templateId) {
                 console.warn(`[NPCSystem] Spawn point "${sp.id}" in zone "${zoneId}" has no templateId, skipping`);
                 continue;
@@ -48,7 +50,8 @@ export class NPCSystem {
                 template,
                 respawnAt: 0,
                 aggroTarget: null,
-                leashRange: (template.aggroRange ?? 200) * 3,
+                leashRange: template.leashRange ?? (template.aggroRange ?? 200) * 3,
+                lastAttackTime: 0,
             });
             spawned++;
         }
@@ -57,9 +60,11 @@ export class NPCSystem {
         }
     }
     /**
-     * Main update tick — handles respawns, aggro, movement, and combat.
+     * Main update tick — handles respawns, aggro, movement, and NPC attacks.
+     * Returns combat events to be broadcast to clients.
      */
     update(dt, now, players, gameNpcs, getCollision) {
+        const events = [];
         for (const [id, data] of this.npcs) {
             const { npc, template, spawnX, spawnY } = data;
             // ── Respawn check ──
@@ -83,7 +88,7 @@ export class NPCSystem {
             if (template.behaviorType === 'aggressive' || template.behaviorType === 'patrol') {
                 this.updateAggro(data, players);
             }
-            // ── Movement ──
+            // ── Movement + Attack ──
             if (data.aggroTarget && template.behaviorType !== 'stationary') {
                 const target = players.get(data.aggroTarget);
                 if (target && target.alive && target.zoneId === npc.zoneId) {
@@ -102,16 +107,48 @@ export class NPCSystem {
                         npc.hp = template.hp; // Full heal on reset
                         continue;
                     }
+                    const chaseSpeed = template.moveSpeed ?? 60;
                     if (dist > 30) {
-                        // Move toward target at a modest speed
-                        const speed = 60; // pixels per second
-                        const moveX = (dx / dist) * speed * dt;
-                        const moveY = (dy / dist) * speed * dt;
+                        const moveX = (dx / dist) * chaseSpeed * dt;
+                        const moveY = (dy / dist) * chaseSpeed * dt;
                         npc.x += moveX;
                         npc.y += moveY;
                     }
                     // Face the target
                     npc.aimAngle = Math.atan2(dy, dx);
+                    // ── Attack if within range and off cooldown ──
+                    const attackRange = template.attackRange ?? 40;
+                    const attackSpeed = template.attackSpeed ?? 1500;
+                    const baseDamage = template.damage ?? 5;
+                    if (dist <= attackRange && now >= data.lastAttackTime + attackSpeed) {
+                        data.lastAttackTime = now;
+                        if (target.alive && now >= target.invulnerableUntil) {
+                            const damage = Math.max(1, baseDamage);
+                            target.hp -= damage;
+                            target.invulnerableUntil = now + INVULNERABILITY_MS;
+                            events.push({
+                                type: 'playerHit',
+                                data: {
+                                    targetId: target.id,
+                                    attackerId: npc.id,
+                                    damage,
+                                    remainingHp: target.hp,
+                                    isCrit: false,
+                                    blocked: false,
+                                },
+                            });
+                            if (target.hp <= 0) {
+                                target.hp = 0;
+                                target.alive = false;
+                                target.respawnAt = now + RESPAWN_TIME_MS;
+                                data.aggroTarget = null;
+                                events.push({
+                                    type: 'playerDied',
+                                    data: { targetId: target.id, killerId: npc.id },
+                                });
+                            }
+                        }
+                    }
                 }
                 else {
                     // Target invalid, return to spawn
@@ -120,13 +157,13 @@ export class NPCSystem {
             }
             else if (!data.aggroTarget && (npc.x !== spawnX || npc.y !== spawnY)) {
                 // Return to spawn position
+                const returnSpeed = (template.moveSpeed ?? 60) * 0.66;
                 const dx = spawnX - npc.x;
                 const dy = spawnY - npc.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > 2) {
-                    const speed = 40;
-                    npc.x += (dx / dist) * speed * dt;
-                    npc.y += (dy / dist) * speed * dt;
+                    npc.x += (dx / dist) * returnSpeed * dt;
+                    npc.y += (dy / dist) * returnSpeed * dt;
                 }
                 else {
                     npc.x = spawnX;
@@ -134,6 +171,7 @@ export class NPCSystem {
                 }
             }
         }
+        return events;
     }
     /**
      * Apply damage to an NPC. Returns XP reward if the NPC dies, 0 otherwise.
@@ -143,8 +181,9 @@ export class NPCSystem {
         if (!data || !data.npc.alive)
             return { died: false, xpReward: 0 };
         data.npc.hp = Math.max(0, data.npc.hp - damage);
-        // Aggro toward attacker
-        if (!data.aggroTarget) {
+        // Aggro toward attacker (only if canAggro allows it)
+        const canAggro = data.template.canAggro ?? (data.template.type === 'enemy');
+        if (!data.aggroTarget && canAggro) {
             data.aggroTarget = attackerId;
         }
         if (data.npc.hp <= 0) {
@@ -193,6 +232,10 @@ export class NPCSystem {
     }
     updateAggro(data, players) {
         const { npc, template } = data;
+        // Respect the canAggro toggle (defaults: true for enemies, false for friendly NPCs)
+        const canAggro = template.canAggro ?? (template.type === 'enemy');
+        if (!canAggro)
+            return;
         const aggroRange = template.aggroRange ?? 200;
         // If already aggroed, verify target still valid
         if (data.aggroTarget) {

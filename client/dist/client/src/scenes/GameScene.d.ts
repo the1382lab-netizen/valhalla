@@ -39,6 +39,10 @@ export declare class GameScene extends Phaser.Scene {
     private remotePlayerZones;
     private remotePlayerCache;
     private visibleProjectiles;
+    private visibleSpellProjectiles;
+    private npcZones;
+    private npcCache;
+    private visibleNpcs;
     private chatOffset;
     private actionBarOffset;
     private invOffset;

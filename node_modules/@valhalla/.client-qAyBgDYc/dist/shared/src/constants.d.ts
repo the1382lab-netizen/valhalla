@@ -27,6 +27,14 @@ export declare const MELEE_DAMAGE = 25;
 export declare const MELEE_RANGE = 60;
 export declare const MELEE_ARC: number;
 export declare const MELEE_COOLDOWN_MS = 600;
+/** Travel speed of the Fireball projectile (px/s) */
+export declare const FIREBALL_PROJECTILE_SPEED = 350;
+/** Blast radius for Fireball AoE damage (px) */
+export declare const FIREBALL_AOE_RADIUS = 96;
+/** Collision body radius of the Fireball while in flight (px) */
+export declare const FIREBALL_PROJECTILE_RADIUS = 10;
+/** Minimum damage multiplier at the outer edge of the blast radius (0–1) */
+export declare const FIREBALL_DAMAGE_FALLOFF_MIN = 0.35;
 export declare const INTERPOLATION_BUFFER_MS = 100;
 export declare const SERVER_URL: string;
 export declare const ROOM_NAME = "game_room";

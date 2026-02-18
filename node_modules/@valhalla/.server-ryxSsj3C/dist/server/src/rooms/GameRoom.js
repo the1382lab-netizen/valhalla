@@ -5,7 +5,10 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem } from '../systems/CombatSystem.js';
 import { MapManager } from '../systems/MapManager.js';
-import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, } from '@valhalla/shared';
+import { SkillSystem } from '../systems/SkillSystem.js';
+import { DataManager } from '../systems/DataManager.js';
+import { NPCSystem } from '../systems/NPCSystem.js';
+import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, hasRangedAttack, } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken } from '../services/AuthService.js';
 import { loadCharacter, saveCharacter, } from '../services/CharacterService.js';
@@ -17,24 +20,28 @@ export class GameRoom extends Room {
         this.sessionData = new Map();
         /** Interval handle for periodic saves. */
         this.saveInterval = null;
-        /** Current zone ID and spawn point for this room. */
-        this.currentZoneId = ZoneId.GRASSLANDS;
-        this.respawnPoint = { x: 352, y: 352 };
-        /** Zone connections for portal detection. */
-        this.zoneConnections = [];
+        /** Default zone for new players. */
+        this.defaultZoneId = ZoneId.GRASSLANDS;
+        /** Per-zone collision, connections, and respawn caches. */
+        this.zoneCache = new Map();
     }
     onCreate() {
         this.setState(new GameState());
+        // Initialize data manager — loads JSON data files from editor
+        DataManager.initialize();
         // Initialize map system
         this.mapManager = new MapManager();
-        const mapData = this.mapManager.loadZone(this.currentZoneId);
-        // Build collision from loaded map
-        this.collision = CollisionSystem.fromParsedMap(mapData);
-        this.movement = new MovementSystem(this.collision);
-        this.combat = new CombatSystem(this.collision);
-        // Cache spawn point and zone connections
-        this.respawnPoint = this.mapManager.getPlayerSpawn(this.currentZoneId);
-        this.zoneConnections = this.mapManager.getZoneConnections(this.currentZoneId);
+        // Pre-load the default zone
+        const defaultEntry = this.loadZoneCache(this.defaultZoneId);
+        this.movement = new MovementSystem(defaultEntry.collision);
+        this.combat = new CombatSystem(defaultEntry.collision);
+        this.skillSystem = new SkillSystem();
+        this.npcSystem = new NPCSystem();
+        // Spawn NPCs for all known zones
+        for (const zoneId of Object.keys(DataManager.instance.zones)) {
+            this.loadZoneCache(zoneId); // ensure zone is loaded
+            this.npcSystem.spawnZone(zoneId, this.mapManager, this.state.npcs);
+        }
         // Set the simulation interval (server tick)
         this.setSimulationInterval((dt) => this.update(dt), 1000 / SERVER_TICK_RATE);
         // Periodic save — every 30 seconds, persist all active players
@@ -86,7 +93,155 @@ export class GameRoom extends Room {
                 return;
             swapInventorySlots(player, data.fromIndex, data.toIndex);
         });
-        console.log(`[GameRoom] Room created. Zone: ${this.currentZoneId}, Map: ${mapData.width}×${mapData.height}, Tick: ${SERVER_TICK_RATE}Hz`);
+        // ── Skill System Messages ──
+        // Cast a skill
+        this.onMessage(MessageType.CAST_SKILL, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            const now = Date.now();
+            const events = this.skillSystem.tryStartCast(player, data.skillId, data.targetId ?? null, this.state.players, now);
+            this.broadcastSkillEvents(events, client);
+        });
+        // Cancel an active cast
+        this.onMessage(MessageType.CANCEL_CAST, (client) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            const events = this.skillSystem.cancelCast(player, Date.now());
+            this.broadcastSkillEvents(events, client);
+        });
+        // Set action bar slots
+        this.onMessage(MessageType.SET_ACTION_BAR, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            // Validate: each skill must belong to the player's class (or be empty)
+            const classSkills = DataManager.instance.getClassSkills(player.classId);
+            const validated = [];
+            for (let i = 0; i < ACTION_BAR_SLOTS; i++) {
+                const skillId = data.slots?.[i] ?? '';
+                if (skillId === '' || classSkills.includes(skillId)) {
+                    validated.push(skillId);
+                }
+                else {
+                    validated.push(''); // Invalid skill — clear the slot
+                }
+            }
+            player.actionBar = validated;
+        });
+        // ── Chat ──────────────────────────────────────────────────
+        this.onMessage(MessageType.CHAT_MESSAGE, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            // Validate
+            if (!data.message || typeof data.message !== 'string')
+                return;
+            const trimmed = data.message.trim().slice(0, 200);
+            if (trimmed.length === 0)
+                return;
+            const payload = {
+                channel: data.channel,
+                senderName: player.characterName,
+                message: trimmed,
+                timestamp: Date.now(),
+                targetName: data.targetName,
+            };
+            if (data.channel === 'world') {
+                this.broadcast(MessageType.CHAT_MESSAGE, payload);
+            }
+            else if (data.channel === 'general') {
+                // Send only to players in the same zone
+                const senderZone = player.zoneId;
+                for (const c of this.clients) {
+                    const p = this.state.players.get(c.sessionId);
+                    if (p?.zoneId === senderZone) {
+                        c.send(MessageType.CHAT_MESSAGE, payload);
+                    }
+                }
+            }
+            else if (data.channel === 'whisper') {
+                if (!data.targetName)
+                    return;
+                // Find target client by character name
+                let targetClient = null;
+                for (const c of this.clients) {
+                    const p = this.state.players.get(c.sessionId);
+                    if (p?.characterName === data.targetName) {
+                        targetClient = c;
+                        break;
+                    }
+                }
+                if (!targetClient) {
+                    // Player not found — send system error to sender only
+                    client.send(MessageType.CHAT_MESSAGE, {
+                        channel: 'system',
+                        senderName: '',
+                        message: `Player "${data.targetName}" is not online.`,
+                        timestamp: Date.now(),
+                    });
+                    return;
+                }
+                // Deliver to both sender and recipient
+                client.send(MessageType.CHAT_MESSAGE, payload);
+                if (targetClient.sessionId !== client.sessionId) {
+                    targetClient.send(MessageType.CHAT_MESSAGE, payload);
+                }
+            }
+        });
+        console.log(`[GameRoom] Room created. Default zone: ${this.defaultZoneId}, Tick: ${SERVER_TICK_RATE}Hz`);
+    }
+    /**
+     * Lazily load and cache a zone's collision, connections, and respawn point.
+     */
+    loadZoneCache(zoneId) {
+        const existing = this.zoneCache.get(zoneId);
+        if (existing)
+            return existing;
+        const mapData = this.mapManager.loadZone(zoneId);
+        const entry = {
+            collision: CollisionSystem.fromParsedMap(mapData),
+            connections: this.mapManager.getZoneConnections(zoneId),
+            respawnPoint: this.mapManager.getPlayerSpawn(zoneId),
+        };
+        this.zoneCache.set(zoneId, entry);
+        return entry;
+    }
+    /**
+     * Get the cached zone entry for a player's current zone.
+     */
+    getPlayerZone(player) {
+        return this.loadZoneCache(player.zoneId || this.defaultZoneId);
+    }
+    /**
+     * Find a safe (non-colliding) position near the given coordinates.
+     * Uses a spiral search pattern, expanding outward by one tile at a time.
+     * Returns the original position if already safe, or the zone respawn as last resort.
+     */
+    findSafeSpawn(x, y, collision, fallback) {
+        if (!collision.isCircleBlocked(x, y)) {
+            return { x, y };
+        }
+        const ts = collision.getTileSize();
+        // Spiral outward up to 10 tiles away
+        for (let dist = 1; dist <= 10; dist++) {
+            for (let dx = -dist; dx <= dist; dx++) {
+                for (let dy = -dist; dy <= dist; dy++) {
+                    // Only check the ring at this distance, not interior
+                    if (Math.abs(dx) !== dist && Math.abs(dy) !== dist)
+                        continue;
+                    const testX = x + dx * ts;
+                    const testY = y + dy * ts;
+                    if (!collision.isCircleBlocked(testX, testY)) {
+                        return { x: testX, y: testY };
+                    }
+                }
+            }
+        }
+        // Couldn't find safe spot nearby — use zone respawn point
+        console.warn(`[GameRoom] Could not find safe spawn near (${x}, ${y}), using zone respawn`);
+        return fallback;
     }
     /**
      * Colyseus auth hook — validates JWT before allowing the client to join.
@@ -138,7 +293,10 @@ export class GameRoom extends Room {
         player.classId = charData.classId;
         player.level = charData.level;
         player.xp = charData.xp;
-        player.zoneId = this.currentZoneId;
+        // Restore saved zone — fall back to default if unknown/missing/invalid
+        const savedZone = charData.zoneId;
+        const isValidZone = savedZone && DataManager.instance.isValidZone(savedZone);
+        player.zoneId = isValidZone ? savedZone : this.defaultZoneId;
         // Compute stats from class + level
         const stats = computeDerivedStats(charData.classId, charData.level);
         player.stats = stats;
@@ -148,18 +306,26 @@ export class GameRoom extends Room {
         // Restore vitals (clamped to max)
         player.hp = Math.min(charData.hp, stats.maxHp);
         player.mana = Math.min(charData.mana, stats.maxMana);
+        player.maxEnergy = stats.maxEnergy;
+        player.energy = stats.maxEnergy; // Energy starts full on login
         player.alive = charData.alive;
         // Restore position
         player.x = charData.positionX;
         player.y = charData.positionY;
+        // Load the player's zone collision data
+        const playerZone = this.getPlayerZone(player);
         // If the character was dead, respawn them fresh at zone spawn
         if (!player.alive) {
             player.alive = true;
             player.hp = stats.maxHp;
             player.mana = stats.maxMana;
-            player.x = this.respawnPoint.x;
-            player.y = this.respawnPoint.y;
+            player.x = playerZone.respawnPoint.x;
+            player.y = playerZone.respawnPoint.y;
         }
+        // Validate restored position — nudge out of walls if stuck
+        const safePos = this.findSafeSpawn(player.x, player.y, playerZone.collision, playerZone.respawnPoint);
+        player.x = safePos.x;
+        player.y = safePos.y;
         // ── Restore equipment ──
         for (const equip of charData.equipment) {
             switch (equip.slotType) {
@@ -200,9 +366,14 @@ export class GameRoom extends Room {
             userId: auth.userId,
             username: auth.username,
         });
-        // Send full map data to the client (replaces old collisionGrid message)
-        const mapPayload = this.mapManager.getMapDataForClient(this.currentZoneId);
+        // Send full map data to the client for their zone
+        const mapPayload = this.mapManager.getMapDataForClient(player.zoneId);
         client.send(MessageType.MAP_DATA, mapPayload);
+        // Restore action bar from DB and send to client
+        if (charData.actionBar && charData.actionBar.length > 0) {
+            player.actionBar = charData.actionBar;
+        }
+        client.send(MessageType.ACTION_BAR_DATA, { slots: player.actionBar });
         console.log(`[GameRoom] Player ${auth.username} joined as ${charData.classId} "${charData.name}" (Lv.${player.level}, HP:${player.hp}/${player.maxHp})`);
     }
     onLeave(client) {
@@ -230,6 +401,8 @@ export class GameRoom extends Room {
         player.hp = stats.maxHp; // Full heal on stat recompute
         player.maxMana = stats.maxMana;
         player.mana = stats.maxMana;
+        player.maxEnergy = stats.maxEnergy;
+        player.energy = stats.maxEnergy;
         player.speed = stats.speed;
     }
     /**
@@ -243,13 +416,15 @@ export class GameRoom extends Room {
             const queue = this.inputQueues.get(sessionId);
             if (!queue || queue.length === 0)
                 return;
+            // Get the collision system for this player's zone
+            const zoneEntry = this.getPlayerZone(player);
             for (const input of queue) {
                 // Only process movement if alive
                 if (player.alive) {
-                    this.movement.processInput(player, input, dtSec);
+                    this.movement.processInput(player, input, dtSec, zoneEntry.collision);
                 }
-                // Handle fire input
-                if (input.fire && player.alive) {
+                // Handle fire input — only Rangers support a ranged basic attack
+                if (input.fire && player.alive && hasRangedAttack(player.classId)) {
                     const proj = this.combat.tryFire(player, now);
                     if (proj) {
                         this.state.projectiles.set(proj.id, proj);
@@ -272,47 +447,85 @@ export class GameRoom extends Room {
         }
         // Broadcast combat events (hits, kills)
         this.broadcastCombatEvents(events);
-        // 3. Check respawns
-        const respawnEvents = this.combat.checkRespawns(this.state.players, now, this.respawnPoint);
+        // 3. Skill system update (cast progression, energy regen, buff ticking)
+        const skillEvents = this.skillSystem.update(this.state.players, dtSec, now);
+        this.broadcastSkillEvents(skillEvents);
+        // 4. Check respawns — handle per-player zone respawn points
+        const respawnEvents = this.checkRespawnsMultiZone(now);
         this.broadcastCombatEvents(respawnEvents);
-        // 4. Check zone transitions (portal triggers)
+        // 5. Update NPC system (aggro, movement, respawns)
+        this.npcSystem.update(dtSec, now, this.state.players, this.state.npcs, (zoneId) => this.zoneCache.get(zoneId)?.collision ?? null);
+        // 6. Check zone transitions (portal triggers)
         this.checkZoneTransitions();
     }
     /**
      * Check if any player has walked into a zone portal trigger rect.
+     * On transition: loads the target zone, updates player state, and sends new map data to the client.
      */
     checkZoneTransitions() {
-        if (this.zoneConnections.length === 0)
-            return;
         this.state.players.forEach((player, sessionId) => {
             if (!player.alive)
                 return;
-            for (const portal of this.zoneConnections) {
+            const zoneEntry = this.getPlayerZone(player);
+            if (zoneEntry.connections.length === 0)
+                return;
+            for (const portal of zoneEntry.connections) {
                 const rect = portal.triggerRect;
                 if (player.x >= rect.x &&
                     player.x <= rect.x + rect.width &&
                     player.y >= rect.y &&
                     player.y <= rect.y + rect.height) {
-                    // Player stepped into a portal!
-                    // For now, teleport them to the target spawn within the same zone
-                    // (full zone transition to different rooms comes in a later phase)
                     const client = this.clients.find(c => c.sessionId === sessionId);
-                    if (client) {
-                        // Teleport to target spawn
-                        player.x = portal.targetSpawn.x;
-                        player.y = portal.targetSpawn.y;
-                        // Notify client about the zone change
-                        client.send(MessageType.ZONE_CHANGE, {
-                            zoneId: portal.targetZone,
-                            spawnX: portal.targetSpawn.x,
-                            spawnY: portal.targetSpawn.y,
-                        });
-                        console.log(`[GameRoom] Player ${sessionId} triggered portal "${portal.id}" → ${portal.targetZone}`);
-                    }
+                    if (!client)
+                        break;
+                    const fromZone = player.zoneId;
+                    const toZone = portal.targetZone;
+                    // Load the target zone and find a safe spawn position
+                    const targetEntry = this.loadZoneCache(toZone);
+                    const safeSpawn = this.findSafeSpawn(portal.targetSpawn.x, portal.targetSpawn.y, targetEntry.collision, targetEntry.respawnPoint);
+                    player.zoneId = toZone;
+                    player.x = safeSpawn.x;
+                    player.y = safeSpawn.y;
+                    // Send the full map data for the new zone so the client can rebuild its tile map
+                    const mapPayload = this.mapManager.getMapDataForClient(toZone);
+                    client.send(MessageType.MAP_DATA, mapPayload);
+                    // Also send the zone change notification (with spawn coords for immediate repositioning)
+                    client.send(MessageType.ZONE_CHANGE, {
+                        zoneId: toZone,
+                        spawnX: safeSpawn.x,
+                        spawnY: safeSpawn.y,
+                    });
+                    console.log(`[GameRoom] Player ${sessionId} zone transition: ${fromZone} → ${toZone} via "${portal.id}"`);
                     break; // Only one portal per tick
                 }
             }
         });
+    }
+    /**
+     * Multi-zone respawn: each dead player respawns at their zone's spawn point.
+     */
+    checkRespawnsMultiZone(now) {
+        const events = [];
+        this.state.players.forEach((player) => {
+            if (player.alive)
+                return;
+            if (player.respawnAt === 0 || now < player.respawnAt)
+                return;
+            const zone = this.getPlayerZone(player);
+            player.alive = true;
+            player.hp = player.maxHp;
+            player.mana = player.maxMana;
+            player.respawnAt = 0;
+            player.invulnerableUntil = now + 6000; // extra i-frames on respawn
+            const safeRespawn = this.findSafeSpawn(zone.respawnPoint.x, zone.respawnPoint.y, zone.collision, zone.respawnPoint);
+            player.x = safeRespawn.x;
+            player.y = safeRespawn.y;
+            events.push({
+                type: 'playerRespawned',
+                data: { playerId: player.id },
+            });
+        });
+        return events;
     }
     /**
      * Send combat events to all clients.
@@ -320,6 +533,69 @@ export class GameRoom extends Room {
     broadcastCombatEvents(events) {
         for (const event of events) {
             this.broadcast(event.type, event.data);
+        }
+    }
+    /**
+     * Send skill system events to relevant clients.
+     * Some events go only to the caster, others are broadcast.
+     */
+    broadcastSkillEvents(events, sourceClient) {
+        for (const event of events) {
+            switch (event.type) {
+                case 'castFailed':
+                    // Only tell the caster about failures
+                    if (sourceClient) {
+                        sourceClient.send(MessageType.SKILL_FAILED, { reason: event.reason });
+                    }
+                    break;
+                case 'castStarted':
+                    // Broadcast so others can see cast bars
+                    this.broadcast(MessageType.SKILL_STARTED, {
+                        casterId: event.casterId,
+                        skillId: event.skillId,
+                        castTimeMs: event.castTimeMs,
+                    });
+                    break;
+                case 'castComplete':
+                    // Broadcast skill effects (damage numbers, heals, etc.)
+                    for (const fx of event.events) {
+                        this.broadcast(MessageType.SKILL_EFFECT, {
+                            casterId: event.casterId,
+                            skillId: event.skillId,
+                            ...fx,
+                        });
+                    }
+                    break;
+                case 'castInterrupted':
+                    this.broadcast(MessageType.SKILL_INTERRUPTED, {
+                        casterId: event.casterId,
+                        skillId: event.skillId,
+                    });
+                    break;
+                case 'buffExpired':
+                    this.broadcast(MessageType.BUFF_REMOVED, {
+                        targetId: event.targetId,
+                        skillId: event.skillId,
+                    });
+                    break;
+                case 'dotTick':
+                    this.broadcast(MessageType.SKILL_EFFECT, {
+                        type: 'damage',
+                        targetId: event.targetId,
+                        skillId: event.skillId,
+                        damage: event.damage,
+                        isCrit: false,
+                    });
+                    break;
+                case 'hotTick':
+                    this.broadcast(MessageType.SKILL_EFFECT, {
+                        type: 'heal',
+                        targetId: event.targetId,
+                        skillId: event.skillId,
+                        amount: event.heal,
+                    });
+                    break;
+            }
         }
     }
     // ── Persistence Helpers ──────────────────────────────────
@@ -359,9 +635,11 @@ export class GameRoom extends Room {
                 level: player.level,
                 positionX: player.x,
                 positionY: player.y,
+                zoneId: player.zoneId || this.defaultZoneId,
                 alive: player.alive,
                 inventory,
                 equipment,
+                actionBar: player.actionBar,
             };
             saveCharacter(characterId, data);
         }

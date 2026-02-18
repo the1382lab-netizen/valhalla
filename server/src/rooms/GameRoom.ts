@@ -5,6 +5,9 @@ import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem, CombatEvent } from '../systems/CombatSystem.js';
 import { MapManager } from '../systems/MapManager.js';
+import { SkillSystem, SkillSystemEvent } from '../systems/SkillSystem.js';
+import { DataManager } from '../systems/DataManager.js';
+import { NPCSystem } from '../systems/NPCSystem.js';
 import {
   InputPayload,
   MessageType,
@@ -15,7 +18,9 @@ import {
   computeDerivedStats,
   ZoneId,
   ZoneConnection,
-  ZONE_REGISTRY,
+  ACTION_BAR_SLOTS,
+  ChatMessagePayload,
+  hasRangedAttack,
 } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken, JwtPayload } from '../services/AuthService.js';
@@ -44,6 +49,8 @@ export class GameRoom extends Room<{ state: GameState }> {
   private movement!: MovementSystem;
   private combat!: CombatSystem;
   private mapManager!: MapManager;
+  private skillSystem!: SkillSystem;
+  private npcSystem!: NPCSystem;
   private inputQueues: Map<string, InputPayload[]> = new Map();
 
   /** Maps sessionId → persistent character data for save/load. */
@@ -61,6 +68,9 @@ export class GameRoom extends Room<{ state: GameState }> {
   onCreate(): void {
     this.setState(new GameState());
 
+    // Initialize data manager — loads JSON data files from editor
+    DataManager.initialize();
+
     // Initialize map system
     this.mapManager = new MapManager();
 
@@ -68,6 +78,14 @@ export class GameRoom extends Room<{ state: GameState }> {
     const defaultEntry = this.loadZoneCache(this.defaultZoneId);
     this.movement = new MovementSystem(defaultEntry.collision);
     this.combat = new CombatSystem(defaultEntry.collision);
+    this.skillSystem = new SkillSystem();
+    this.npcSystem = new NPCSystem();
+
+    // Spawn NPCs for all known zones
+    for (const zoneId of Object.keys(DataManager.instance.zones)) {
+      this.loadZoneCache(zoneId); // ensure zone is loaded
+      this.npcSystem.spawnZone(zoneId, this.mapManager, this.state.npcs);
+    }
 
     // Set the simulation interval (server tick)
     this.setSimulationInterval((dt) => this.update(dt), 1000 / SERVER_TICK_RATE);
@@ -122,6 +140,118 @@ export class GameRoom extends Room<{ state: GameState }> {
       const player = this.state.players.get(client.sessionId);
       if (!player || !player.alive) return;
       swapInventorySlots(player, data.fromIndex, data.toIndex);
+    });
+
+    // ── Skill System Messages ──
+
+    // Cast a skill
+    this.onMessage(MessageType.CAST_SKILL, (client: Client, data: { skillId: string; targetId?: string }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      const now = Date.now();
+      const events = this.skillSystem.tryStartCast(
+        player,
+        data.skillId,
+        data.targetId ?? null,
+        this.state.players,
+        now,
+      );
+      this.broadcastSkillEvents(events, client);
+    });
+
+    // Cancel an active cast
+    this.onMessage(MessageType.CANCEL_CAST, (client: Client) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      const events = this.skillSystem.cancelCast(player, Date.now());
+      this.broadcastSkillEvents(events, client);
+    });
+
+    // Set action bar slots
+    this.onMessage(MessageType.SET_ACTION_BAR, (client: Client, data: { slots: string[] }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      // Validate: each skill must belong to the player's class (or be empty)
+      const classSkills = DataManager.instance.getClassSkills(player.classId);
+      const validated: string[] = [];
+      for (let i = 0; i < ACTION_BAR_SLOTS; i++) {
+        const skillId = data.slots?.[i] ?? '';
+        if (skillId === '' || classSkills.includes(skillId)) {
+          validated.push(skillId);
+        } else {
+          validated.push(''); // Invalid skill — clear the slot
+        }
+      }
+      player.actionBar = validated;
+    });
+
+    // ── Chat ──────────────────────────────────────────────────
+    this.onMessage(MessageType.CHAT_MESSAGE, (client: Client, data: {
+      channel: 'general' | 'world' | 'whisper';
+      message: string;
+      targetName?: string;
+    }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+
+      // Validate
+      if (!data.message || typeof data.message !== 'string') return;
+      const trimmed = data.message.trim().slice(0, 200);
+      if (trimmed.length === 0) return;
+
+      const payload = {
+        channel: data.channel,
+        senderName: player.characterName,
+        message: trimmed,
+        timestamp: Date.now(),
+        targetName: data.targetName,
+      };
+
+      if (data.channel === 'world') {
+        this.broadcast(MessageType.CHAT_MESSAGE, payload);
+
+      } else if (data.channel === 'general') {
+        // Send only to players in the same zone
+        const senderZone = player.zoneId;
+        for (const c of this.clients) {
+          const p = this.state.players.get(c.sessionId);
+          if (p?.zoneId === senderZone) {
+            c.send(MessageType.CHAT_MESSAGE, payload);
+          }
+        }
+
+      } else if (data.channel === 'whisper') {
+        if (!data.targetName) return;
+
+        // Find target client by character name
+        let targetClient: Client | null = null;
+        for (const c of this.clients) {
+          const p = this.state.players.get(c.sessionId);
+          if (p?.characterName === data.targetName) {
+            targetClient = c;
+            break;
+          }
+        }
+
+        if (!targetClient) {
+          // Player not found — send system error to sender only
+          client.send(MessageType.CHAT_MESSAGE, {
+            channel: 'system',
+            senderName: '',
+            message: `Player "${data.targetName}" is not online.`,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
+        // Deliver to both sender and recipient
+        client.send(MessageType.CHAT_MESSAGE, payload);
+        if (targetClient.sessionId !== client.sessionId) {
+          targetClient.send(MessageType.CHAT_MESSAGE, payload);
+        }
+      }
     });
 
     console.log(`[GameRoom] Room created. Default zone: ${this.defaultZoneId}, Tick: ${SERVER_TICK_RATE}Hz`);
@@ -240,7 +370,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.xp = charData.xp;
     // Restore saved zone — fall back to default if unknown/missing/invalid
     const savedZone = charData.zoneId;
-    const isValidZone = savedZone && savedZone in ZONE_REGISTRY;
+    const isValidZone = savedZone && DataManager.instance.isValidZone(savedZone);
     player.zoneId = isValidZone ? savedZone : this.defaultZoneId;
 
     // Compute stats from class + level
@@ -253,6 +383,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     // Restore vitals (clamped to max)
     player.hp = Math.min(charData.hp, stats.maxHp);
     player.mana = Math.min(charData.mana, stats.maxMana);
+    player.maxEnergy = stats.maxEnergy;
+    player.energy = stats.maxEnergy; // Energy starts full on login
     player.alive = charData.alive;
 
     // Restore position
@@ -311,6 +443,12 @@ export class GameRoom extends Room<{ state: GameState }> {
     const mapPayload = this.mapManager.getMapDataForClient(player.zoneId);
     client.send(MessageType.MAP_DATA, mapPayload);
 
+    // Restore action bar from DB and send to client
+    if (charData.actionBar && charData.actionBar.length > 0) {
+      player.actionBar = charData.actionBar;
+    }
+    client.send(MessageType.ACTION_BAR_DATA, { slots: player.actionBar });
+
     console.log(`[GameRoom] Player ${auth.username} joined as ${charData.classId} "${charData.name}" (Lv.${player.level}, HP:${player.hp}/${player.maxHp})`);
   }
 
@@ -342,6 +480,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.hp = stats.maxHp; // Full heal on stat recompute
     player.maxMana = stats.maxMana;
     player.mana = stats.maxMana;
+    player.maxEnergy = stats.maxEnergy;
+    player.energy = stats.maxEnergy;
     player.speed = stats.speed;
   }
 
@@ -366,8 +506,8 @@ export class GameRoom extends Room<{ state: GameState }> {
           this.movement.processInput(player, input, dtSec, zoneEntry.collision);
         }
 
-        // Handle fire input
-        if (input.fire && player.alive) {
+        // Handle fire input — only Rangers support a ranged basic attack
+        if (input.fire && player.alive && hasRangedAttack(player.classId as ClassId)) {
           const proj = this.combat.tryFire(player, now);
           if (proj) {
             this.state.projectiles.set(proj.id, proj);
@@ -376,7 +516,7 @@ export class GameRoom extends Room<{ state: GameState }> {
 
         // Handle melee input
         if (input.melee && player.alive) {
-          const events = this.combat.tryMelee(player, this.state.players, now);
+          const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now);
           this.broadcastCombatEvents(events);
         }
       }
@@ -389,6 +529,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     const { toRemove, events } = this.combat.updateProjectiles(
       this.state.projectiles,
       this.state.players,
+      this.state.npcs,
+      this.npcSystem,
       dtSec,
       now,
     );
@@ -401,11 +543,25 @@ export class GameRoom extends Room<{ state: GameState }> {
     // Broadcast combat events (hits, kills)
     this.broadcastCombatEvents(events);
 
-    // 3. Check respawns — handle per-player zone respawn points
+    // 3. Skill system update (cast progression, energy regen, buff ticking)
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now);
+    this.broadcastSkillEvents(skillEvents);
+
+    // 4. Check respawns — handle per-player zone respawn points
     const respawnEvents = this.checkRespawnsMultiZone(now);
     this.broadcastCombatEvents(respawnEvents);
 
-    // 4. Check zone transitions (portal triggers)
+    // 5. Update NPC system (aggro, movement, respawns, NPC attacks)
+    const npcEvents = this.npcSystem.update(
+      dtSec,
+      now,
+      this.state.players,
+      this.state.npcs,
+      (zoneId) => this.zoneCache.get(zoneId)?.collision ?? null,
+    );
+    this.broadcastCombatEvents(npcEvents);
+
+    // 6. Check zone transitions (portal triggers)
     this.checkZoneTransitions();
   }
 
@@ -505,6 +661,76 @@ export class GameRoom extends Room<{ state: GameState }> {
     }
   }
 
+  /**
+   * Send skill system events to relevant clients.
+   * Some events go only to the caster, others are broadcast.
+   */
+  private broadcastSkillEvents(events: SkillSystemEvent[], sourceClient?: Client): void {
+    for (const event of events) {
+      switch (event.type) {
+        case 'castFailed':
+          // Only tell the caster about failures
+          if (sourceClient) {
+            sourceClient.send(MessageType.SKILL_FAILED, { reason: event.reason });
+          }
+          break;
+
+        case 'castStarted':
+          // Broadcast so others can see cast bars
+          this.broadcast(MessageType.SKILL_STARTED, {
+            casterId: event.casterId,
+            skillId: event.skillId,
+            castTimeMs: event.castTimeMs,
+          });
+          break;
+
+        case 'castComplete':
+          // Broadcast skill effects (damage numbers, heals, etc.)
+          for (const fx of event.events) {
+            this.broadcast(MessageType.SKILL_EFFECT, {
+              casterId: event.casterId,
+              skillId: event.skillId,
+              ...fx,
+            });
+          }
+          break;
+
+        case 'castInterrupted':
+          this.broadcast(MessageType.SKILL_INTERRUPTED, {
+            casterId: event.casterId,
+            skillId: event.skillId,
+          });
+          break;
+
+        case 'buffExpired':
+          this.broadcast(MessageType.BUFF_REMOVED, {
+            targetId: event.targetId,
+            skillId: event.skillId,
+          });
+          break;
+
+        case 'dotTick':
+          this.broadcast(MessageType.SKILL_EFFECT, {
+            type: 'damage',
+            targetId: event.targetId,
+            skillId: event.skillId,
+            damage: event.damage,
+            isCrit: false,
+          });
+          break;
+
+        case 'hotTick':
+          this.broadcast(MessageType.SKILL_EFFECT, {
+            type: 'heal',
+            targetId: event.targetId,
+            skillId: event.skillId,
+            amount: event.heal,
+          });
+          break;
+      }
+    }
+  }
+
   // ── Persistence Helpers ──────────────────────────────────
 
   /**
@@ -543,6 +769,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         alive: player.alive,
         inventory,
         equipment,
+        actionBar: player.actionBar,
       };
 
       saveCharacter(characterId, data);

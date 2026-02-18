@@ -1,0 +1,317 @@
+{
+  "version": "1.0.0",
+  "items": {
+    "iron_sword": {
+      "id": "iron_sword",
+      "name": "Iron Sword",
+      "description": "A sturdy blade favored by warriors.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "strength": 3
+      }
+    },
+    "oak_staff": {
+      "id": "oak_staff",
+      "name": "Oak Staff",
+      "description": "A gnarled staff humming with arcane energy.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "intelligence": 3
+      }
+    },
+    "short_bow": {
+      "id": "short_bow",
+      "name": "Short Bow",
+      "description": "A compact bow ideal for quick shots.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "dexterity": 3
+      }
+    },
+    "iron_dagger": {
+      "id": "iron_dagger",
+      "name": "Iron Dagger",
+      "description": "A swift blade for those who strike from the shadows.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "dexterity": 2,
+        "strength": 1
+      }
+    },
+    "bone_totem": {
+      "id": "bone_totem",
+      "name": "Bone Totem",
+      "description": "A carved totem channeling primal spirits.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 2,
+        "intelligence": 1
+      }
+    },
+    "iron_mace": {
+      "id": "iron_mace",
+      "name": "Iron Mace",
+      "description": "A heavy mace blessed for divine service.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 2,
+        "strength": 1
+      }
+    },
+    "leather_helm": {
+      "id": "leather_helm",
+      "name": "Leather Helm",
+      "description": "A basic leather cap offering modest protection.",
+      "category": "equipment",
+      "equipSlot": "helm",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 1,
+        "physicalDefense": 1
+      }
+    },
+    "iron_helm": {
+      "id": "iron_helm",
+      "name": "Iron Helm",
+      "description": "A solid iron helm for frontline fighters.",
+      "category": "equipment",
+      "equipSlot": "helm",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 2,
+        "physicalDefense": 2
+      }
+    },
+    "cloth_hood": {
+      "id": "cloth_hood",
+      "name": "Cloth Hood",
+      "description": "A thin hood woven with minor enchantments.",
+      "category": "equipment",
+      "equipSlot": "helm",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "intelligence": 1,
+        "spellResist": 1
+      }
+    },
+    "leather_tunic": {
+      "id": "leather_tunic",
+      "name": "Leather Tunic",
+      "description": "Flexible armor suitable for scouts and rangers.",
+      "category": "equipment",
+      "equipSlot": "chest",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 2,
+        "physicalDefense": 2,
+        "dodgeRating": 0.01
+      }
+    },
+    "chainmail": {
+      "id": "chainmail",
+      "name": "Chainmail",
+      "description": "Interlocking rings of iron providing solid defense.",
+      "category": "equipment",
+      "equipSlot": "chest",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 3,
+        "physicalDefense": 4
+      }
+    },
+    "cloth_robe": {
+      "id": "cloth_robe",
+      "name": "Cloth Robe",
+      "description": "A flowing robe that enhances magical focus.",
+      "category": "equipment",
+      "equipSlot": "chest",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "intelligence": 2,
+        "wisdom": 1,
+        "spellResist": 2
+      }
+    },
+    "leather_leggings": {
+      "id": "leather_leggings",
+      "name": "Leather Leggings",
+      "description": "Sturdy leather pants for the adventurous.",
+      "category": "equipment",
+      "equipSlot": "legs",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 1,
+        "physicalDefense": 1
+      }
+    },
+    "iron_greaves": {
+      "id": "iron_greaves",
+      "name": "Iron Greaves",
+      "description": "Heavy leg armor for the well-armored fighter.",
+      "category": "equipment",
+      "equipSlot": "legs",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 2,
+        "physicalDefense": 3
+      }
+    },
+    "cloth_pants": {
+      "id": "cloth_pants",
+      "name": "Cloth Pants",
+      "description": "Simple cloth leggings, comfortable for spellcasting.",
+      "category": "equipment",
+      "equipSlot": "legs",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 1,
+        "spellResist": 1
+      }
+    },
+    "leather_boots": {
+      "id": "leather_boots",
+      "name": "Leather Boots",
+      "description": "Light boots that keep your feet quick.",
+      "category": "equipment",
+      "equipSlot": "boots",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "dexterity": 1,
+        "dodgeRating": 0.01
+      }
+    },
+    "iron_boots": {
+      "id": "iron_boots",
+      "name": "Iron Boots",
+      "description": "Heavy iron boots — slow but protective.",
+      "category": "equipment",
+      "equipSlot": "boots",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 1,
+        "physicalDefense": 2
+      }
+    },
+    "cloth_sandals": {
+      "id": "cloth_sandals",
+      "name": "Cloth Sandals",
+      "description": "Light sandals that let you move freely.",
+      "category": "equipment",
+      "equipSlot": "boots",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 1
+      }
+    },
+    "ring_of_strength": {
+      "id": "ring_of_strength",
+      "name": "Ring of Strength",
+      "description": "A simple band that bolsters physical power.",
+      "category": "equipment",
+      "equipSlot": "ring",
+      "rarity": "uncommon",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "strength": 2
+      }
+    },
+    "ring_of_wisdom": {
+      "id": "ring_of_wisdom",
+      "name": "Ring of Wisdom",
+      "description": "A faintly glowing ring that sharpens the mind.",
+      "category": "equipment",
+      "equipSlot": "ring",
+      "rarity": "uncommon",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 2
+      }
+    },
+    "health_potion": {
+      "id": "health_potion",
+      "name": "Health Potion",
+      "description": "Restores a moderate amount of health.",
+      "category": "consumable",
+      "rarity": "common",
+      "stackable": true,
+      "maxStack": 20
+    },
+    "mana_potion": {
+      "id": "mana_potion",
+      "name": "Mana Potion",
+      "description": "Restores a moderate amount of mana.",
+      "category": "consumable",
+      "rarity": "common",
+      "stackable": true,
+      "maxStack": 20
+    },
+    "rat_tail": {
+      "id": "rat_tail",
+      "name": "Rat Tail",
+      "description": "A severed rat tail. Someone might want this.",
+      "category": "quest",
+      "rarity": "common",
+      "stackable": true,
+      "maxStack": 99
+    },
+    "gold_coin": {
+      "id": "gold_coin",
+      "name": "Gold Coin",
+      "description": "A shiny gold coin. Currency of the realm.",
+      "category": "misc",
+      "rarity": "common",
+      "stackable": true,
+      "maxStack": 9999
+    }
+  }
+}

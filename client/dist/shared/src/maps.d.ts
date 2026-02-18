@@ -4,6 +4,7 @@
  */
 export declare enum ZoneId {
     GRASSLANDS = "grasslands",
+    DESERT = "desert",
     CAVE_DUNGEON = "cave_dungeon"
 }
 export interface ZoneConnection {

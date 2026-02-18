@@ -60,6 +60,29 @@ export declare enum MessageType {
     DROP_ITEM = "dropItem",
     SWAP_INVENTORY = "swapInventory",
     MAP_DATA = "mapData",
-    ZONE_CHANGE = "zoneChange"
+    ZONE_CHANGE = "zoneChange",
+    CAST_SKILL = "castSkill",
+    CANCEL_CAST = "cancelCast",
+    SKILL_STARTED = "skillStarted",
+    SKILL_EFFECT = "skillEffect",
+    SKILL_FAILED = "skillFailed",
+    SKILL_INTERRUPTED = "skillInterrupted",
+    BUFF_APPLIED = "buffApplied",
+    BUFF_REMOVED = "buffRemoved",
+    SET_ACTION_BAR = "setActionBar",
+    ACTION_BAR_DATA = "actionBarData",
+    CHAT_MESSAGE = "chatMessage"
+}
+export interface ChatMessagePayload {
+    /** Channel the message was sent on. 'system' is server-generated. */
+    channel: 'general' | 'world' | 'whisper' | 'system';
+    /** Display name of the sender (characterName). Empty for system messages. */
+    senderName: string;
+    /** The message text (already validated & trimmed by the server). */
+    message: string;
+    /** Whisper only: recipient's character name. */
+    targetName?: string;
+    /** Unix ms timestamp set by server. */
+    timestamp: number;
 }
 //# sourceMappingURL=types.d.ts.map

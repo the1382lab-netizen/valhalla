@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "templates": {
+    "npc_1771431708366": {
+      "id": "npc_1771431708366",
+      "name": "Test Enemy",
+      "description": "",
+      "type": "enemy",
+      "level": 1,
+      "stats": {},
+      "hp": 100,
+      "mana": 0,
+      "behaviorType": "aggressive",
+      "aggroRange": 100,
+      "respawnMs": 1000,
+      "skills": [],
+      "spriteColor": 16777215,
+      "spriteSize": 1,
+      "xpReward": 0,
+      "dialogue": [],
+      "vendorInventory": [],
+      "damage": 10,
+      "leashRange": 600
+    }
+  }
+}

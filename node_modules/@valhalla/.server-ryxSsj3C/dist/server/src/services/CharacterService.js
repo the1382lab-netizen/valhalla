@@ -3,7 +3,8 @@
  * Uses raw sql.js queries (no ORM).
  */
 import { getDb, saveToDisk } from '../db/index.js';
-import { ClassId, ALL_CLASS_IDS, computeDerivedStats, ItemId, EquipSlotType, TILE_SIZE, MAX_CHARACTERS_PER_USER, } from '@valhalla/shared';
+import { ClassId, ALL_CLASS_IDS, computeDerivedStats, ItemId, EquipSlotType, MAX_CHARACTERS_PER_USER, ZoneId, ZONE_REGISTRY, } from '@valhalla/shared';
+import { DataManager } from '../systems/DataManager.js';
 // ── Starter Equipment by Class ──────────────────────────────
 const STARTER_WEAPONS = {
     [ClassId.WARRIOR]: ItemId.IRON_SWORD,
@@ -73,11 +74,19 @@ export function createCharacter(userId, name, classId) {
     // Compute initial stats
     const stats = computeDerivedStats(classId, 1);
     const now = Date.now();
-    const spawnX = 5 * TILE_SIZE + TILE_SIZE / 2;
-    const spawnY = 5 * TILE_SIZE + TILE_SIZE / 2;
+    // Prefer DataManager (loads from editor JSON), fall back to hardcoded
+    const dm = (() => { try {
+        return DataManager.instance;
+    }
+    catch {
+        return null;
+    } })();
+    const startZone = dm ? dm.zones[ZoneId.GRASSLANDS] : ZONE_REGISTRY[ZoneId.GRASSLANDS];
+    const spawnX = startZone.defaultSpawn.x;
+    const spawnY = startZone.defaultSpawn.y;
     // Insert character
     db.run(`INSERT INTO characters (user_id, name, class_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
-     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, 'main', 1, ?, ?)`, [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, now, now]);
+     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`, [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now]);
     const charIdResult = db.exec('SELECT last_insert_rowid() as id');
     const charId = charIdResult[0].values[0][0];
     // Insert starter weapon into equipment
@@ -125,6 +134,15 @@ export function loadCharacter(characterId, userId) {
         slotType: row.slot_type,
         itemId: row.item_id,
     }));
+    // Load action bar
+    const actionBarRows = queryAll('SELECT slot_index, skill_id FROM character_action_bar WHERE character_id = ? ORDER BY slot_index', [characterId]);
+    const actionBar = ['', '', '', '', '', '', '', ''];
+    for (const row of actionBarRows) {
+        const idx = row.slot_index;
+        if (idx >= 0 && idx < 8) {
+            actionBar[idx] = row.skill_id;
+        }
+    }
     return {
         id: char.id,
         userId: char.user_id,
@@ -140,6 +158,7 @@ export function loadCharacter(characterId, userId) {
         alive: !!char.alive,
         inventory,
         equipment,
+        actionBar,
     };
 }
 /**
@@ -148,11 +167,11 @@ export function loadCharacter(characterId, userId) {
  */
 export function saveCharacter(characterId, data) {
     const db = getDb();
-    // Update character fields
+    // Update character fields (including zone_id for position persistence)
     db.run(`UPDATE characters SET hp = ?, mana = ?, xp = ?, level = ?,
-     position_x = ?, position_y = ?, alive = ?, updated_at = ?
+     position_x = ?, position_y = ?, zone_id = ?, alive = ?, updated_at = ?
      WHERE id = ?`, [data.hp, data.mana, data.xp, data.level,
-        data.positionX, data.positionY, data.alive ? 1 : 0, Date.now(),
+        data.positionX, data.positionY, data.zoneId, data.alive ? 1 : 0, Date.now(),
         characterId]);
     // Replace inventory: delete all then reinsert
     db.run('DELETE FROM inventory_items WHERE character_id = ?', [characterId]);
@@ -163,6 +182,15 @@ export function saveCharacter(characterId, data) {
     db.run('DELETE FROM character_equipment WHERE character_id = ?', [characterId]);
     for (const equip of data.equipment) {
         db.run('INSERT INTO character_equipment (character_id, slot_type, item_id) VALUES (?, ?, ?)', [characterId, equip.slotType, equip.itemId]);
+    }
+    // Replace action bar: delete all then reinsert non-empty slots
+    db.run('DELETE FROM character_action_bar WHERE character_id = ?', [characterId]);
+    if (data.actionBar) {
+        for (let i = 0; i < data.actionBar.length; i++) {
+            if (data.actionBar[i]) {
+                db.run('INSERT INTO character_action_bar (character_id, slot_index, skill_id) VALUES (?, ?, ?)', [characterId, i, data.actionBar[i]]);
+            }
+        }
     }
     saveToDisk();
 }

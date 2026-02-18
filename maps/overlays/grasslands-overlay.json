@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "spawnPoints": [
+    {
+      "id": "spawn_1771369869677",
+      "type": "player_spawn",
+      "x": 704,
+      "y": 295,
+      "properties": {}
+    },
+    {
+      "id": "spawn_1771369875840",
+      "type": "player_spawn",
+      "x": 400,
+      "y": 1100,
+      "properties": {},
+      "label": ""
+    },
+    {
+      "id": "spawn_1771369996885",
+      "type": "player_spawn",
+      "x": 330,
+      "y": 1090,
+      "properties": {}
+    },
+    {
+      "id": "spawn_1771370113881",
+      "type": "player_spawn",
+      "x": 330,
+      "y": 990,
+      "properties": {}
+    },
+    {
+      "id": "spawn_1771431740963",
+      "type": "enemy_spawn",
+      "x": 1024,
+      "y": 412,
+      "label": "Test Enemy",
+      "templateId": "npc_1771431708366"
+    }
+  ]
+}

@@ -6,6 +6,12 @@ import { initDatabase } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import express from 'express';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DATA_DIR = resolve(__dirname, '..', '..', 'shared', 'data');
 
 // Initialize database (async — sql.js loads WASM) then start the server
 await initDatabase();
@@ -41,6 +47,9 @@ const server = defineServer({
     app.get('/', (_req, res) => {
       res.json({ status: 'Valhalla server running' });
     });
+
+    // Serve shared/data/*.json files so clients can load editor content
+    app.use('/api/data', express.static(DATA_DIR));
 
     // Auth & character API routes
     app.use('/api/auth', authRouter);

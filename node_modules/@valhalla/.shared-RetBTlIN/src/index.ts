@@ -7,3 +7,8 @@ export * from './items.js';
 export * from './maps.js';
 export * from './TiledMapParser.js';
 export * from './FallbackMapGenerator.js';
+export * from './skills.js';
+export * from './ui-config.js';
+export * from './npcs.js';
+export * from './loot-tables.js';
+export * from './loaders.js';

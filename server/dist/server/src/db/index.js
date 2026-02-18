@@ -54,7 +54,7 @@ export async function initDatabase(filePath = 'valhalla.db') {
       mana INTEGER NOT NULL,
       position_x REAL NOT NULL,
       position_y REAL NOT NULL,
-      zone_id TEXT NOT NULL DEFAULT 'main',
+      zone_id TEXT NOT NULL DEFAULT 'grasslands',
       alive INTEGER NOT NULL DEFAULT 1,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
@@ -77,10 +77,22 @@ export async function initDatabase(filePath = 'valhalla.db') {
       item_id TEXT NOT NULL
     );
   `);
+    db.run(`
+    CREATE TABLE IF NOT EXISTS character_action_bar (
+      character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+      slot_index INTEGER NOT NULL,
+      skill_id TEXT NOT NULL,
+      PRIMARY KEY (character_id, slot_index)
+    );
+  `);
     // Create indexes
     db.run('CREATE INDEX IF NOT EXISTS idx_characters_user_id ON characters(user_id);');
     db.run('CREATE INDEX IF NOT EXISTS idx_inventory_character_id ON inventory_items(character_id);');
     db.run('CREATE INDEX IF NOT EXISTS idx_equipment_character_id ON character_equipment(character_id);');
+    db.run('CREATE INDEX IF NOT EXISTS idx_action_bar_character_id ON character_action_bar(character_id);');
+    // ── Migrations ──
+    // Fix legacy 'main' zone_id to 'grasslands'
+    db.run("UPDATE characters SET zone_id = 'grasslands' WHERE zone_id = 'main'");
     saveToDisk();
     console.log(`[DB] SQLite database initialized (sql.js WASM)`);
 }

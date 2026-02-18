@@ -5,21 +5,35 @@ import { JwtPayload } from '../services/AuthService.js';
 export declare class GameRoom extends Room<{
     state: GameState;
 }> {
-    private collision;
     private movement;
     private combat;
     private mapManager;
+    private skillSystem;
+    private npcSystem;
     private inputQueues;
     /** Maps sessionId → persistent character data for save/load. */
     private sessionData;
     /** Interval handle for periodic saves. */
     private saveInterval;
-    /** Current zone ID and spawn point for this room. */
-    private currentZoneId;
-    private respawnPoint;
-    /** Zone connections for portal detection. */
-    private zoneConnections;
+    /** Default zone for new players. */
+    private defaultZoneId;
+    /** Per-zone collision, connections, and respawn caches. */
+    private zoneCache;
     onCreate(): void;
+    /**
+     * Lazily load and cache a zone's collision, connections, and respawn point.
+     */
+    private loadZoneCache;
+    /**
+     * Get the cached zone entry for a player's current zone.
+     */
+    private getPlayerZone;
+    /**
+     * Find a safe (non-colliding) position near the given coordinates.
+     * Uses a spiral search pattern, expanding outward by one tile at a time.
+     * Returns the original position if already safe, or the zone respawn as last resort.
+     */
+    private findSafeSpawn;
     /**
      * Colyseus auth hook — validates JWT before allowing the client to join.
      * Returned value is stored on client.auth.
@@ -44,12 +58,22 @@ export declare class GameRoom extends Room<{
     private update;
     /**
      * Check if any player has walked into a zone portal trigger rect.
+     * On transition: loads the target zone, updates player state, and sends new map data to the client.
      */
     private checkZoneTransitions;
+    /**
+     * Multi-zone respawn: each dead player respawns at their zone's spawn point.
+     */
+    private checkRespawnsMultiZone;
     /**
      * Send combat events to all clients.
      */
     private broadcastCombatEvents;
+    /**
+     * Send skill system events to relevant clients.
+     * Some events go only to the caster, others are broadcast.
+     */
+    private broadcastSkillEvents;
     /**
      * Extract current player state and save to database.
      */

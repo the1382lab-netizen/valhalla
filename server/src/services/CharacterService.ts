@@ -14,6 +14,7 @@ import {
   ZoneId,
   ZONE_REGISTRY,
 } from '@valhalla/shared';
+import { DataManager } from '../systems/DataManager.js';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -50,6 +51,7 @@ export interface LoadedCharacter {
   alive: boolean;
   inventory: InventorySlotData[];
   equipment: EquipmentData[];
+  actionBar: string[];
 }
 
 export interface SaveCharacterData {
@@ -63,6 +65,7 @@ export interface SaveCharacterData {
   alive: boolean;
   inventory: InventorySlotData[];
   equipment: EquipmentData[];
+  actionBar: string[];
 }
 
 // ── Starter Equipment by Class ──────────────────────────────
@@ -143,7 +146,9 @@ export function createCharacter(userId: number, name: string, classId: string): 
   // Compute initial stats
   const stats = computeDerivedStats(classId as ClassId, 1);
   const now = Date.now();
-  const startZone = ZONE_REGISTRY[ZoneId.GRASSLANDS];
+  // Prefer DataManager (loads from editor JSON), fall back to hardcoded
+  const dm = (() => { try { return DataManager.instance; } catch { return null; } })();
+  const startZone = dm ? dm.zones[ZoneId.GRASSLANDS] : ZONE_REGISTRY[ZoneId.GRASSLANDS];
   const spawnX = startZone.defaultSpawn.x;
   const spawnY = startZone.defaultSpawn.y;
 
@@ -232,6 +237,19 @@ export function loadCharacter(characterId: number, userId: number): LoadedCharac
     itemId: row.item_id as string,
   }));
 
+  // Load action bar
+  const actionBarRows = queryAll(
+    'SELECT slot_index, skill_id FROM character_action_bar WHERE character_id = ? ORDER BY slot_index',
+    [characterId],
+  );
+  const actionBar: string[] = ['', '', '', '', '', '', '', ''];
+  for (const row of actionBarRows) {
+    const idx = row.slot_index as number;
+    if (idx >= 0 && idx < 8) {
+      actionBar[idx] = row.skill_id as string;
+    }
+  }
+
   return {
     id: char.id as number,
     userId: char.user_id as number,
@@ -247,6 +265,7 @@ export function loadCharacter(characterId: number, userId: number): LoadedCharac
     alive: !!(char.alive as number),
     inventory,
     equipment,
+    actionBar,
   };
 }
 
@@ -283,6 +302,19 @@ export function saveCharacter(characterId: number, data: SaveCharacterData): voi
       'INSERT INTO character_equipment (character_id, slot_type, item_id) VALUES (?, ?, ?)',
       [characterId, equip.slotType, equip.itemId],
     );
+  }
+
+  // Replace action bar: delete all then reinsert non-empty slots
+  db.run('DELETE FROM character_action_bar WHERE character_id = ?', [characterId]);
+  if (data.actionBar) {
+    for (let i = 0; i < data.actionBar.length; i++) {
+      if (data.actionBar[i]) {
+        db.run(
+          'INSERT INTO character_action_bar (character_id, slot_index, skill_id) VALUES (?, ?, ?)',
+          [characterId, i, data.actionBar[i]],
+        );
+      }
+    }
   }
 
   saveToDisk();

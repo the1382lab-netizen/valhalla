@@ -31,7 +31,13 @@ export class PlayerState extends Schema {
         this.maxHp = PLAYER_MAX_HP;
         this.mana = 0;
         this.maxMana = 0;
+        this.energy = 0;
+        this.maxEnergy = 0;
         this.alive = true;
+        // ── Casting State (synced for cast bar) ────────────
+        this.castingSkillId = '';
+        this.castingStartedAt = 0;
+        this.castingDurationMs = 0;
         // ── Equipment (synced) — empty string = nothing equipped ──
         this.equipWeapon = '';
         this.equipHelm = '';
@@ -47,6 +53,13 @@ export class PlayerState extends Schema {
         this.meleeCooldown = 0;
         this.invulnerableUntil = 0;
         this.respawnAt = 0;
+        // ── Skill Server-only State ───────────────────────────
+        /** Skill cooldowns: skillId → timestamp when cooldown expires */
+        this.skillCooldowns = new Map();
+        /** Active buffs on this player */
+        this.activeBuffs = [];
+        /** Action bar skill assignments (8 slots) */
+        this.actionBar = ['', '', '', '', '', '', '', ''];
         /**
          * Full resolved stat block — server-only, used for combat math.
          * Recomputed on join, level-up, and (later) gear changes.
@@ -70,7 +83,12 @@ defineTypes(PlayerState, {
     maxHp: 'int16',
     mana: 'int16',
     maxMana: 'int16',
+    energy: 'float32',
+    maxEnergy: 'int16',
     alive: 'boolean',
+    castingSkillId: 'string',
+    castingStartedAt: 'float64',
+    castingDurationMs: 'uint16',
     inputSeq: 'uint32',
     equipWeapon: 'string',
     equipHelm: 'string',

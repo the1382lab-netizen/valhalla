@@ -2,6 +2,18 @@ import { Schema, ArraySchema, defineTypes } from '@colyseus/schema';
 import { PLAYER_MAX_HP } from '@valhalla/shared';
 import type { ResolvedStats } from '@valhalla/shared';
 
+// ── Active Buff (server-only tracking) ─────────────────────
+export interface ActiveBuff {
+  skillId: string;
+  casterId: string;
+  appliedAt: number;     // timestamp
+  expiresAt: number;     // timestamp
+  dotDamagePerSec?: number;
+  hotHealPerSec?: number;
+  /** Generic effect data — specific handlers interpret this */
+  effectData?: Record<string, any>;
+}
+
 // ── Inventory Slot Schema (synced to client) ─────────────────
 export class InventorySlotState extends Schema {
   itemId: string = '';
@@ -32,7 +44,14 @@ export class PlayerState extends Schema {
   maxHp: number = PLAYER_MAX_HP;
   mana: number = 0;
   maxMana: number = 0;
+  energy: number = 0;
+  maxEnergy: number = 0;
   alive: boolean = true;
+
+  // ── Casting State (synced for cast bar) ────────────
+  castingSkillId: string = '';
+  castingStartedAt: number = 0;
+  castingDurationMs: number = 0;
 
   // ── Equipment (synced) — empty string = nothing equipped ──
   equipWeapon: string = '';
@@ -51,6 +70,14 @@ export class PlayerState extends Schema {
   meleeCooldown: number = 0;
   invulnerableUntil: number = 0;
   respawnAt: number = 0;
+
+  // ── Skill Server-only State ───────────────────────────
+  /** Skill cooldowns: skillId → timestamp when cooldown expires */
+  skillCooldowns: Map<string, number> = new Map();
+  /** Active buffs on this player */
+  activeBuffs: ActiveBuff[] = [];
+  /** Action bar skill assignments (8 slots) */
+  actionBar: string[] = ['', '', '', '', '', '', '', ''];
 
   /**
    * Full resolved stat block — server-only, used for combat math.
@@ -75,7 +102,12 @@ defineTypes(PlayerState, {
   maxHp: 'int16',
   mana: 'int16',
   maxMana: 'int16',
+  energy: 'float32',
+  maxEnergy: 'int16',
   alive: 'boolean',
+  castingSkillId: 'string',
+  castingStartedAt: 'float64',
+  castingDurationMs: 'uint16',
   inputSeq: 'uint32',
   equipWeapon: 'string',
   equipHelm: 'string',

@@ -1,7 +1,9 @@
 import { MapSchema } from '@colyseus/schema';
 import { PlayerState } from '../schema/PlayerState.js';
 import { ProjectileState } from '../schema/ProjectileState.js';
+import { NPCState } from '../schema/NPCState.js';
 import { CollisionSystem } from './CollisionSystem.js';
+import type { NPCSystem } from './NPCSystem.js';
 import {
   PROJECTILE_SPEED,
   PROJECTILE_RADIUS,
@@ -34,7 +36,7 @@ let nextProjectileId = 0;
 export type DamageType = 'physical' | 'magical';
 
 export interface CombatEvent {
-  type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'missed' | 'dodged' | 'blocked';
+  type: 'playerHit' | 'playerDied' | 'playerRespawned' | 'meleeAttack' | 'missed' | 'dodged' | 'blocked' | 'npcHit' | 'npcDied';
   data: any;
 }
 
@@ -103,6 +105,8 @@ export class CombatSystem {
   tryMelee(
     attacker: PlayerState,
     players: MapSchema<PlayerState>,
+    npcs: MapSchema<NPCState>,
+    npcSystem: NPCSystem,
     now: number,
   ): CombatEvent[] {
     const events: CombatEvent[] = [];
@@ -158,6 +162,50 @@ export class CombatSystem {
       events.push(...hitEvents);
     });
 
+    // ── NPC targets ──
+    npcs.forEach((npc, npcId) => {
+      if (!npc.alive) return;
+      if (npc.zoneId !== attacker.zoneId) return;
+
+      const dx = npc.x - attacker.x;
+      const dy = npc.y - attacker.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist > MELEE_RANGE + PLAYER_COLLISION_RADIUS) return;
+
+      // Check angle: is the NPC within the melee arc?
+      const angleToTarget = Math.atan2(dy, dx);
+      let angleDiff = angleToTarget - attacker.aimAngle;
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+      if (Math.abs(angleDiff) > MELEE_ARC / 2) return;
+
+      // Apply damage through NPCSystem (flat damage, no stat rolls for NPC targets)
+      const { died, xpReward } = npcSystem.damageNPC(npcId, rawDamage, attacker.id, now);
+
+      events.push({
+        type: 'npcHit',
+        data: {
+          targetId: npcId,
+          attackerId: attacker.id,
+          damage: rawDamage,
+          remainingHp: npc.hp,
+          isCrit: false,
+          blocked: false,
+        },
+      });
+
+      if (died) {
+        events.push({
+          type: 'npcDied',
+          data: { targetId: npcId, killerId: attacker.id, xpReward },
+        });
+        // Award XP to the attacker
+        attacker.xp = (attacker.xp ?? 0) + xpReward;
+      }
+    });
+
     return events;
   }
 
@@ -167,6 +215,8 @@ export class CombatSystem {
   updateProjectiles(
     projectiles: MapSchema<ProjectileState>,
     players: MapSchema<PlayerState>,
+    npcs: MapSchema<NPCState>,
+    npcSystem: NPCSystem,
     dt: number,
     now: number,
   ): { toRemove: string[]; events: CombatEvent[] } {
@@ -229,6 +279,50 @@ export class CombatSystem {
           events.push(...hitEvents);
         }
       });
+
+      // ── NPC collision (only if we didn't already hit a player) ──
+      if (!hitPlayer) {
+        let hitNpc = false;
+        npcs.forEach((npc, npcId) => {
+          if (hitNpc) return;
+          if (!npc.alive) return;
+
+          const dx = npc.x - proj.x;
+          const dy = npc.y - proj.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+
+          if (dist < PLAYER_COLLISION_RADIUS + PROJECTILE_RADIUS) {
+            hitNpc = true;
+            toRemove.push(projId);
+
+            const { died, xpReward } = npcSystem.damageNPC(npcId, proj.damage, proj.ownerId, now);
+
+            events.push({
+              type: 'npcHit',
+              data: {
+                targetId: npcId,
+                attackerId: proj.ownerId,
+                damage: proj.damage,
+                remainingHp: npc.hp,
+                isCrit: false,
+                blocked: false,
+              },
+            });
+
+            if (died) {
+              events.push({
+                type: 'npcDied',
+                data: { targetId: npcId, killerId: proj.ownerId, xpReward },
+              });
+              // Award XP to the projectile owner
+              const killer = players.get(proj.ownerId);
+              if (killer) {
+                killer.xp = (killer.xp ?? 0) + xpReward;
+              }
+            }
+          }
+        });
+      }
     });
 
     return { toRemove, events };

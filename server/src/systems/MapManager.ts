@@ -13,10 +13,10 @@ import {
   SpawnPointData,
   ZoneConnection,
   ZoneId,
-  ZONE_REGISTRY,
   parseTiledMap,
   generateFallbackMap,
 } from '@valhalla/shared';
+import { DataManager } from './DataManager.js';
 
 // Resolve the project root (valhalla/) relative to this file
 // server/src/systems/MapManager.ts → three levels up = server/ → one more = valhalla/
@@ -29,12 +29,13 @@ export class MapManager {
 
   /**
    * Load a zone's map data. Reads from disk on first call, caches after that.
+   * Merges in editor overlay data (spawn points, zone connections) if available.
    */
   loadZone(zoneId: string): ParsedMapData {
     const cached = this.zones.get(zoneId);
     if (cached) return cached;
 
-    const config = ZONE_REGISTRY[zoneId as ZoneId];
+    const config = DataManager.instance.zones[zoneId];
     let mapData: ParsedMapData;
 
     if (config) {
@@ -57,8 +58,89 @@ export class MapManager {
       mapData = generateFallbackMap();
     }
 
+    // Merge editor overlay data (spawn points and zone connections)
+    this.mergeOverlay(zoneId, mapData);
+
     this.zones.set(zoneId, mapData);
     return mapData;
+  }
+
+  /**
+   * Load and merge an editor overlay file into the parsed map data.
+   * Overlay data takes precedence — its spawn points and zone connections
+   * replace any that came from the Tiled JSON.
+   */
+  private mergeOverlay(zoneId: string, mapData: ParsedMapData): void {
+    const overlayPath = resolve(MAPS_DIR, 'overlays', `${zoneId}-overlay.json`);
+    if (!existsSync(overlayPath)) return;
+
+    try {
+      const overlay = JSON.parse(readFileSync(overlayPath, 'utf-8'));
+
+      if (Array.isArray(overlay.spawnPoints) && overlay.spawnPoints.length > 0) {
+        // Separate portal objects from regular spawn points.
+        // The editor stores portals in spawnPoints with type "portal",
+        // but the server needs them as ZoneConnection objects in zoneConnections.
+        const regularSpawns: SpawnPointData[] = [];
+        const portalConnections: ZoneConnection[] = [];
+
+        for (const sp of overlay.spawnPoints) {
+          if (sp.type === 'portal') {
+            // Convert portal spawn point → ZoneConnection
+            const targetZone = sp.templateId || sp.label || '';
+            if (!targetZone) {
+              console.warn(`[MapManager] Portal "${sp.id}" in "${zoneId}" has no target zone, skipping`);
+              continue;
+            }
+
+            // Look up the target zone's default spawn for the arrival position
+            const targetConfig = DataManager.instance.zones[targetZone];
+            const targetSpawn = targetConfig?.defaultSpawn ?? { x: 160, y: 160 };
+
+            portalConnections.push({
+              id: sp.id,
+              triggerRect: {
+                x: sp.x - (sp.width || 64) / 2,
+                y: sp.y - (sp.height || 64) / 2,
+                width: sp.width || 64,
+                height: sp.height || 64,
+              },
+              targetZone: targetZone as ZoneId,
+              targetSpawn,
+            });
+          } else {
+            regularSpawns.push(sp);
+          }
+        }
+
+        // Merge regular spawn points (non-portal)
+        if (regularSpawns.length > 0) {
+          const overlayIds = new Set(regularSpawns.map((sp: any) => sp.id));
+          const tiledOnly = mapData.spawnPoints.filter(sp => !overlayIds.has(sp.id));
+          mapData.spawnPoints = [...tiledOnly, ...regularSpawns];
+          console.log(`[MapManager] Merged ${regularSpawns.length} overlay spawn points for "${zoneId}"`);
+        }
+
+        // Merge portal connections
+        if (portalConnections.length > 0) {
+          const portalIds = new Set(portalConnections.map(zc => zc.id));
+          const tiledOnly = mapData.zoneConnections.filter(zc => !portalIds.has(zc.id));
+          mapData.zoneConnections = [...tiledOnly, ...portalConnections];
+          console.log(`[MapManager] Merged ${portalConnections.length} overlay portals for "${zoneId}"`);
+        }
+      }
+
+      // Also merge explicit zoneConnections if present in overlay
+      if (Array.isArray(overlay.zoneConnections) && overlay.zoneConnections.length > 0) {
+        const overlayPortalIds = new Set(overlay.zoneConnections.map((zc: any) => zc.id));
+        const tiledOnly = mapData.zoneConnections.filter(zc => !overlayPortalIds.has(zc.id));
+        mapData.zoneConnections = [...tiledOnly, ...overlay.zoneConnections];
+
+        console.log(`[MapManager] Merged ${overlay.zoneConnections.length} overlay zone connections for "${zoneId}"`);
+      }
+    } catch (err) {
+      console.warn(`[MapManager] Failed to load overlay for "${zoneId}":`, err);
+    }
   }
 
   /**
@@ -85,7 +167,7 @@ export class MapManager {
       return { x: spawnPoint.x, y: spawnPoint.y };
     }
     // Fall back to zone registry default
-    const config = ZONE_REGISTRY[zoneId as ZoneId];
+    const config = DataManager.instance.zones[zoneId];
     if (config) {
       return config.defaultSpawn;
     }
@@ -112,7 +194,7 @@ export class MapManager {
    */
   getMapDataForClient(zoneId: string): MapDataPayload {
     const map = this.loadZone(zoneId);
-    const config = ZONE_REGISTRY[zoneId as ZoneId];
+    const config = DataManager.instance.zones[zoneId];
     const spawn = this.getPlayerSpawn(zoneId);
 
     // Filter out the collision layer from visual layers (client doesn't need it for rendering)

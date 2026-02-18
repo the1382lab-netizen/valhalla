@@ -1,0 +1,32 @@
+{
+  "version": "1.0.0",
+  "zones": {
+    "grasslands": {
+      "id": "grasslands",
+      "name": "Grasslands",
+      "mapFile": "grasslands.json",
+      "defaultSpawn": {
+        "x": 672,
+        "y": 672
+      }
+    },
+    "desert": {
+      "id": "desert",
+      "name": "Scorched Desert",
+      "mapFile": "desert.json",
+      "defaultSpawn": {
+        "x": 160,
+        "y": 3680
+      }
+    },
+    "cave_dungeon": {
+      "id": "cave_dungeon",
+      "name": "Cave Dungeon",
+      "mapFile": "cave_dungeon.json",
+      "defaultSpawn": {
+        "x": 224,
+        "y": 224
+      }
+    }
+  }
+}

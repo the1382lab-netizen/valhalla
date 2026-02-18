@@ -16,5 +16,18 @@ export var MessageType;
     MessageType["SWAP_INVENTORY"] = "swapInventory";
     MessageType["MAP_DATA"] = "mapData";
     MessageType["ZONE_CHANGE"] = "zoneChange";
+    // ── Skills & Spells ──
+    MessageType["CAST_SKILL"] = "castSkill";
+    MessageType["CANCEL_CAST"] = "cancelCast";
+    MessageType["SKILL_STARTED"] = "skillStarted";
+    MessageType["SKILL_EFFECT"] = "skillEffect";
+    MessageType["SKILL_FAILED"] = "skillFailed";
+    MessageType["SKILL_INTERRUPTED"] = "skillInterrupted";
+    MessageType["BUFF_APPLIED"] = "buffApplied";
+    MessageType["BUFF_REMOVED"] = "buffRemoved";
+    MessageType["SET_ACTION_BAR"] = "setActionBar";
+    MessageType["ACTION_BAR_DATA"] = "actionBarData";
+    // ── Chat ──
+    MessageType["CHAT_MESSAGE"] = "chatMessage";
 })(MessageType || (MessageType = {}));
 //# sourceMappingURL=types.js.map

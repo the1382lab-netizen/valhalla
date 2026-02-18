@@ -2,15 +2,16 @@
  * Stateless inventory helper functions.
  * Operates on a PlayerState's inventory ArraySchema.
  */
-import { INVENTORY_MAX_SLOTS, ITEM_CATALOG, EquipSlotType, } from '@valhalla/shared';
+import { INVENTORY_MAX_SLOTS, EquipSlotType, } from '@valhalla/shared';
 import { InventorySlotState } from '../schema/PlayerState.js';
+import { DataManager } from './DataManager.js';
 /**
  * Add an item to a player's inventory.
  * Stacks onto existing slots if the item is stackable, otherwise uses the first empty slot.
  * @returns true if the item was added, false if inventory is full.
  */
 export function addItem(player, itemId, qty = 1) {
-    const template = ITEM_CATALOG[itemId];
+    const template = DataManager.instance.getItem(itemId);
     if (!template)
         return false;
     let remaining = qty;
@@ -130,7 +131,7 @@ export function equipItem(player, inventorySlotIndex) {
     if (inventorySlotIndex < 0 || inventorySlotIndex >= player.inventory.length)
         return false;
     const slot = player.inventory[inventorySlotIndex];
-    const template = ITEM_CATALOG[slot.itemId];
+    const template = DataManager.instance.getItem(slot.itemId);
     if (!template || !template.equipSlot)
         return false; // Not equippable
     const slotType = template.equipSlot;
@@ -171,9 +172,16 @@ export function swapInventorySlots(player, fromIndex, toIndex) {
     const newToSlot = new InventorySlotState();
     newToSlot.itemId = fromItemId;
     newToSlot.quantity = fromQty;
-    // Replace via splice (triggers onRemove + onAdd for Colyseus change detection)
-    player.inventory.splice(fromIndex, 1, newFromSlot);
-    player.inventory.splice(toIndex, 1, newToSlot);
+    // IMPORTANT: Process the HIGHER index first so the first splice doesn't
+    // corrupt Colyseus ArraySchema's internal ChangeTree tracking for the
+    // lower index. Two sequential splices at arbitrary order can cause the
+    // ChangeTree to try deleting a stale/non-existing index.
+    const hi = Math.max(fromIndex, toIndex);
+    const lo = Math.min(fromIndex, toIndex);
+    const hiSlot = hi === fromIndex ? newFromSlot : newToSlot;
+    const loSlot = hi === fromIndex ? newToSlot : newFromSlot;
+    player.inventory.splice(hi, 1, hiSlot);
+    player.inventory.splice(lo, 1, loSlot);
     return true;
 }
 /**
@@ -230,7 +238,7 @@ export function unequipItemToSlot(player, slotType, targetIndex) {
     if (targetIndex >= 0 && targetIndex < player.inventory.length) {
         // Target slot has an item — check if we can swap-equip it
         const targetSlot = player.inventory[targetIndex];
-        const targetTemplate = ITEM_CATALOG[targetSlot.itemId];
+        const targetTemplate = DataManager.instance.getItem(targetSlot.itemId);
         if (targetTemplate?.equipSlot === slotType) {
             // The target item fits the same equip slot — swap: equip target, place current in inventory
             const targetItemId = targetSlot.itemId;

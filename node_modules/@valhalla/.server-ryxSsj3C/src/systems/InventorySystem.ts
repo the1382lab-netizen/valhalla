@@ -5,12 +5,12 @@
 
 import {
   INVENTORY_MAX_SLOTS,
-  ITEM_CATALOG,
   ItemId,
   EquipSlotType,
 } from '@valhalla/shared';
 import { InventorySlotState } from '../schema/PlayerState.js';
 import type { PlayerState } from '../schema/PlayerState.js';
+import { DataManager } from './DataManager.js';
 
 /**
  * Add an item to a player's inventory.
@@ -18,7 +18,7 @@ import type { PlayerState } from '../schema/PlayerState.js';
  * @returns true if the item was added, false if inventory is full.
  */
 export function addItem(player: PlayerState, itemId: ItemId, qty: number = 1): boolean {
-  const template = ITEM_CATALOG[itemId];
+  const template = DataManager.instance.getItem(itemId);
   if (!template) return false;
 
   let remaining = qty;
@@ -138,7 +138,7 @@ export function equipItem(player: PlayerState, inventorySlotIndex: number): bool
   if (inventorySlotIndex < 0 || inventorySlotIndex >= player.inventory.length) return false;
 
   const slot = player.inventory[inventorySlotIndex];
-  const template = ITEM_CATALOG[slot.itemId as ItemId];
+  const template = DataManager.instance.getItem(slot.itemId);
   if (!template || !template.equipSlot) return false; // Not equippable
 
   const slotType = template.equipSlot;
@@ -257,7 +257,7 @@ export function unequipItemToSlot(player: PlayerState, slotType: EquipSlotType, 
   if (targetIndex >= 0 && targetIndex < player.inventory.length) {
     // Target slot has an item — check if we can swap-equip it
     const targetSlot = player.inventory[targetIndex];
-    const targetTemplate = ITEM_CATALOG[targetSlot.itemId as ItemId];
+    const targetTemplate = DataManager.instance.getItem(targetSlot.itemId);
 
     if (targetTemplate?.equipSlot === slotType) {
       // The target item fits the same equip slot — swap: equip target, place current in inventory

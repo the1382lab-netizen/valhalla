@@ -6,6 +6,9 @@ import { ClassId, StatBlock } from './classes.js';
 export interface ResolvedStats extends StatBlock {
     maxHp: number;
     maxMana: number;
+    maxEnergy: number;
+    energyRegenRate: number;
+    manaRegenRate: number;
     speed: number;
 }
 /**
@@ -95,4 +98,9 @@ export declare function xpRequiredForLevel(currentLevel: number): number;
  * Used to decide which damage formula to apply for projectiles.
  */
 export declare function isRangedMagic(classId: ClassId): boolean;
+/**
+ * Determine whether the player's class supports a ranged attack (right-click fire).
+ * Currently only Rangers have a ranged basic attack; all other classes are melee-only.
+ */
+export declare function hasRangedAttack(classId: ClassId): boolean;
 //# sourceMappingURL=stats.d.ts.map

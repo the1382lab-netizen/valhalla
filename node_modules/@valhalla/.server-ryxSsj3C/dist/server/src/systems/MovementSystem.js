@@ -4,12 +4,14 @@ import { normalise } from '@valhalla/shared';
  */
 export class MovementSystem {
     constructor(collision) {
-        this.collision = collision;
+        this.defaultCollision = collision;
     }
     /**
      * Apply a single input to a player, advancing their position by dt seconds.
+     * @param collision Optional override collision system (for multi-zone support).
      */
-    processInput(player, input, dt) {
+    processInput(player, input, dt, collision) {
+        const col = collision ?? this.defaultCollision;
         // Build direction vector from input flags
         let mx = 0;
         let my = 0;
@@ -25,8 +27,8 @@ export class MovementSystem {
         const dx = dir.x * player.speed * dt;
         const dy = dir.y * player.speed * dt;
         if (dx !== 0 || dy !== 0) {
-            const resolved = this.collision.resolveMovement(player.x, player.y, dx, dy);
-            const clamped = this.collision.clampToMap(resolved.x, resolved.y);
+            const resolved = col.resolveMovement(player.x, player.y, dx, dy);
+            const clamped = col.clampToMap(resolved.x, resolved.y);
             player.x = clamped.x;
             player.y = clamped.y;
         }

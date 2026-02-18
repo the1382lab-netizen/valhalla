@@ -8,8 +8,15 @@ export declare class MapManager {
     private zones;
     /**
      * Load a zone's map data. Reads from disk on first call, caches after that.
+     * Merges in editor overlay data (spawn points, zone connections) if available.
      */
     loadZone(zoneId: string): ParsedMapData;
+    /**
+     * Load and merge an editor overlay file into the parsed map data.
+     * Overlay data takes precedence — its spawn points and zone connections
+     * replace any that came from the Tiled JSON.
+     */
+    private mergeOverlay;
     /**
      * Get the collision grid for a zone.
      */

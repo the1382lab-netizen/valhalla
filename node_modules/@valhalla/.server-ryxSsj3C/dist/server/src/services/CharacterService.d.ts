@@ -32,6 +32,7 @@ export interface LoadedCharacter {
     alive: boolean;
     inventory: InventorySlotData[];
     equipment: EquipmentData[];
+    actionBar: string[];
 }
 export interface SaveCharacterData {
     hp: number;
@@ -40,9 +41,11 @@ export interface SaveCharacterData {
     level: number;
     positionX: number;
     positionY: number;
+    zoneId: string;
     alive: boolean;
     inventory: InventorySlotData[];
     equipment: EquipmentData[];
+    actionBar: string[];
 }
 /**
  * Create a new character with starter equipment and inventory.

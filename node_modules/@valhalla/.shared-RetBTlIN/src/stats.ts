@@ -11,6 +11,9 @@ import { ClassId, CLASS_TEMPLATES, StatBlock } from './classes.js';
 export interface ResolvedStats extends StatBlock {
   maxHp: number;
   maxMana: number;
+  maxEnergy: number;
+  energyRegenRate: number;
+  manaRegenRate: number;
   speed: number;
 }
 
@@ -43,10 +46,20 @@ export function computeDerivedStats(classId: ClassId, level: number): ResolvedSt
     dodgeRating: base.dodgeRating + growth.dodgeRating * levelsGained,
   };
 
+  // Energy for non-casters, 0 for casters
+  const maxEnergy = template.canUseMana ? 0 : 100 + stats.stamina * 2;
+  const energyRegenRate = template.canUseMana ? 0 : 10 + stats.stamina * 0.5;
+
+  // Mana regen for casters, 0 for non-casters
+  const manaRegenRate = template.canUseMana ? 5 + stats.intelligence * 0.4 : 0;
+
   return {
     ...stats,
     maxHp: stats.hp,
     maxMana: stats.mana,
+    maxEnergy,
+    energyRegenRate,
+    manaRegenRate,
     speed: template.baseSpeed,
   };
 }
@@ -179,4 +192,12 @@ export function xpRequiredForLevel(currentLevel: number): number {
  */
 export function isRangedMagic(classId: ClassId): boolean {
   return classId === ClassId.WIZARD || classId === ClassId.CLERIC || classId === ClassId.SHAMAN;
+}
+
+/**
+ * Determine whether the player's class supports a ranged attack (right-click fire).
+ * Currently only Rangers have a ranged basic attack; all other classes are melee-only.
+ */
+export function hasRangedAttack(classId: ClassId): boolean {
+  return classId === ClassId.RANGER;
 }

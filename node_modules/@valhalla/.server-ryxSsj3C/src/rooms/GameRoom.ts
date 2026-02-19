@@ -164,6 +164,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         this.state.spellProjectiles,
         data.groundX ?? null,
         data.groundY ?? null,
+        this.state.npcs,
       );
       this.broadcastSkillEvents(events, client);
     });
@@ -566,7 +567,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.broadcastSpellProjectileEvents(spellEvents);
 
     // 4. Skill system update (cast progression, energy regen, buff ticking)
-    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles);
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs);
     this.broadcastSkillEvents(skillEvents);
 
     // 5. Check respawns — handle per-player zone respawn points
@@ -725,11 +726,24 @@ export class GameRoom extends Room<{ state: GameState }> {
         case 'castComplete':
           // Broadcast skill effects (damage numbers, heals, etc.)
           for (const fx of event.events) {
-            this.broadcast(MessageType.SKILL_EFFECT, {
-              casterId: event.casterId,
-              skillId: event.skillId,
-              ...fx,
-            });
+            // If the target is an NPC, use the NPC_HIT message type so the client
+            // can look up the NPC position and show the damage flash correctly.
+            if (fx.type === 'damage' && this.state.npcs.has(fx.targetId)) {
+              this.broadcast(MessageType.NPC_HIT, {
+                targetId: fx.targetId,
+                damage: fx.damage,
+                isCrit: fx.isCrit,
+                killerId: event.casterId,
+                casterId: event.casterId,   // alias used for VFX lookups
+                skillId: event.skillId,     // skill that caused the hit (for per-skill VFX)
+              });
+            } else {
+              this.broadcast(MessageType.SKILL_EFFECT, {
+                casterId: event.casterId,
+                skillId: event.skillId,
+                ...fx,
+              });
+            }
           }
           break;
 

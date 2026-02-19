@@ -14,6 +14,7 @@ import {
   ClassId,
 } from '@valhalla/shared';
 import { PlayerState } from '../schema/PlayerState.js';
+import { NPCState } from '../schema/NPCState.js';
 import { executeSkillEffect, SkillEvent, SkillEffectContext } from './SkillEffectHandler.js';
 import { DataManager } from './DataManager.js';
 import { SpellProjectileState } from '../schema/SpellProjectileState.js';
@@ -23,6 +24,12 @@ import { MapSchema } from '@colyseus/schema';
 export interface PlayerMap {
   get(key: string): PlayerState | undefined;
   forEach(callback: (value: PlayerState, key: string) => void): void;
+}
+
+/** Duck-typed NPC map interface compatible with Colyseus MapSchema<NPCState>. */
+export interface NPCMap {
+  get(key: string): NPCState | undefined;
+  forEach(callback: (value: NPCState, key: string) => void): void;
 }
 
 // ── Result types for communicating back to GameRoom ────────
@@ -110,6 +117,7 @@ export class SkillSystem {
    *
    * @param groundX  World X of the ground target — required for AOE_GROUND skills
    * @param groundY  World Y of the ground target — required for AOE_GROUND skills
+   * @param allNPCs  NPC map — enables single-target skills to target NPCs
    */
   tryStartCast(
     caster: PlayerState,
@@ -120,6 +128,7 @@ export class SkillSystem {
     spellProjectiles?: MapSchema<SpellProjectileState>,
     groundX?: number | null,
     groundY?: number | null,
+    allNPCs?: NPCMap,
   ): SkillSystemEvent[] {
     const skill = DataManager.instance.getSkill(skillId);
     if (!skill) {
@@ -127,18 +136,19 @@ export class SkillSystem {
     }
 
     // ── Validation pipeline ──
-    const failReason = this.validateCast(caster, skill, targetId, allPlayers, now, groundX, groundY);
+    const failReason = this.validateCast(caster, skill, targetId, allPlayers, now, groundX, groundY, allNPCs);
     if (failReason) {
       return [{ type: 'castFailed', casterId: caster.id, reason: failReason }];
     }
 
-    // Resolve target
-    const target = targetId ? allPlayers.get(targetId) ?? null : null;
+    // Resolve target (checks players first, then NPCs)
+    const target = this.resolveTarget(targetId, allPlayers, allNPCs);
 
     const ctx: SkillEffectContext = {
       spellProjectiles,
       groundX: groundX ?? null,
       groundY: groundY ?? null,
+      allNPCs,
     };
 
     if (skill.castTimeMs === 0) {
@@ -174,12 +184,14 @@ export class SkillSystem {
    * - Checks for movement interrupts
    *
    * @param spellProjectiles  Room's spell projectile map — passed to effect handlers that spawn projectiles
+   * @param allNPCs           NPC map — allows timed skill completions to resolve NPC targets
    */
   update(
     allPlayers: PlayerMap,
     dt: number,
     now: number,
     spellProjectiles?: MapSchema<SpellProjectileState>,
+    allNPCs?: NPCMap,
   ): SkillSystemEvent[] {
     const events: SkillSystemEvent[] = [];
 
@@ -209,11 +221,12 @@ export class SkillSystem {
 
         const skill = DataManager.instance.getSkill(cast.skillId);
         if (skill) {
-          const target = cast.targetId ? allPlayers.get(cast.targetId) ?? null : null;
+          const target = this.resolveTarget(cast.targetId, allPlayers, allNPCs);
           const ctx: SkillEffectContext = {
             spellProjectiles,
             groundX: cast.groundX,
             groundY: cast.groundY,
+            allNPCs,
           };
           const castEvents = this.completeCast(player, target, skill, allPlayers, now, ctx);
           events.push(...castEvents);
@@ -255,6 +268,7 @@ export class SkillSystem {
     now: number,
     groundX?: number | null,
     groundY?: number | null,
+    allNPCs?: NPCMap,
   ): string | null {
     // Alive check
     if (!caster.alive) return 'You are dead';
@@ -303,9 +317,17 @@ export class SkillSystem {
       }
     }
 
+    // Target requirement check for single-target skills
+    if (skill.targetType === 'singleEnemy' || skill.targetType === 'singleAlly') {
+      if (!targetId) return 'No target selected';
+      const target = this.resolveTarget(targetId, allPlayers, allNPCs);
+      if (!target) return 'Invalid target';
+      if (!target.alive) return 'Target is dead';
+    }
+
     // Range check (for single-target skills)
     if (targetId && skill.range > 0 && skill.targetType !== 'aoeGround') {
-      const target = allPlayers.get(targetId);
+      const target = this.resolveTarget(targetId, allPlayers, allNPCs);
       if (target) {
         const dx = target.x - caster.x;
         const dy = target.y - caster.y;
@@ -322,9 +344,25 @@ export class SkillSystem {
     return null; // All checks passed
   }
 
+  /**
+   * Resolve a target ID against the player map and (optionally) the NPC map.
+   * Returns the first matching entity, or null if not found.
+   */
+  private resolveTarget(
+    targetId: string | null,
+    allPlayers: PlayerMap,
+    allNPCs?: NPCMap,
+  ): PlayerState | NPCState | null {
+    if (!targetId) return null;
+    const player = allPlayers.get(targetId);
+    if (player) return player;
+    const npc = allNPCs?.get(targetId);
+    return npc ?? null;
+  }
+
   private executeInstantCast(
     caster: PlayerState,
-    target: PlayerState | null,
+    target: PlayerState | NPCState | null,
     skill: SkillTemplate,
     allPlayers: PlayerMap,
     now: number,
@@ -380,7 +418,7 @@ export class SkillSystem {
 
   private completeCast(
     caster: PlayerState,
-    target: PlayerState | null,
+    target: PlayerState | NPCState | null,
     skill: SkillTemplate,
     allPlayers: PlayerMap,
     now: number,

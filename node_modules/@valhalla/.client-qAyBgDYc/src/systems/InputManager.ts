@@ -21,6 +21,13 @@ export class InputManager {
   // Melee state: true on the frame the left mouse button was pressed
   private meleeQueued: boolean = false;
 
+  /**
+   * Set to true by entity click handlers (e.g. click-to-target) to prevent
+   * the same left-click from also queuing a melee attack. Consumed on the
+   * next pointerdown event.
+   */
+  public suppressNextMelee: boolean = false;
+
   // Action bar keys (1-8)
   private actionBarKeys: Phaser.Input.Keyboard.Key[] = [];
 
@@ -70,7 +77,11 @@ export class InputManager {
     // Left click to melee; right click to fire ranged (Ranger only — server enforces class check)
     scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (pointer.leftButtonDown()) {
-        this.meleeQueued = true;
+        if (this.suppressNextMelee) {
+          this.suppressNextMelee = false; // consume the suppression, skip melee
+        } else {
+          this.meleeQueued = true;
+        }
       } else if (pointer.rightButtonDown()) {
         this.fireQueued = true;
       }

@@ -768,6 +768,28 @@
       ],
       "aoeRadius": 160,
       "effectNotes": "Massive AoE fire damage at target location"
+    },
+    "wizard_magic_missile": {
+      "id": "wizard_magic_missile",
+      "name": "Magic Missile",
+      "description": "Fires an arcane bolt that always hits its target.",
+      "classId": "wizard",
+      "levelRequired": 1,
+      "resourceType": "mana",
+      "resourceCost": 40,
+      "castTimeMs": 3000,
+      "cooldownMs": 2500,
+      "range": 320,
+      "targetType": "singleEnemy",
+      "category": "offensive",
+      "iconColor": 8952063,
+      "iconAbbrev": "MM",
+      "scalingStat": "intelligence",
+      "baseDamage": [
+        12,
+        5
+      ],
+      "effectNotes": "Guaranteed hit — no dodge or miss possible"
     }
   },
   "classSkills": {
@@ -814,6 +836,7 @@
     ],
     "wizard": [
       "wizard_fireball",
+      "wizard_magic_missile",
       "wizard_frost_nova",
       "wizard_blink",
       "wizard_arcane_missiles",

@@ -31,6 +31,7 @@ import {
   ChatMessagePayload,
 } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
+import { PlayerTargetInfo, NpcTargetInfo } from '../systems/EntityRenderer.js';
 
 interface PendingInput {
   input: InputPayload;
@@ -105,7 +106,7 @@ export class GameScene extends Phaser.Scene {
   private invOffset:       { x: number; y: number } = { x: 0, y: 0 };
   private skillsOffset:    { x: number; y: number } = { x: 0, y: 0 };
   // Active drag state
-  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | null = null;
+  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | 'target' | null = null;
   private hudDragStartMouse:  { x: number; y: number } = { x: 0, y: 0 };
   private hudDragStartOffset: { x: number; y: number } = { x: 0, y: 0 };
   // Cached screen rects for the action bar and skills pane (updated each draw).
@@ -206,6 +207,26 @@ export class GameScene extends Phaser.Scene {
   private chatInputText: string = '';
   /** Default send channel. Whispers are always triggered by /w prefix. */
   private chatCurrentChannel: 'general' | 'world' = 'general';
+
+  // ── Targeting System ─────────────────────────────────────
+  /** ID of the currently targeted entity (player sessionId or NPC id), or null. */
+  private currentTargetId: string | null = null;
+  /** Type of the currently targeted entity. */
+  private currentTargetType: 'player' | 'npc' | null = null;
+  /**
+   * Set to true when an entity sprite was just clicked, so the global
+   * pointer-down handler (which moves the player) can skip that frame.
+   */
+  private entityClickConsumed: boolean = false;
+
+  // Target nameplate panel
+  private targetOffset: { x: number; y: number } = { x: 0, y: 0 };
+  private targetNameplateContainer!: Phaser.GameObjects.Container;
+  private targetNameplateNameText!: Phaser.GameObjects.Text;
+  private targetNameplateLevelText!: Phaser.GameObjects.Text;
+  private targetNameplateHpBar!: Phaser.GameObjects.Graphics;
+  private targetNameplateHpText!: Phaser.GameObjects.Text;
+  private targetNameplateTitleHandle!: { x: number; y: number; w: number; h: number };
 
   // Layout constants
   private readonly CHAT_MAX_W = 360;   // maximum panel width
@@ -311,6 +332,9 @@ export class GameScene extends Phaser.Scene {
     // Create chat panel
     this.createChatPanel();
 
+    // Create target nameplate panel (initially hidden)
+    this.createTargetNameplate();
+
     // Load persisted HUD layout, then wire up panel drag handlers
     this.loadHudLayout();
     this.setupHudDragHandlers();
@@ -363,9 +387,16 @@ export class GameScene extends Phaser.Scene {
 
       const skill = ClientDataManager.instance.getSkill(skillId);
 
+      // Single-target skills require a target to be selected
+      if (skill?.targetType === 'singleEnemy' || skill?.targetType === 'singleAlly') {
+        if (!this.currentTargetId) {
+          this.entityRenderer.showCombatText(this.localX, this.localY - 30, 'No target', '#ff8844');
+          return;
+        }
+        this.network.sendCastSkill(skillId, this.currentTargetId);
       // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
       // Use the current mouse/cursor world position as the target.
-      if (skill?.targetType === 'aoeGround') {
+      } else if (skill?.targetType === 'aoeGround') {
         const cam = this.cameras.main;
         const pointer = this.input.activePointer;
         const worldX = pointer.x + cam.scrollX;
@@ -396,6 +427,26 @@ export class GameScene extends Phaser.Scene {
   }
 
   private setupNetworkCallbacks(): void {
+    // ── Entity click-to-target callbacks ─────────────────────
+    this.entityRenderer.onPlayerClick = (sessionId: string) => {
+      this.entityClickConsumed = true;
+      this.inputManager.suppressNextMelee = true; // prevent melee attack on targeting click
+      if (this.currentTargetId === sessionId && this.currentTargetType === 'player') {
+        this.clearTarget(); // click same target again = deselect
+      } else {
+        this.setTarget(sessionId, 'player');
+      }
+    };
+    this.entityRenderer.onNpcClick = (npcId: string) => {
+      this.entityClickConsumed = true;
+      this.inputManager.suppressNextMelee = true; // prevent melee attack on targeting click
+      if (this.currentTargetId === npcId && this.currentTargetType === 'npc') {
+        this.clearTarget(); // click same target again = deselect
+      } else {
+        this.setTarget(npcId, 'npc');
+      }
+    };
+
     // Handle full map data (new multi-layer system)
     this.network.onMapData = (data: MapDataPayload) => {
       this.collisionGrid = data.collisionGrid;
@@ -430,6 +481,9 @@ export class GameScene extends Phaser.Scene {
     // Handle zone change notifications
     this.network.onZoneChange = (data) => {
       console.log(`[GameScene] Zone change → ${data.zoneId} (spawn: ${data.spawnX}, ${data.spawnY})`);
+
+      // 0. Clear targeting — target may not exist in new zone
+      this.clearTarget();
 
       // 1. Remove all currently-rendered remote players, projectiles, and NPCs
       for (const sid of this.remotePlayerZones.keys()) {
@@ -635,6 +689,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.network.onPlayerRemove = (sessionId: string) => {
+      if (this.currentTargetId === sessionId) this.clearTarget();
       this.entityRenderer.removeRemotePlayer(sessionId);
       this.remotePlayerZones.delete(sessionId);
       this.remotePlayerCache.delete(sessionId);
@@ -763,6 +818,7 @@ export class GameScene extends Phaser.Scene {
     };
 
     this.network.onNpcRemove = (id: string) => {
+      if (this.currentTargetId === id) this.clearTarget();
       if (this.visibleNpcs.has(id)) {
         this.entityRenderer.removeNPC(id);
         this.visibleNpcs.delete(id);
@@ -820,10 +876,20 @@ export class GameScene extends Phaser.Scene {
     };
 
     // NPC combat events
-    this.network.onNpcHit = (data) => {
+    this.network.onNpcHit = (data: any) => {
       const pos = this.entityRenderer.getNPCPosition(data.targetId);
       if (pos) {
         this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
+
+        // Magic Missile VFX — bolt from caster to NPC target
+        if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE && data.casterId) {
+          const casterPos = data.casterId === this.network.sessionId
+            ? { x: this.localX, y: this.localY }
+            : (this.entityRenderer.getPlayerPosition(data.casterId) ?? null);
+          if (casterPos) {
+            this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, pos.x, pos.y);
+          }
+        }
       }
     };
 
@@ -897,6 +963,17 @@ export class GameScene extends Phaser.Scene {
         if (pos) {
           this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
         }
+
+        // Magic Missile VFX: bolt from caster to target
+        if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE) {
+          const casterPos = data.casterId === this.network.sessionId
+            ? { x: this.localX, y: this.localY }
+            : (this.entityRenderer.getPlayerPosition(data.casterId) ?? this.entityRenderer.getNPCPosition(data.casterId));
+          const targetPos = this.getCombatTextPosition(data.targetId);
+          if (casterPos && targetPos) {
+            this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, targetPos.x, targetPos.y);
+          }
+        }
       } else if (data.type === 'heal' && data.targetId) {
         const pos = this.getCombatTextPosition(data.targetId);
         if (pos) {
@@ -941,11 +1018,12 @@ export class GameScene extends Phaser.Scene {
   /**
    * Get the world position for a given player (local or remote).
    */
-  private getCombatTextPosition(playerId: string): { x: number; y: number } | null {
-    if (playerId === this.network.sessionId) {
+  private getCombatTextPosition(entityId: string): { x: number; y: number } | null {
+    if (entityId === this.network.sessionId) {
       return { x: this.localX, y: this.localY };
     }
-    return this.entityRenderer.getPlayerPosition(playerId);
+    return this.entityRenderer.getPlayerPosition(entityId)
+      ?? this.entityRenderer.getNPCPosition(entityId);
   }
 
   private showRemoteDamageFlash(targetId: string, damage: number, isCrit?: boolean): void {
@@ -1203,6 +1281,7 @@ export class GameScene extends Phaser.Scene {
       if (saved.actionBar) this.actionBarOffset = saved.actionBar;
       if (saved.inv)       this.invOffset       = saved.inv;
       if (saved.skills)    this.skillsOffset    = saved.skills;
+      if (saved.target)    this.targetOffset    = saved.target;
     } catch { /* ignore malformed data */ }
   }
 
@@ -1213,6 +1292,7 @@ export class GameScene extends Phaser.Scene {
         actionBar: this.actionBarOffset,
         inv:       this.invOffset,
         skills:    this.skillsOffset,
+        target:    this.targetOffset,
       }));
     } catch { /* ignore */ }
   }
@@ -1293,6 +1373,14 @@ export class GameScene extends Phaser.Scene {
         this.hudDragStartOffset = { ...this.skillsOffset };
         return;
       }
+      // Target nameplate drag handle (only when a target is selected)
+      if (this.currentTargetId && this.targetNameplateTitleHandle &&
+          hitRect(this.targetNameplateTitleHandle, px, py)) {
+        this.hudDragTarget      = 'target';
+        this.hudDragStartMouse  = { x: px, y: py };
+        this.hudDragStartOffset = { ...this.targetOffset };
+        return;
+      }
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
@@ -1319,6 +1407,13 @@ export class GameScene extends Phaser.Scene {
           this.skillsOffset = newOffset;
           this.skillsPaneContainer.setPosition(newOffset.x, newOffset.y);
           break;
+        case 'target':
+          this.targetOffset = newOffset;
+          this.targetNameplateContainer.setPosition(
+            this.getTargetNameplateDefaultX() + newOffset.x,
+            this.getTargetNameplateDefaultY() + newOffset.y,
+          );
+          break;
       }
     });
 
@@ -1327,6 +1422,175 @@ export class GameScene extends Phaser.Scene {
       this.hudDragTarget = null;
       this.saveHudLayout();
     });
+  }
+
+  // ── Targeting Methods ─────────────────────────────────────
+
+  private getTargetNameplateDefaultX(): number {
+    return this.cameras.main.width - 222;
+  }
+
+  private getTargetNameplateDefaultY(): number {
+    return 100;
+  }
+
+  private createTargetNameplate(): void {
+    const cam = this.cameras.main;
+    const NW = 210;  // nameplate width
+    const NH = 72;   // nameplate height
+    const TH = 22;   // title strip height
+
+    const defaultX = cam.width - NW - 12;
+    const defaultY = 100;
+
+    this.targetNameplateContainer = this.add.container(
+      defaultX + this.targetOffset.x,
+      defaultY + this.targetOffset.y,
+    );
+    this.targetNameplateContainer.setScrollFactor(0);
+    this.targetNameplateContainer.setDepth(170);
+    this.targetNameplateContainer.setVisible(false);
+
+    // ── Background panel ──
+    const bg = this.add.graphics();
+    // Main body
+    bg.fillStyle(0x12122a, 0.92);
+    bg.fillRoundedRect(0, 0, NW, NH, 4);
+    bg.lineStyle(1, 0x44446a, 1);
+    bg.strokeRoundedRect(0, 0, NW, NH, 4);
+    // Title strip
+    bg.fillStyle(0x22225a, 0.98);
+    bg.fillRoundedRect(0, 0, NW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+
+    // ── "Target" label in title strip ──
+    const titleText = this.add.text(NW / 2, TH / 2, 'Target', {
+      fontSize: '11px',
+      color: '#8888bb',
+      fontStyle: 'bold',
+    });
+    titleText.setOrigin(0.5, 0.5);
+
+    // ── Target name ──
+    this.targetNameplateNameText = this.add.text(8, TH + 5, '', {
+      fontSize: '13px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+    });
+    this.targetNameplateNameText.setOrigin(0, 0);
+
+    // ── Level label ──
+    this.targetNameplateLevelText = this.add.text(NW - 6, TH + 5, '', {
+      fontSize: '11px',
+      color: '#aaaaaa',
+    });
+    this.targetNameplateLevelText.setOrigin(1, 0);
+
+    // ── HP bar (redrawn each frame) ──
+    this.targetNameplateHpBar = this.add.graphics();
+
+    // ── HP value text ──
+    this.targetNameplateHpText = this.add.text(NW / 2, TH + 44, '', {
+      fontSize: '10px',
+      color: '#aaaaaa',
+    });
+    this.targetNameplateHpText.setOrigin(0.5, 0);
+
+    this.targetNameplateContainer.add([
+      bg,
+      titleText,
+      this.targetNameplateNameText,
+      this.targetNameplateLevelText,
+      this.targetNameplateHpBar,
+      this.targetNameplateHpText,
+    ]);
+
+    // Cache the title-strip screen rect for drag hit-testing (updated in updateTargetNameplate)
+    this.targetNameplateTitleHandle = { x: defaultX, y: defaultY, w: NW, h: TH };
+  }
+
+  private updateTargetNameplate(): void {
+    if (!this.currentTargetId || !this.currentTargetType) {
+      this.targetNameplateContainer.setVisible(false);
+      return;
+    }
+
+    const NW = 210;
+    const TH = 22;
+
+    let name = '';
+    let level = 1;
+    let hp = 0;
+    let maxHp = 1;
+    let isEnemy = false;
+
+    if (this.currentTargetType === 'player') {
+      const info: PlayerTargetInfo | null = this.entityRenderer.getPlayerTargetInfo(this.currentTargetId);
+      if (!info) { this.clearTarget(); return; }
+      name = info.characterName || info.classId;
+      level = info.level;
+      hp = info.hp;
+      maxHp = info.maxHp;
+      isEnemy = false;
+    } else {
+      const info: NpcTargetInfo | null = this.entityRenderer.getNpcTargetInfo(this.currentTargetId);
+      if (!info) { this.clearTarget(); return; }
+      name = info.name;
+      level = info.level;
+      hp = info.hp;
+      maxHp = info.maxHp;
+      isEnemy = info.npcType === 'enemy';
+    }
+
+    this.targetNameplateContainer.setVisible(true);
+
+    // Update title-strip drag handle screen rect
+    const cx = this.targetNameplateContainer.x;
+    const cy = this.targetNameplateContainer.y;
+    this.targetNameplateTitleHandle = { x: cx, y: cy, w: NW, h: TH };
+
+    // Name (truncate if too long) — color red for enemies, yellow for NPCs, white for players
+    const maxLen = 18;
+    const displayName = name.length > maxLen ? name.slice(0, maxLen) + '…' : name;
+    const nameColor = this.currentTargetType === 'npc'
+      ? (isEnemy ? '#ff8888' : '#ffee88')
+      : '#ffffff';
+    this.targetNameplateNameText.setText(displayName);
+    this.targetNameplateNameText.setColor(nameColor);
+
+    // Level
+    this.targetNameplateLevelText.setText(`Lv.${level}`);
+
+    // HP bar
+    const hpRatio = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
+    const fillColor = hpRatio > 0.5 ? 0x44ee44 : hpRatio > 0.25 ? 0xffaa00 : 0xff4444;
+    const barX = 8;
+    const barY = TH + 24;
+    const barW = NW - 16;
+    const barH = 10;
+
+    this.targetNameplateHpBar.clear();
+    this.targetNameplateHpBar.fillStyle(0x000000, 0.6);
+    this.targetNameplateHpBar.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+    this.targetNameplateHpBar.fillStyle(fillColor, 1);
+    this.targetNameplateHpBar.fillRect(barX, barY, Math.max(0, barW * hpRatio), barH);
+
+    // HP text
+    this.targetNameplateHpText.setText(`${Math.round(hp)} / ${Math.round(maxHp)}`);
+  }
+
+  private setTarget(id: string, type: 'player' | 'npc'): void {
+    this.currentTargetId = id;
+    this.currentTargetType = type;
+    this.targetNameplateContainer.setPosition(
+      this.getTargetNameplateDefaultX() + this.targetOffset.x,
+      this.getTargetNameplateDefaultY() + this.targetOffset.y,
+    );
+  }
+
+  private clearTarget(): void {
+    this.currentTargetId = null;
+    this.currentTargetType = null;
+    this.targetNameplateContainer?.setVisible(false);
   }
 
   private createInventoryPanel(): void {
@@ -2075,6 +2339,7 @@ export class GameScene extends Phaser.Scene {
     this.drawActionBar();
     this.drawCastBar();
     this.drawChatPanel();
+    this.updateTargetNameplate();
 
     // ── Interpolate remote players + projectiles ────────────
     this.entityRenderer.update();

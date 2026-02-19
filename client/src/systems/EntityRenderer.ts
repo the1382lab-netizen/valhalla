@@ -40,6 +40,28 @@ interface NPCData {
   maxHp: number;
   alive: boolean;
   npcType: string;
+  name: string;
+  level: number;
+}
+
+// ── Public Target Info Types ──────────────────────────────
+
+export interface PlayerTargetInfo {
+  characterName: string;
+  classId: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+}
+
+export interface NpcTargetInfo {
+  name: string;
+  level: number;
+  hp: number;
+  maxHp: number;
+  alive: boolean;
+  npcType: string;
 }
 
 interface ProjectileData {
@@ -74,6 +96,11 @@ export class EntityRenderer {
   private projectiles: Map<string, ProjectileData> = new Map();
   private spellProjectiles: Map<string, SpellProjectileData> = new Map();
 
+  /** Called when a remote player sprite is left-clicked. */
+  public onPlayerClick?: (sessionId: string) => void;
+  /** Called when an NPC sprite is left-clicked. */
+  public onNpcClick?: (npcId: string) => void;
+
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
   }
@@ -83,6 +110,12 @@ export class EntityRenderer {
   addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1, characterName: string = ''): void {
     const sprite = this.scene.add.sprite(x, y, 'remote_player');
     sprite.setDepth(5);
+
+    // Make sprite clickable for targeting
+    sprite.setInteractive({ useHandCursor: false });
+    sprite.on('pointerdown', () => {
+      this.onPlayerClick?.(sessionId);
+    });
 
     // Tint sprite by class
     const color = ClientDataManager.instance.getClassColor(classId) ?? 0xffffff;
@@ -187,6 +220,12 @@ export class EntityRenderer {
     sprite.setDepth(4); // Below players (depth 5)
     sprite.setTint(spriteColor || 0xff4444);
 
+    // Make sprite clickable for targeting
+    sprite.setInteractive({ useHandCursor: false });
+    sprite.on('pointerdown', () => {
+      this.onNpcClick?.(id);
+    });
+
     // Scale sprite by spriteSize (1 = default 24px, 2 = double, etc.)
     if (spriteSize > 1) {
       sprite.setScale(spriteSize);
@@ -227,6 +266,8 @@ export class EntityRenderer {
       maxHp: 100,
       alive: true,
       npcType,
+      name,
+      level,
     });
   }
 
@@ -609,5 +650,122 @@ export class EntityRenderer {
     const data = this.remotePlayers.get(sessionId);
     if (!data) return null;
     return { x: data.sprite.x, y: data.sprite.y };
+  }
+
+  // ── Target Info Getters (for the targeting nameplate) ─────
+
+  getPlayerTargetInfo(sessionId: string): PlayerTargetInfo | null {
+    const data = this.remotePlayers.get(sessionId);
+    if (!data) return null;
+    return {
+      characterName: data.characterName,
+      classId: data.classId,
+      level: data.level,
+      hp: data.hp,
+      maxHp: data.maxHp,
+      alive: data.alive,
+    };
+  }
+
+  getNpcTargetInfo(id: string): NpcTargetInfo | null {
+    const data = this.npcs.get(id);
+    if (!data) return null;
+    return {
+      name: data.name,
+      level: data.level,
+      hp: data.hp,
+      maxHp: data.maxHp,
+      alive: data.alive,
+      npcType: data.npcType,
+    };
+  }
+
+  // ── Magic Missile VFX ─────────────────────────────────────
+
+  /**
+   * Play the Magic Missile visual effect:
+   *   1. A bright arcane burst at the caster's feet (launch flash).
+   *   2. A glowing blue-white bolt that travels to the target.
+   *   3. An arcane impact burst at the target position.
+   *
+   * All effects are purely cosmetic Phaser Graphics tweens — no game state
+   * is modified here.
+   */
+  showMagicMissileVFX(fromX: number, fromY: number, toX: number, toY: number): void {
+    // ── 1. Cast flash at caster ──
+    const castFlash = this.scene.add.graphics();
+    castFlash.setDepth(12);
+    castFlash.x = fromX;
+    castFlash.y = fromY;
+    // Outer glow
+    castFlash.fillStyle(0x6699ff, 0.4);
+    castFlash.fillCircle(0, 0, 18);
+    // Inner bright core
+    castFlash.fillStyle(0xddeeff, 0.95);
+    castFlash.fillCircle(0, 0, 8);
+
+    this.scene.tweens.add({
+      targets: castFlash,
+      alpha: 0,
+      scaleX: 2.2,
+      scaleY: 2.2,
+      duration: 220,
+      ease: 'Cubic.Out',
+      onComplete: () => castFlash.destroy(),
+    });
+
+    // ── 2. Bolt that travels from caster to target ──
+    const bolt = this.scene.add.graphics();
+    bolt.setDepth(12);
+    bolt.x = fromX;
+    bolt.y = fromY;
+    // Outer soft glow
+    bolt.fillStyle(0x88aaff, 0.6);
+    bolt.fillCircle(0, 0, 7);
+    // Bright core
+    bolt.fillStyle(0xffffff, 1.0);
+    bolt.fillCircle(0, 0, 4);
+
+    // Travel duration is proportional to distance but capped so it never drags
+    const dx = toX - fromX;
+    const dy = toY - fromY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const travelMs = Math.min(180, Math.max(60, dist * 0.35));
+
+    this.scene.tweens.add({
+      targets: bolt,
+      x: toX,
+      y: toY,
+      duration: travelMs,
+      ease: 'Linear',
+      onComplete: () => {
+        bolt.destroy();
+
+        // ── 3. Impact flash at target ──
+        const impact = this.scene.add.graphics();
+        impact.setDepth(12);
+        impact.x = toX;
+        impact.y = toY;
+        // Outer burst ring
+        impact.lineStyle(3, 0x6699ff, 0.9);
+        impact.strokeCircle(0, 0, 14);
+        // Fill
+        impact.fillStyle(0x88ccff, 0.55);
+        impact.fillCircle(0, 0, 14);
+        // Bright centre
+        impact.fillStyle(0xffffff, 0.9);
+        impact.fillCircle(0, 0, 6);
+
+        this.scene.tweens.add({
+          targets: impact,
+          alpha: 0,
+          scaleX: 2.4,
+          scaleY: 2.4,
+          duration: 280,
+          ease: 'Cubic.Out',
+          onComplete: () => impact.destroy(),
+        });
+      },
+    });
   }
 }

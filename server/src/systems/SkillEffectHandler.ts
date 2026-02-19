@@ -18,9 +18,20 @@ import {
   PLAYER_COLLISION_RADIUS,
 } from '@valhalla/shared';
 import { PlayerState, ActiveBuff } from '../schema/PlayerState.js';
+import { NPCState } from '../schema/NPCState.js';
 import { SpellProjectileState } from '../schema/SpellProjectileState.js';
 import { MapSchema } from '@colyseus/schema';
-import type { PlayerMap } from './SkillSystem.js';
+import type { PlayerMap, NPCMap } from './SkillSystem.js';
+
+// ── Combat Target Union ─────────────────────────────────────
+
+/** A valid skill target — either a player or an NPC. */
+export type CombatTarget = PlayerState | NPCState;
+
+/** Returns true when the target is an NPCState (has templateId, which PlayerState lacks). */
+export function isNpcTarget(t: CombatTarget): t is NPCState {
+  return 'templateId' in t;
+}
 
 // ── Effect Context ─────────────────────────────────────────
 
@@ -35,6 +46,8 @@ export interface SkillEffectContext {
   groundX: number | null;
   /** Ground target Y for AOE_GROUND skills */
   groundY: number | null;
+  /** NPC map — available for effect handlers that need NPC access */
+  allNPCs?: NPCMap;
 }
 
 // ── Skill Event Types ──────────────────────────────────────
@@ -77,7 +90,7 @@ export type SkillEvent = SkillDamageEvent | SkillHealEvent | SkillBuffEvent | Sk
 
 export type EffectHandler = (
   caster: PlayerState,
-  target: PlayerState | null,
+  target: CombatTarget | null,
   skill: SkillTemplate,
   allPlayers: PlayerMap,
   now: number,
@@ -107,7 +120,7 @@ export function registerEffectHandler(skillId: SkillId, handler: EffectHandler):
  */
 export function executeSkillEffect(
   caster: PlayerState,
-  target: PlayerState | null,
+  target: CombatTarget | null,
   skill: SkillTemplate,
   allPlayers: PlayerMap,
   now: number,
@@ -124,7 +137,7 @@ export function executeSkillEffect(
 
 function defaultEffect(
   caster: PlayerState,
-  target: PlayerState | null,
+  target: CombatTarget | null,
   skill: SkillTemplate,
   allPlayers: PlayerMap,
   now: number,
@@ -156,8 +169,8 @@ function defaultEffect(
 
       events.push({ type: 'damage', targetId: t.id, damage: finalDamage, isCrit });
 
-      // Apply DoT if present
-      if (skill.dotDamagePerSec && skill.buffDurationMs) {
+      // Apply DoT — only player targets have activeBuffs
+      if (!isNpcTarget(t) && skill.dotDamagePerSec && skill.buffDurationMs) {
         applyBuff(t, {
           skillId: skill.id,
           casterId: caster.id,
@@ -170,9 +183,10 @@ function defaultEffect(
     }
   }
 
-  // ── Healing skills ──
+  // ── Healing skills (player targets only) ──
   if (skill.baseHealing) {
-    const healTarget = target ?? caster;
+    // Healing only applies to players — NPCs don't receive heals from skills
+    const healTarget = (target && !isNpcTarget(target)) ? target : caster;
     if (healTarget.alive) {
       const [min, max] = skill.baseHealing;
       const rawHeal = min + Math.random() * (max - min);
@@ -184,7 +198,7 @@ function defaultEffect(
       events.push({ type: 'heal', targetId: healTarget.id, amount: finalHeal });
     }
 
-    // Apply HoT if present
+    // Apply HoT if present (players only)
     if (skill.hotHealPerSec && skill.buffDurationMs) {
       applyBuff(healTarget, {
         skillId: skill.id,
@@ -197,21 +211,23 @@ function defaultEffect(
     }
   }
 
-  // ── Buff/debuff-only skills (no damage or healing) ──
+  // ── Buff/debuff-only skills (player targets only) ──
   if (!skill.baseDamage && !skill.baseHealing && skill.buffDurationMs) {
-    const buffTarget = skill.category === SkillCategory.DEBUFF
+    const rawTarget = skill.category === SkillCategory.DEBUFF
       ? (target ?? caster)
       : (skill.targetType === 'self' ? caster : (target ?? caster));
 
-    applyBuff(buffTarget, {
-      skillId: skill.id,
-      casterId: caster.id,
-      appliedAt: now,
-      expiresAt: now + skill.buffDurationMs,
-    });
-
-    const eventType = skill.category === SkillCategory.DEBUFF ? 'debuff' : 'buff';
-    events.push({ type: eventType, targetId: buffTarget.id, skillId: skill.id, durationMs: skill.buffDurationMs } as SkillEvent);
+    // Only apply buffs/debuffs to players — NPCs don't have activeBuffs
+    if (!isNpcTarget(rawTarget)) {
+      applyBuff(rawTarget, {
+        skillId: skill.id,
+        casterId: caster.id,
+        appliedAt: now,
+        expiresAt: now + skill.buffDurationMs,
+      });
+      const eventType = skill.category === SkillCategory.DEBUFF ? 'debuff' : 'buff';
+      events.push({ type: eventType, targetId: rawTarget.id, skillId: skill.id, durationMs: skill.buffDurationMs } as SkillEvent);
+    }
   }
 
   return events;
@@ -233,21 +249,28 @@ function applyBuff(player: PlayerState, buff: ActiveBuff): void {
 }
 
 /**
- * Determine which players are affected by a skill based on target type.
+ * Determine which entities are affected by a skill based on target type.
+ * Returns a union of PlayerState | NPCState for single-target skills,
+ * and PlayerState[] for AoE skills (NPCs are not yet scanned for AoE — that lives in SpellProjectileSystem).
  */
 function getAffectedTargets(
   caster: PlayerState,
-  target: PlayerState | null,
+  target: CombatTarget | null,
   skill: SkillTemplate,
   allPlayers: PlayerMap,
-): PlayerState[] {
+): CombatTarget[] {
   switch (skill.targetType) {
     case 'singleEnemy':
+      // Can be any non-self entity — includes NPCs
       return target && target.id !== caster.id ? [target] : [];
 
+    case 'singleAlly':
+      // Allies are other players only — NPCs are not ally targets
+      return (target && !isNpcTarget(target) && target.id !== caster.id) ? [target] : [];
+
     case 'aoeSelf': {
-      // All enemies within skill.range of caster
-      const targets: PlayerState[] = [];
+      // All enemies within skill.range of caster (players only for now)
+      const targets: CombatTarget[] = [];
       allPlayers.forEach(p => {
         if (p.id === caster.id || !p.alive || p.zoneId !== caster.zoneId) return;
         const dx = p.x - caster.x;
@@ -260,8 +283,8 @@ function getAffectedTargets(
     }
 
     case 'cone': {
-      // Enemies in a cone in front of caster
-      const targets: PlayerState[] = [];
+      // Enemies in a cone in front of caster (players only for now)
+      const targets: CombatTarget[] = [];
       const coneHalfAngle = Math.PI / 4; // 45° half-cone
       allPlayers.forEach(p => {
         if (p.id === caster.id || !p.alive || p.zoneId !== caster.zoneId) return;
@@ -302,7 +325,7 @@ let _nextSpellProjId = 0;
  */
 function fireballHandler(
   caster: PlayerState,
-  _target: PlayerState | null,
+  _target: CombatTarget | null,
   skill: SkillTemplate,
   _allPlayers: PlayerMap,
   _now: number,
@@ -350,3 +373,44 @@ function fireballHandler(
 
 // Register the Fireball handler
 registerEffectHandler(SkillId.WIZARD_FIREBALL, fireballHandler);
+
+// ── Magic Missile Handler ────────────────────────────────────
+
+/**
+ * Magic Missile effect handler.
+ *
+ * Deals instant arcane damage to the selected single enemy target.
+ * Unlike default attacks this spell ALWAYS hits — no dodge or miss roll is
+ * applied. Critical strikes still occur normally.
+ */
+function magicMissileHandler(
+  caster: PlayerState,
+  target: CombatTarget | null,
+  skill: SkillTemplate,
+  _allPlayers: PlayerMap,
+  _now: number,
+  _ctx?: SkillEffectContext,
+): SkillEvent[] {
+  if (!target || !target.alive || target.id === caster.id) return [];
+
+  const [min, max] = skill.baseDamage!;
+  const rawDamage = min + Math.random() * (max - min);
+  const intel = getStatValue(caster, skill.scalingStat);
+  const scaledDamage = rawDamage + intel * 0.8;
+
+  // Guaranteed hit — no dodge/miss check.
+  // Critical strike still applies.
+  const isCrit = Math.random() < (caster.stats?.critChance ?? 0.05);
+  const critMult = isCrit ? 1 + (caster.stats?.critDamage ?? 0.5) : 1;
+  const finalDamage = Math.round(scaledDamage * critMult);
+
+  target.hp = Math.max(0, target.hp - finalDamage);
+  if (target.hp <= 0) {
+    target.alive = false;
+  }
+
+  return [{ type: 'damage', targetId: target.id, damage: finalDamage, isCrit }];
+}
+
+// Register the Magic Missile handler
+registerEffectHandler(SkillId.WIZARD_MAGIC_MISSILE, magicMissileHandler);

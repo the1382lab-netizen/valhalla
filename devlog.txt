@@ -1,0 +1,19 @@
+
+=== Fix: Magic Missile Now Triggers NPC Aggro ===
+
+Bug: Casting Magic Missile on an NPC did not aggro it, while Fireball did.
+
+Root cause: Magic Missile's effect handler was directly mutating `target.hp`
+instead of calling `npcSystem.damageNPC()`, which is the only place where the
+aggro flag is set. Fireball routes its damage through SpellProjectileSystem which
+always calls `damageNPC()`.
+
+Fix:
+- Added optional `damageNpc` callback to `SkillEffectContext`
+- Added `NPCDamageDelegate` interface to `SkillSystem` (avoids tight coupling)
+- Threaded the delegate through `tryStartCast()` and `update()` in SkillSystem
+- Magic Missile handler now calls `ctx.damageNpc()` for NPC targets, falling
+  back to direct HP mutation only for player targets (PvP)
+- GameRoom passes `this.npcSystem` as the delegate at both call sites
+
+Files changed: SkillEffectHandler.ts, SkillSystem.ts, GameRoom.ts

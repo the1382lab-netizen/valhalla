@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { InputPayload } from '@valhalla/shared';
+import { InputPayload, isoToOrtho } from '@valhalla/shared';
 
 /**
  * Captures WASD keyboard input, mouse aim, combat inputs (fire/melee),
@@ -94,9 +94,11 @@ export class InputManager {
   getInput(playerWorldX: number, playerWorldY: number): InputPayload {
     const pointer = this.scene.input.activePointer;
 
-    // Convert pointer screen position to world position
+    // Convert pointer screen position to world position (ISO screen space),
+    // then convert to orthogonal world space for aimAngle calculation.
     const worldPoint = this.scene.cameras.main.getWorldPoint(pointer.x, pointer.y);
-    const aimAngle = Math.atan2(worldPoint.y - playerWorldY, worldPoint.x - playerWorldX);
+    const orthoMouse = isoToOrtho(worldPoint.x, worldPoint.y);
+    const aimAngle = Math.atan2(orthoMouse.y - playerWorldY, orthoMouse.x - playerWorldX);
 
     const fire = this.fireQueued;
     this.fireQueued = false;

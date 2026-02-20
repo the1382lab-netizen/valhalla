@@ -16620,53 +16620,6 @@
       "y": 0,
       "width": 0,
       "height": 0
-    },
-    {
-      "id": 6,
-      "name": "portals",
-      "opacity": 1,
-      "visible": true,
-      "offsetx": 0,
-      "offsety": 0,
-      "parallaxx": 1,
-      "parallaxy": 1,
-      "properties": [],
-      "type": "objectgroup",
-      "draworder": "topdown",
-      "objects": [
-        {
-          "id": 7,
-          "name": "grasslands_exit",
-          "type": "zone_portal",
-          "x": 128,
-          "y": 3584,
-          "width": 192,
-          "height": 256,
-          "rotation": 0,
-          "visible": true,
-          "properties": [
-            {
-              "name": "targetZone",
-              "type": "string",
-              "value": "grasslands"
-            },
-            {
-              "name": "targetSpawnX",
-              "type": "int",
-              "value": 3840
-            },
-            {
-              "name": "targetSpawnY",
-              "type": "int",
-              "value": 1920
-            }
-          ]
-        }
-      ],
-      "x": 0,
-      "y": 0,
-      "width": 0,
-      "height": 0
     }
   ],
   "nextlayerid": 7,

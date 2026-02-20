@@ -32,6 +32,14 @@ export interface NPCMap {
   forEach(callback: (value: NPCState, key: string) => void): void;
 }
 
+/**
+ * Minimal interface for applying damage to an NPC via NPCSystem.
+ * Keeps SkillSystem decoupled from the full NPCSystem class.
+ */
+export interface NPCDamageDelegate {
+  damageNPC(npcId: string, damage: number, attackerId: string, now: number): { died: boolean; xpReward: number };
+}
+
 // ── Result types for communicating back to GameRoom ────────
 
 export interface CastStartedResult {
@@ -129,6 +137,7 @@ export class SkillSystem {
     groundX?: number | null,
     groundY?: number | null,
     allNPCs?: NPCMap,
+    npcDelegate?: NPCDamageDelegate,
   ): SkillSystemEvent[] {
     const skill = DataManager.instance.getSkill(skillId);
     if (!skill) {
@@ -149,6 +158,7 @@ export class SkillSystem {
       groundX: groundX ?? null,
       groundY: groundY ?? null,
       allNPCs,
+      damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
     };
 
     if (skill.castTimeMs === 0) {
@@ -192,6 +202,7 @@ export class SkillSystem {
     now: number,
     spellProjectiles?: MapSchema<SpellProjectileState>,
     allNPCs?: NPCMap,
+    npcDelegate?: NPCDamageDelegate,
   ): SkillSystemEvent[] {
     const events: SkillSystemEvent[] = [];
 
@@ -227,6 +238,7 @@ export class SkillSystem {
             groundX: cast.groundX,
             groundY: cast.groundY,
             allNPCs,
+            damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
           };
           const castEvents = this.completeCast(player, target, skill, allPlayers, now, ctx);
           events.push(...castEvents);

@@ -1,4 +1,5 @@
 {
+  "version": "1.0.0",
   "spawnPoints": [
     {
       "id": "spawn_1771369903320",
@@ -6,6 +7,37 @@
       "x": 120,
       "y": 120,
       "properties": {}
+    },
+    {
+      "id": "spawn_1771469754565",
+      "type": "portal",
+      "x": -346,
+      "y": 3465,
+      "label": "Grasslands",
+      "templateId": "grasslands",
+      "width": 570,
+      "height": 355
+    },
+    {
+      "id": "spawn_1771472232634",
+      "type": "portal",
+      "x": -275,
+      "y": 1110,
+      "label": "Grasslands",
+      "templateId": "grasslands",
+      "width": 482,
+      "height": 293
+    },
+    {
+      "id": "spawn_1771542212654",
+      "type": "zone_entry",
+      "x": 98,
+      "y": 2039,
+      "label": "From Grasslands",
+      "templateId": "grasslands",
+      "fromZone": "grasslands",
+      "width": 128,
+      "height": 64
     }
   ]
 }

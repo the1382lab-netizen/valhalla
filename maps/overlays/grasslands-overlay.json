@@ -2,32 +2,10 @@
   "version": "1.0.0",
   "spawnPoints": [
     {
-      "id": "spawn_1771369869677",
-      "type": "player_spawn",
-      "x": 704,
-      "y": 295,
-      "properties": {}
-    },
-    {
-      "id": "spawn_1771369875840",
-      "type": "player_spawn",
-      "x": 400,
-      "y": 1100,
-      "properties": {},
-      "label": ""
-    },
-    {
-      "id": "spawn_1771369996885",
-      "type": "player_spawn",
-      "x": 330,
-      "y": 1090,
-      "properties": {}
-    },
-    {
       "id": "spawn_1771370113881",
       "type": "player_spawn",
-      "x": 330,
-      "y": 990,
+      "x": 319,
+      "y": 928,
       "properties": {}
     },
     {
@@ -37,6 +15,35 @@
       "y": 412,
       "label": "Test Enemy",
       "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "spawn_1771469442451",
+      "type": "portal",
+      "x": 3858,
+      "y": 1192,
+      "label": "Scorched Desert",
+      "templateId": "desert",
+      "width": 395,
+      "height": 350
+    },
+    {
+      "id": "spawn_1771471435262",
+      "type": "zone_entry",
+      "x": 3963,
+      "y": 3103,
+      "label": "From Scorched Desert",
+      "templateId": "desert",
+      "fromZone": "desert"
+    },
+    {
+      "id": "spawn_1771525146488",
+      "type": "portal",
+      "x": 3812,
+      "y": 3114,
+      "label": "Scorched Desert",
+      "templateId": "desert",
+      "width": 862,
+      "height": 343
     }
   ]
 }

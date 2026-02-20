@@ -18,7 +18,11 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // We generate textures in create() instead of loading external files
+    // Player walk sprite sheet: 4 rows (Up, Left, Down, Right) × 9 frames, 64×64 px
+    this.load.spritesheet('player_walk', 'assets/sprites/BODY_male_walking.png', {
+      frameWidth: 64,
+      frameHeight: 64,
+    });
   }
 
   async create(): Promise<void> {
@@ -46,6 +50,9 @@ export class BootScene extends Phaser.Scene {
 
     // ── Generate skill icon textures ───────────────────────
     this.generateSkillIcons();
+
+    // ── Define player walk/idle animations ─────────────────
+    this.definePlayerAnimations();
 
     // Transition to login screen
     this.scene.start('LoginScene');
@@ -543,5 +550,41 @@ export class BootScene extends Phaser.Scene {
 
     gfx.generateTexture('melee_slash', size, size);
     gfx.destroy();
+  }
+
+  /**
+   * Define walk and idle animations from the player sprite sheet.
+   * Sheet layout: 4 rows (Up, Left, Down, Right), 9 frames per row, 64×64 px.
+   */
+  private definePlayerAnimations(): void {
+    // Row order in the sprite sheet
+    const directions: [string, number][] = [
+      ['up',    0],
+      ['left',  1],
+      ['down',  2],
+      ['right', 3],
+    ];
+    const FRAMES_PER_ROW = 9;
+
+    for (const [dir, row] of directions) {
+      // Walk animation — full 9-frame loop
+      this.anims.create({
+        key: `walk_${dir}`,
+        frames: this.anims.generateFrameNumbers('player_walk', {
+          start: row * FRAMES_PER_ROW,
+          end: row * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+        }),
+        frameRate: 12,
+        repeat: -1,
+      });
+
+      // Idle animation — single first frame of the row
+      this.anims.create({
+        key: `idle_${dir}`,
+        frames: [{ key: 'player_walk', frame: row * FRAMES_PER_ROW }],
+        frameRate: 1,
+        repeat: 0,
+      });
+    }
   }
 }

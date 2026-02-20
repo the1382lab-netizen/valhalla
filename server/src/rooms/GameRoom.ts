@@ -165,6 +165,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         data.groundX ?? null,
         data.groundY ?? null,
         this.state.npcs,
+        this.npcSystem,
       );
       this.broadcastSkillEvents(events, client);
     });
@@ -567,7 +568,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.broadcastSpellProjectileEvents(spellEvents);
 
     // 4. Skill system update (cast progression, energy regen, buff ticking)
-    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs);
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem);
     this.broadcastSkillEvents(skillEvents);
 
     // 5. Check respawns — handle per-player zone respawn points

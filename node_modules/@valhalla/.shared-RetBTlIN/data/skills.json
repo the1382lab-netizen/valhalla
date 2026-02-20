@@ -779,7 +779,7 @@
       "resourceCost": 40,
       "castTimeMs": 3000,
       "cooldownMs": 2500,
-      "range": 320,
+      "range": 450,
       "targetType": "singleEnemy",
       "category": "offensive",
       "iconColor": 8952063,

@@ -219,7 +219,7 @@ body {
 /* Split view */
 .split-horizontal {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 440px 1fr;
   gap: 16px;
   height: 100%;
 }
@@ -465,13 +465,14 @@ textarea.form-input {
 /* Tabs */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0;
   border-bottom: 1px solid var(--border-color);
   margin-bottom: 16px;
 }
 
 .tab {
-  padding: 8px 16px;
+  padding: 6px 12px;
   cursor: pointer;
   color: var(--text-secondary);
   border-bottom: 2px solid transparent;

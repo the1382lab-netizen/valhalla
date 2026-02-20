@@ -96,6 +96,7 @@ export interface ParsedMapData {
   width: number;
   height: number;
   tileSize: number;
+  orientation: 'orthogonal' | 'isometric';
   collisionGrid: number[];
   spawnPoints: SpawnPointData[];
   zoneConnections: ZoneConnection[];
@@ -111,6 +112,7 @@ export interface MapDataPayload {
   width: number;
   height: number;
   tileSize: number;
+  orientation: 'orthogonal' | 'isometric';
   collisionGrid: number[];
   tileLayers: TileLayerInfo[];
   tilesets: TilesetInfo[];

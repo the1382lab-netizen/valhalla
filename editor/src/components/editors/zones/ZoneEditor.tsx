@@ -152,16 +152,22 @@ export const ZoneEditor: React.FC = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Map File (read-only)</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={selectedZone.mapFile}
-                  disabled
-                  style={{ backgroundColor: 'var(--bg-tertiary)', cursor: 'not-allowed' }}
-                />
+                <label className="form-label">Map File</label>
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  padding: '6px 10px',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 4,
+                  border: '1px solid var(--border-color)',
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  color: selectedZone.mapFile ? 'var(--text-primary)' : 'var(--text-muted)',
+                }}>
+                  <span>🗺</span>
+                  <span>{selectedZone.mapFile || 'none assigned'}</span>
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                  Map files are managed by the Map Editor
+                  Change this in the <strong>Map Editor</strong> using the "Map File" dropdown.
                 </div>
               </div>
 

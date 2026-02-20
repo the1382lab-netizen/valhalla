@@ -48,6 +48,11 @@ export interface SkillEffectContext {
   groundY: number | null;
   /** NPC map — available for effect handlers that need NPC access */
   allNPCs?: NPCMap;
+  /**
+   * Delegate to apply damage to an NPC via NPCSystem.
+   * Using this instead of mutating target.hp directly ensures aggro is triggered.
+   */
+  damageNpc?: (npcId: string, damage: number, attackerId: string, now: number) => { died: boolean; xpReward: number };
 }
 
 // ── Skill Event Types ──────────────────────────────────────
@@ -388,8 +393,8 @@ function magicMissileHandler(
   target: CombatTarget | null,
   skill: SkillTemplate,
   _allPlayers: PlayerMap,
-  _now: number,
-  _ctx?: SkillEffectContext,
+  now: number,
+  ctx?: SkillEffectContext,
 ): SkillEvent[] {
   if (!target || !target.alive || target.id === caster.id) return [];
 
@@ -404,9 +409,15 @@ function magicMissileHandler(
   const critMult = isCrit ? 1 + (caster.stats?.critDamage ?? 0.5) : 1;
   const finalDamage = Math.round(scaledDamage * critMult);
 
-  target.hp = Math.max(0, target.hp - finalDamage);
-  if (target.hp <= 0) {
-    target.alive = false;
+  // Route NPC damage through NPCSystem so aggro is triggered correctly.
+  // Fall back to direct mutation for player targets (PvP) where no delegate is needed.
+  if (isNpcTarget(target) && ctx?.damageNpc) {
+    ctx.damageNpc(target.id, finalDamage, caster.id, now);
+  } else {
+    target.hp = Math.max(0, target.hp - finalDamage);
+    if (target.hp <= 0) {
+      target.alive = false;
+    }
   }
 
   return [{ type: 'damage', targetId: target.id, damage: finalDamage, isCrit }];

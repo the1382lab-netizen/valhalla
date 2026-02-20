@@ -29,9 +29,13 @@ import {
   ACTION_BAR_SLOTS,
   getAvailableSkills,
   ChatMessagePayload,
+  orthoToIso,
+  isoToOrtho,
+  tileToIso,
+  ORTHO_TILE_SIZE,
 } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
-import { PlayerTargetInfo, NpcTargetInfo } from '../systems/EntityRenderer.js';
+import { PlayerTargetInfo, NpcTargetInfo, ENTITY_DEPTH_BASE, UI_DEPTH_BASE } from '../systems/EntityRenderer.js';
 
 interface PendingInput {
   input: InputPayload;
@@ -53,6 +57,10 @@ export class GameScene extends Phaser.Scene {
   private aimLine!: Phaser.GameObjects.Graphics;
   private localX: number = 0;
   private localY: number = 0;
+  /** True when the current zone uses isometric rendering. */
+  private isIso: boolean = false;
+  /** Last facing direction for idle animation. */
+  private lastFacingDir: string = 'down';
 
   // Local player vitals
   private localHp: number = 100;
@@ -274,7 +282,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 3,
     });
     this.statusText.setScrollFactor(0);
-    this.statusText.setDepth(100);
+    this.statusText.setDepth(UI_DEPTH_BASE);
 
     // Death overlay (hidden initially)
     this.deathOverlay = this.add.rectangle(
@@ -286,7 +294,7 @@ export class GameScene extends Phaser.Scene {
       0.7,
     );
     this.deathOverlay.setScrollFactor(0);
-    this.deathOverlay.setDepth(200);
+    this.deathOverlay.setDepth(UI_DEPTH_BASE + 100);
     this.deathOverlay.setVisible(false);
 
     this.deathText = this.add.text(
@@ -303,13 +311,13 @@ export class GameScene extends Phaser.Scene {
     );
     this.deathText.setOrigin(0.5, 0.5);
     this.deathText.setScrollFactor(0);
-    this.deathText.setDepth(201);
+    this.deathText.setDepth(UI_DEPTH_BASE + 101);
     this.deathText.setVisible(false);
 
     // Local HP/Mana bar (HUD)
     this.hpBarGfx = this.add.graphics();
     this.hpBarGfx.setScrollFactor(0);
-    this.hpBarGfx.setDepth(100);
+    this.hpBarGfx.setDepth(UI_DEPTH_BASE);
 
     // Class + Level HUD
     this.classHudText = this.add.text(16, this.cameras.main.height - 58, '', {
@@ -319,7 +327,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 2,
     });
     this.classHudText.setScrollFactor(0);
-    this.classHudText.setDepth(100);
+    this.classHudText.setDepth(UI_DEPTH_BASE);
 
     // Create inventory panel (hidden initially)
     this.createInventoryPanel();
@@ -390,18 +398,26 @@ export class GameScene extends Phaser.Scene {
       // Single-target skills require a target to be selected
       if (skill?.targetType === 'singleEnemy' || skill?.targetType === 'singleAlly') {
         if (!this.currentTargetId) {
-          this.entityRenderer.showCombatText(this.localX, this.localY - 30, 'No target', '#ff8844');
+          const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+          if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, 'No target', '#ff8844');
           return;
         }
         this.network.sendCastSkill(skillId, this.currentTargetId);
       // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
       // Use the current mouse/cursor world position as the target.
       } else if (skill?.targetType === 'aoeGround') {
-        const cam = this.cameras.main;
-        const pointer = this.input.activePointer;
-        const worldX = pointer.x + cam.scrollX;
-        const worldY = pointer.y + cam.scrollY;
-        this.network.sendCastSkill(skillId, undefined, worldX, worldY);
+        const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
+        let targetX = worldPoint.x;
+        let targetY = worldPoint.y;
+
+        // Convert from ISO screen coords to ortho world coords if isometric
+        if (this.isIso) {
+          const orthoCoords = isoToOrtho(worldPoint.x, worldPoint.y);
+          targetX = orthoCoords.x;
+          targetY = orthoCoords.y;
+        }
+
+        this.network.sendCastSkill(skillId, undefined, targetX, targetY);
       } else {
         this.network.sendCastSkill(skillId);
       }
@@ -456,9 +472,38 @@ export class GameScene extends Phaser.Scene {
       this.mapWidthPx = data.width * data.tileSize;
       this.mapHeightPx = data.height * data.tileSize;
       this.currentZoneId = data.zoneId;
+      this.isIso = data.orientation === 'isometric';
+
+      // Reconcile NPC visibility — fixes the race where onNpcAdd fires before
+      // currentZoneId is set, causing NPCs from other zones to ghost in.
+      for (const [nid, npcZone] of this.npcZones) {
+        const visible = this.visibleNpcs.has(nid);
+        const shouldBeVisible = npcZone === this.currentZoneId;
+        if (visible && !shouldBeVisible) {
+          this.entityRenderer.removeNPC(nid);
+          this.visibleNpcs.delete(nid);
+        } else if (!visible && shouldBeVisible) {
+          const cached = this.npcCache.get(nid);
+          if (cached) {
+            this.entityRenderer.addNPC(nid, cached.x, cached.y, cached.name ?? 'NPC', cached.level ?? 1, cached.npcType ?? 'enemy', cached.spriteColor ?? 0xff4444, cached.spriteSize ?? 1);
+            this.entityRenderer.updateNPCHp(nid, cached.hp, cached.maxHp, cached.alive);
+            this.visibleNpcs.add(nid);
+          }
+        }
+      }
 
       // Update camera bounds for the new map size
-      this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+      // For ISO maps the screen footprint is much wider/taller than ortho pixel dims.
+      if (this.isIso) {
+        // ISO diamond bounds: the map spans roughly ±(width+height)*tileSize/2 in X,
+        // and 0..(width+height)*tileSize/2 in Y. Add generous padding.
+        const totalTiles = data.width + data.height;
+        const halfW = totalTiles * data.tileSize;
+        const halfH = totalTiles * data.tileSize / 2;
+        this.cameras.main.setBounds(-halfW, -halfH / 2, halfW * 2, halfH * 2);
+      } else {
+        this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+      }
 
       this.buildTileMapFromData(data);
     };
@@ -543,7 +588,10 @@ export class GameScene extends Phaser.Scene {
       this.localX = data.spawnX;
       this.localY = data.spawnY;
       if (this.playerSprite) {
-        this.playerSprite.setPosition(this.localX, this.localY);
+        const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+        this.playerSprite.setPosition(playerIso.x, playerIso.y);
+        this.lastFacingDir = 'down';
+        this.playerSprite.play('idle_down', true);
       }
 
       // 5. Clear pending inputs — server position is authoritative after zone change
@@ -565,6 +613,8 @@ export class GameScene extends Phaser.Scene {
         this.localLevel = player.level ?? 1;
         this.localXp = player.xp ?? 0;
         this.localCharacterName = player.characterName ?? '';
+        // Set zone early so onNpcAdd / onPlayerAdd for others filters correctly
+        this.currentZoneId = player.zoneId ?? 'grasslands';
         this.createLocalPlayer();
         this.connected = true;
         this.statusText.setText('WASD move | Mouse aim | Left-click melee | Right-click ranged (Ranger)');
@@ -748,8 +798,10 @@ export class GameScene extends Phaser.Scene {
     };
 
     // Spell impact — play explosion VFX at the detonation point
+    // data.x/y are orthogonal world coords from the server; convert to ISO screen coords before rendering
     this.network.onSpellImpact = (data) => {
-      this.entityRenderer.showSpellImpact(data.x, data.y, data.radius, data.skillId);
+      const isoPos = orthoToIso(data.x, data.y);
+      this.entityRenderer.showSpellImpact(isoPos.x, isoPos.y, data.radius, data.skillId);
     };
 
     // NPC callbacks — NPCs have a zoneId, so we filter by zone like remote players.
@@ -832,7 +884,8 @@ export class GameScene extends Phaser.Scene {
       if (data.targetId === this.network.sessionId) {
         // We got hit — show damage with crit indicator
         const dmgText = data.isCrit ? `${data.damage}!` : `${data.damage}`;
-        this.entityRenderer.showDamageFlash(this.localX, this.localY, data.damage, data.isCrit);
+        const pos = this.getCombatTextPosition(data.targetId);
+        if (pos) this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
         this.cameras.main.shake(100, data.isCrit ? 0.01 : 0.005);
       } else {
         this.showRemoteDamageFlash(data.targetId, data.damage, data.isCrit);
@@ -853,7 +906,8 @@ export class GameScene extends Phaser.Scene {
 
     this.network.onMeleeAttack = (data: MeleeAttackData) => {
       if (data.attackerId === this.network.sessionId) {
-        this.entityRenderer.showMeleeSlash(this.localX, this.localY, data.angle);
+        const pos = this.getCombatTextPosition(data.attackerId);
+        if (pos) this.entityRenderer.showMeleeSlash(pos.x, pos.y, data.angle, this.isIso);
       } else {
         this.showRemoteMeleeSlash(data.attackerId, data.angle);
       }
@@ -883,9 +937,7 @@ export class GameScene extends Phaser.Scene {
 
         // Magic Missile VFX — bolt from caster to NPC target
         if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE && data.casterId) {
-          const casterPos = data.casterId === this.network.sessionId
-            ? { x: this.localX, y: this.localY }
-            : (this.entityRenderer.getPlayerPosition(data.casterId) ?? null);
+          const casterPos = this.getCombatTextPosition(data.casterId);
           if (casterPos) {
             this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, pos.x, pos.y);
           }
@@ -966,9 +1018,7 @@ export class GameScene extends Phaser.Scene {
 
         // Magic Missile VFX: bolt from caster to target
         if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE) {
-          const casterPos = data.casterId === this.network.sessionId
-            ? { x: this.localX, y: this.localY }
-            : (this.entityRenderer.getPlayerPosition(data.casterId) ?? this.entityRenderer.getNPCPosition(data.casterId));
+          const casterPos = this.getCombatTextPosition(data.casterId);
           const targetPos = this.getCombatTextPosition(data.targetId);
           if (casterPos && targetPos) {
             this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, targetPos.x, targetPos.y);
@@ -984,7 +1034,11 @@ export class GameScene extends Phaser.Scene {
 
     this.network.onSkillFailed = (data: { reason: string }) => {
       // Show error text above player
-      this.entityRenderer.showCombatText(this.localX, this.localY - 30, data.reason, '#ff6666');
+      const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+      if (pos) {
+        const offsetPos = { x: pos.x, y: pos.y - 30 };
+        this.entityRenderer.showCombatText(offsetPos.x, offsetPos.y, data.reason, '#ff6666');
+      }
     };
 
     this.network.onSkillInterrupted = (data: { casterId: string; skillId: string }) => {
@@ -1020,6 +1074,9 @@ export class GameScene extends Phaser.Scene {
    */
   private getCombatTextPosition(entityId: string): { x: number; y: number } | null {
     if (entityId === this.network.sessionId) {
+      if (this.isIso) {
+        return orthoToIso(this.localX, this.localY);
+      }
       return { x: this.localX, y: this.localY };
     }
     return this.entityRenderer.getPlayerPosition(entityId)
@@ -1033,26 +1090,46 @@ export class GameScene extends Phaser.Scene {
 
   private showRemoteMeleeSlash(attackerId: string, angle: number): void {
     const pos = this.entityRenderer.getPlayerPosition(attackerId);
-    if (pos) this.entityRenderer.showMeleeSlash(pos.x, pos.y, angle);
+    if (pos) this.entityRenderer.showMeleeSlash(pos.x, pos.y, angle, this.isIso);
   }
 
   private createLocalPlayer(): void {
-    this.playerSprite = this.add.sprite(this.localX, this.localY, 'player');
-    this.playerSprite.setDepth(10);
-
-    // Tint by class
-    const template = ClientDataManager.instance.getClass(this.localClassId);
-    if (template) {
-      // Import CLASS_COLORS if we want to tint, but for local player keep it subtle
-    }
+    const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+    // Use sprite sheet — frame 18 = row 2 (down), col 0 = idle facing down
+    this.playerSprite = this.add.sprite(playerIso.x, playerIso.y, 'player_walk', 18);
+    this.playerSprite.setDepth(ENTITY_DEPTH_BASE);
+    this.playerSprite.rotation = 0;
 
     // Aim indicator line
     this.aimLine = this.add.graphics();
-    this.aimLine.setDepth(9);
+    this.aimLine.setDepth(ENTITY_DEPTH_BASE - 1);
 
     // Camera follows player
     this.cameras.main.startFollow(this.playerSprite, true, 0.1, 0.1);
     this.cameras.main.setZoom(1);
+  }
+
+  /**
+   * Determine the 4-direction movement direction string from WASD input.
+   * Maps directly from world-space movement intent (W=up, S=down, A=left, D=right)
+   * so that the sprite row matches the key pressed, regardless of ISO projection.
+   * For diagonals the vertical axis takes priority (up/down over left/right).
+   * Returns null if not moving.
+   */
+  private getMovementDir(input: InputPayload): string | null {
+    const mx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+    const my = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+    if (mx === 0 && my === 0) return null;
+
+    // Cardinal directions first
+    if (my < 0 && mx === 0) return 'up';
+    if (my > 0 && mx === 0) return 'down';
+    if (mx < 0 && my === 0) return 'left';
+    if (mx > 0 && my === 0) return 'right';
+
+    // Diagonals — vertical axis takes priority (feels most natural in ISO)
+    if (my < 0) return 'up';
+    return 'down';
   }
 
   /**
@@ -1088,6 +1165,9 @@ export class GameScene extends Phaser.Scene {
    * Build multi-layer tile map from server MapDataPayload.
    * Renders each tile layer in order, with proper depth sorting.
    */
+  /** Depth stride between tile layers for painter's-algorithm sorting. */
+  private static readonly LAYER_DEPTH_STRIDE = 100_000;
+
   private buildTileMapFromData(data: MapDataPayload): void {
     // Clear existing tiles
     for (const sprite of this.tileSprites) {
@@ -1095,12 +1175,13 @@ export class GameScene extends Phaser.Scene {
     }
     this.tileSprites = [];
 
-    const { tileLayers, tileSize, width, height } = data;
+    const { tileLayers, tileSize } = data;
+    const isIso = data.orientation === 'isometric';
 
-    let layerDepth = 0;
+    let layerIndex = 0;
     for (const layer of tileLayers) {
       if (!layer.visible) {
-        layerDepth++;
+        layerIndex++;
         continue;
       }
 
@@ -1110,19 +1191,34 @@ export class GameScene extends Phaser.Scene {
           if (gid === 0) continue; // Empty tile, skip
 
           const textureKey = GameScene.GID_TEXTURE_MAP[gid] ?? 'tile_void';
-          const sprite = this.add.sprite(
-            x * tileSize + tileSize / 2,
-            y * tileSize + tileSize / 2,
-            textureKey,
-          );
-          sprite.setDepth(layerDepth);
+
+          let screenX: number;
+          let screenY: number;
+          let depth: number;
+
+          if (isIso) {
+            // Isometric: project tile grid → screen via orthoToIso
+            const pos = tileToIso(x, y);
+            screenX = pos.x;
+            screenY = pos.y;
+            // Depth sorting: layer stride + row+col sum for painter's algorithm
+            depth = layerIndex * GameScene.LAYER_DEPTH_STRIDE + (x + y);
+          } else {
+            // Orthogonal: simple grid placement
+            screenX = x * tileSize + tileSize / 2;
+            screenY = y * tileSize + tileSize / 2;
+            depth = layerIndex;
+          }
+
+          const sprite = this.add.sprite(screenX, screenY, textureKey);
+          sprite.setDepth(depth);
           if (layer.opacity < 1) {
             sprite.setAlpha(layer.opacity);
           }
           this.tileSprites.push(sprite);
         }
       }
-      layerDepth++;
+      layerIndex++;
     }
   }
 
@@ -1448,7 +1544,7 @@ export class GameScene extends Phaser.Scene {
       defaultY + this.targetOffset.y,
     );
     this.targetNameplateContainer.setScrollFactor(0);
-    this.targetNameplateContainer.setDepth(170);
+    this.targetNameplateContainer.setDepth(UI_DEPTH_BASE + 70);
     this.targetNameplateContainer.setVisible(false);
 
     // ── Background panel ──
@@ -1597,7 +1693,7 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.invContainer = this.add.container(0, 0);
     this.invContainer.setScrollFactor(0);
-    this.invContainer.setDepth(300);
+    this.invContainer.setDepth(UI_DEPTH_BASE + 200);
     this.invContainer.setVisible(false);
 
     // Shared graphics layer for both panels
@@ -1607,7 +1703,7 @@ export class GameScene extends Phaser.Scene {
     // Fullscreen dim overlay — kept OUTSIDE invContainer so it doesn't move when the panel is dragged
     this.invDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.4);
     this.invDimBg.setScrollFactor(0);
-    this.invDimBg.setDepth(299); // just below invContainer (300)
+    this.invDimBg.setDepth(UI_DEPTH_BASE + 199); // just below invContainer (UI_DEPTH_BASE + 200)
     this.invDimBg.setVisible(false);
 
     // Panel positions — both centered together, using the taller panel for vertical centering
@@ -1707,7 +1803,7 @@ export class GameScene extends Phaser.Scene {
     this.dragGhostBg = this.add.rectangle(0, 0, 52, 28, 0x000000, 0.85);
     this.dragGhostBg.setStrokeStyle(1, 0xffcc00);
     this.dragGhostBg.setVisible(false);
-    this.dragGhostBg.setDepth(999);
+    this.dragGhostBg.setDepth(UI_DEPTH_BASE + 899);
     this.invContainer.add(this.dragGhostBg);
 
     this.dragGhost = this.add.text(0, 0, '', {
@@ -1718,7 +1814,7 @@ export class GameScene extends Phaser.Scene {
     });
     this.dragGhost.setOrigin(0.5, 0.5);
     this.dragGhost.setVisible(false);
-    this.dragGhost.setDepth(1000);
+    this.dragGhost.setDepth(UI_DEPTH_BASE + 900);
     this.invContainer.add(this.dragGhost);
 
     // Setup drag-and-drop input handlers
@@ -2325,9 +2421,25 @@ export class GameScene extends Phaser.Scene {
 
       // ── Update local sprite ─────────────────────────────────
       if (this.localAlive) {
-        this.playerSprite.x = this.localX;
-        this.playerSprite.y = this.localY;
-        this.playerSprite.rotation = input.aimAngle;
+        const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+        this.playerSprite.x = playerIso.x;
+        this.playerSprite.y = playerIso.y;
+        this.playerSprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(this.localX / 64) + Math.floor(this.localY / 64));
+
+        // Directional sprite animation based on movement
+        const moveDir = this.getMovementDir(input);
+        this.playerSprite.rotation = 0;
+        if (moveDir) {
+          this.lastFacingDir = moveDir;
+          if (this.playerSprite.anims.getName() !== `walk_${moveDir}` || !this.playerSprite.anims.isPlaying) {
+            this.playerSprite.play(`walk_${moveDir}`, true);
+          }
+        } else {
+          const idleKey = `idle_${this.lastFacingDir}`;
+          if (this.playerSprite.anims.getName() !== idleKey || !this.playerSprite.anims.isPlaying) {
+            this.playerSprite.play(idleKey, true);
+          }
+        }
 
         // ── Draw aim line ─────────────────────────────────────
         this.drawAimLine(input.aimAngle);
@@ -2356,6 +2468,14 @@ export class GameScene extends Phaser.Scene {
     if (input.down) my += 1;
     if (input.left) mx -= 1;
     if (input.right) mx += 1;
+
+    // Apply 45° rotation for isometric movement
+    if (this.isIso) {
+      const isoMx = mx + my;
+      const isoMy = -mx + my;
+      mx = isoMx;
+      my = isoMy;
+    }
 
     const dir = normalise(mx, my);
     const dx = dir.x * this.localSpeed * dt;
@@ -2446,10 +2566,19 @@ export class GameScene extends Phaser.Scene {
     const endX = this.localX + Math.cos(angle) * (20 + len);
     const endY = this.localY + Math.sin(angle) * (20 + len);
 
-    this.aimLine.beginPath();
-    this.aimLine.moveTo(startX, startY);
-    this.aimLine.lineTo(endX, endY);
-    this.aimLine.strokePath();
+    if (this.isIso) {
+      const isoStart = orthoToIso(startX, startY);
+      const isoEnd = orthoToIso(endX, endY);
+      this.aimLine.beginPath();
+      this.aimLine.moveTo(isoStart.x, isoStart.y);
+      this.aimLine.lineTo(isoEnd.x, isoEnd.y);
+      this.aimLine.strokePath();
+    } else {
+      this.aimLine.beginPath();
+      this.aimLine.moveTo(startX, startY);
+      this.aimLine.lineTo(endX, endY);
+      this.aimLine.strokePath();
+    }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -2461,7 +2590,7 @@ export class GameScene extends Phaser.Scene {
 
     this.chatContainer = this.add.container(0, 0);
     this.chatContainer.setScrollFactor(0);
-    this.chatContainer.setDepth(120);
+    this.chatContainer.setDepth(UI_DEPTH_BASE + 20);
 
     // Background drawn via graphics (redrawn every frame in drawChatPanel)
     this.chatBgGfx = this.add.graphics();
@@ -2478,7 +2607,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 1,
     });
     this.chatChannelLabel.setScrollFactor(0);
-    this.chatChannelLabel.setDepth(121);
+    this.chatChannelLabel.setDepth(UI_DEPTH_BASE + 21);
     this.chatContainer.add(this.chatChannelLabel);
 
     // Pre-allocate message text objects
@@ -2491,7 +2620,7 @@ export class GameScene extends Phaser.Scene {
         wordWrap: { width: this.chatEffectiveW - this.CHAT_PAD * 2 },
       });
       t.setScrollFactor(0);
-      t.setDepth(121);
+      t.setDepth(UI_DEPTH_BASE + 21);
       t.setVisible(false);
       this.chatContainer.add(t);
       this.chatMessageTexts.push(t);
@@ -2505,7 +2634,7 @@ export class GameScene extends Phaser.Scene {
       strokeThickness: 1,
     });
     this.chatInputDisplay.setScrollFactor(0);
-    this.chatInputDisplay.setDepth(121);
+    this.chatInputDisplay.setDepth(UI_DEPTH_BASE + 21);
     this.chatInputDisplay.setVisible(false);
     this.chatContainer.add(this.chatInputDisplay);
 
@@ -2708,7 +2837,7 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.actionBarContainer = this.add.container(0, 0);
     this.actionBarContainer.setScrollFactor(0);
-    this.actionBarContainer.setDepth(150);
+    this.actionBarContainer.setDepth(UI_DEPTH_BASE + 50);
 
     this.actionBarGfx = this.add.graphics();
     this.actionBarContainer.add(this.actionBarGfx);
@@ -2860,7 +2989,7 @@ export class GameScene extends Phaser.Scene {
   private createCastBar(): void {
     this.castBarContainer = this.add.container(0, 0);
     this.castBarContainer.setScrollFactor(0);
-    this.castBarContainer.setDepth(160);
+    this.castBarContainer.setDepth(UI_DEPTH_BASE + 60);
     this.castBarContainer.setVisible(false);
 
     this.castBarGfx = this.add.graphics();
@@ -2928,13 +3057,13 @@ export class GameScene extends Phaser.Scene {
     const cam = this.cameras.main;
     this.skillsPaneContainer = this.add.container(0, 0);
     this.skillsPaneContainer.setScrollFactor(0);
-    this.skillsPaneContainer.setDepth(310);
+    this.skillsPaneContainer.setDepth(UI_DEPTH_BASE + 210);
     this.skillsPaneContainer.setVisible(false);
 
     // Fullscreen dim overlay — kept OUTSIDE skillsPaneContainer so it doesn't move when the pane is dragged
     this.skillsDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.5);
     this.skillsDimBg.setScrollFactor(0);
-    this.skillsDimBg.setDepth(309); // just below skillsPaneContainer (310)
+    this.skillsDimBg.setDepth(UI_DEPTH_BASE + 209); // just below skillsPaneContainer (UI_DEPTH_BASE + 210)
     this.skillsDimBg.setVisible(false);
 
     this.skillsPaneGfx = this.add.graphics();
@@ -2964,7 +3093,7 @@ export class GameScene extends Phaser.Scene {
     this.skillDragGhostBg = this.add.rectangle(0, 0, 52, 22, 0x000000, 0.85);
     this.skillDragGhostBg.setStrokeStyle(1, 0xffcc00);
     this.skillDragGhostBg.setVisible(false);
-    this.skillDragGhostBg.setDepth(999);
+    this.skillDragGhostBg.setDepth(UI_DEPTH_BASE + 899);
     this.skillsPaneContainer.add(this.skillDragGhostBg);
 
     this.skillDragGhost = this.add.text(0, 0, '', {
@@ -2975,12 +3104,12 @@ export class GameScene extends Phaser.Scene {
     });
     this.skillDragGhost.setOrigin(0.5, 0.5);
     this.skillDragGhost.setVisible(false);
-    this.skillDragGhost.setDepth(1000);
+    this.skillDragGhost.setDepth(UI_DEPTH_BASE + 900);
     this.skillsPaneContainer.add(this.skillDragGhost);
 
     // Skill tooltip (shown on hover)
     this.skillTooltipContainer = this.add.container(0, 0);
-    this.skillTooltipContainer.setDepth(1100);
+    this.skillTooltipContainer.setDepth(UI_DEPTH_BASE + 1000);
     this.skillTooltipContainer.setVisible(false);
     this.skillsPaneContainer.add(this.skillTooltipContainer);
 

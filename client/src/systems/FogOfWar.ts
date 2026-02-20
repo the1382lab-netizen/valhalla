@@ -1,12 +1,13 @@
 import Phaser from 'phaser';
-import {
-  MAP_WIDTH_PX,
-  MAP_HEIGHT_PX,
-} from '@valhalla/shared';
+import { orthoToIso } from '@valhalla/shared';
+import { ENTITY_DEPTH_BASE } from './EntityRenderer.js';
 
 // These constants aren't in shared yet — define locally until the FoW system is fully integrated
 const FOG_EXPLORED_ALPHA = 0.5;
 const FOG_HIDDEN_ALPHA = 0.95;
+
+/** FogOfWar depth sits above entities but below UI */
+const FOG_DEPTH = ENTITY_DEPTH_BASE + 100_000;
 
 interface VisibilityData {
   polygon: { x: number; y: number }[];
@@ -27,6 +28,10 @@ interface VisibilityData {
  * - Never seen: dark fog (FOG_HIDDEN_ALPHA)
  * - Previously explored but not currently visible: dim fog (FOG_EXPLORED_ALPHA)
  * - Currently visible: no fog (fully transparent)
+ *
+ * NOTE: The visibility polygon from the server is in **orthogonal** world space.
+ * Tile iteration and point-in-polygon tests all operate in ortho space.
+ * Only the final fog-tile rendering converts to ISO screen coords.
  */
 export class FogOfWar {
   private scene: Phaser.Scene;
@@ -37,7 +42,7 @@ export class FogOfWar {
   // Tracked explored areas (set of tile coordinates that have been seen)
   private exploredTiles: Set<string> = new Set();
 
-  // Current visibility polygon from the server
+  // Current visibility polygon from the server (ortho world space)
   private currentPolygon: { x: number; y: number }[] = [];
   private visiblePlayers: Set<string> = new Set();
   private visibleProjectiles: Set<string> = new Set();
@@ -46,12 +51,32 @@ export class FogOfWar {
   private targetPolygon: { x: number; y: number }[] = [];
   private lerpFactor: number = 0;
 
-  constructor(scene: Phaser.Scene) {
+  // Dynamic map dimensions
+  private tileSize: number;
+  private mapWidthTiles: number;
+  private mapHeightTiles: number;
+  private mapWidthPx: number;
+  private mapHeightPx: number;
+  private isIso: boolean;
+
+  constructor(
+    scene: Phaser.Scene,
+    tileSize: number,
+    mapWidthTiles: number,
+    mapHeightTiles: number,
+    isIso: boolean = false,
+  ) {
     this.scene = scene;
+    this.tileSize = tileSize;
+    this.mapWidthTiles = mapWidthTiles;
+    this.mapHeightTiles = mapHeightTiles;
+    this.mapWidthPx = mapWidthTiles * tileSize;
+    this.mapHeightPx = mapHeightTiles * tileSize;
+    this.isIso = isIso;
 
     // Create the fog graphics object (drawn each frame)
     this.fogGraphics = scene.add.graphics();
-    this.fogGraphics.setDepth(50); // above entities, below UI
+    this.fogGraphics.setDepth(FOG_DEPTH);
   }
 
   /**
@@ -71,11 +96,12 @@ export class FogOfWar {
 
   /**
    * Mark tiles covered by the visibility polygon as explored.
+   * Polygon is in orthogonal world space.
    */
   private markExploredTiles(polygon: { x: number; y: number }[]): void {
     if (polygon.length < 3) return;
 
-    // Find bounding box of the polygon
+    // Find bounding box of the polygon (ortho space)
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
     for (const p of polygon) {
@@ -85,18 +111,17 @@ export class FogOfWar {
       if (p.y > maxY) maxY = p.y;
     }
 
-    // Convert to tile coordinates and check each tile
-    const tileSize = 64;
-    const startTX = Math.max(0, Math.floor(minX / tileSize));
-    const endTX = Math.min(Math.floor(MAP_WIDTH_PX / tileSize) - 1, Math.floor(maxX / tileSize));
-    const startTY = Math.max(0, Math.floor(minY / tileSize));
-    const endTY = Math.min(Math.floor(MAP_HEIGHT_PX / tileSize) - 1, Math.floor(maxY / tileSize));
+    const ts = this.tileSize;
+    const startTX = Math.max(0, Math.floor(minX / ts));
+    const endTX = Math.min(this.mapWidthTiles - 1, Math.floor(maxX / ts));
+    const startTY = Math.max(0, Math.floor(minY / ts));
+    const endTY = Math.min(this.mapHeightTiles - 1, Math.floor(maxY / ts));
 
     for (let ty = startTY; ty <= endTY; ty++) {
       for (let tx = startTX; tx <= endTX; tx++) {
-        // Check if tile center is inside the polygon
-        const cx = tx * tileSize + tileSize / 2;
-        const cy = ty * tileSize + tileSize / 2;
+        // Check if tile center is inside the polygon (ortho coords)
+        const cx = tx * ts + ts / 2;
+        const cy = ty * ts + ts / 2;
         if (this.isPointInPolygon(cx, cy, polygon)) {
           this.exploredTiles.add(`${tx},${ty}`);
         }
@@ -141,39 +166,52 @@ export class FogOfWar {
   render(): void {
     this.fogGraphics.clear();
 
+    const ts = this.tileSize;
+
     if (this.currentPolygon.length < 3) {
       // No visibility data yet — render full fog
-      this.fogGraphics.fillStyle(0x000000, FOG_HIDDEN_ALPHA);
-      this.fogGraphics.fillRect(0, 0, MAP_WIDTH_PX, MAP_HEIGHT_PX);
+      // For ISO maps we need to cover the full iso screen area
+      if (this.isIso) {
+        this.renderFullFogIso(FOG_HIDDEN_ALPHA);
+      } else {
+        this.fogGraphics.fillStyle(0x000000, FOG_HIDDEN_ALPHA);
+        this.fogGraphics.fillRect(0, 0, this.mapWidthPx, this.mapHeightPx);
+      }
       return;
     }
 
-    // Strategy: Draw the fog as a large rectangle with the visibility polygon cut out.
-    // Phaser's Graphics doesn't support true masking easily, so we use an approach where
-    // we draw the fog tile-by-tile with different alphas.
-
-    const tileSize = 64;
-    const tilesW = Math.ceil(MAP_WIDTH_PX / tileSize);
-    const tilesH = Math.ceil(MAP_HEIGHT_PX / tileSize);
-
     // Get the camera viewport to only render visible tiles
     const cam = this.scene.cameras.main;
-    const camLeft = cam.scrollX - tileSize;
-    const camRight = cam.scrollX + cam.width + tileSize;
-    const camTop = cam.scrollY - tileSize;
-    const camBottom = cam.scrollY + cam.height + tileSize;
+    const camLeft = cam.scrollX - ts * 2;
+    const camRight = cam.scrollX + cam.width + ts * 2;
+    const camTop = cam.scrollY - ts * 2;
+    const camBottom = cam.scrollY + cam.height + ts * 2;
 
-    const startTX = Math.max(0, Math.floor(camLeft / tileSize));
-    const endTX = Math.min(tilesW - 1, Math.floor(camRight / tileSize));
-    const startTY = Math.max(0, Math.floor(camTop / tileSize));
-    const endTY = Math.min(tilesH - 1, Math.floor(camBottom / tileSize));
+    for (let ty = 0; ty < this.mapHeightTiles; ty++) {
+      for (let tx = 0; tx < this.mapWidthTiles; tx++) {
+        // Tile center in ortho space
+        const orthoCx = tx * ts + ts / 2;
+        const orthoCy = ty * ts + ts / 2;
 
-    for (let ty = startTY; ty <= endTY; ty++) {
-      for (let tx = startTX; tx <= endTX; tx++) {
-        const cx = tx * tileSize + tileSize / 2;
-        const cy = ty * tileSize + tileSize / 2;
+        // Screen position (ISO or ortho)
+        let screenX: number, screenY: number;
+        if (this.isIso) {
+          const iso = orthoToIso(orthoCx, orthoCy);
+          screenX = iso.x;
+          screenY = iso.y;
+        } else {
+          screenX = orthoCx;
+          screenY = orthoCy;
+        }
 
-        const isVisible = this.isPointInPolygon(cx, cy, this.currentPolygon);
+        // Cull tiles outside camera viewport
+        if (screenX + ts < camLeft || screenX - ts > camRight ||
+            screenY + ts < camTop || screenY - ts > camBottom) {
+          continue;
+        }
+
+        // Visibility test in ortho space
+        const isVisible = this.isPointInPolygon(orthoCx, orthoCy, this.currentPolygon);
 
         if (isVisible) {
           // Currently visible — no fog
@@ -181,16 +219,49 @@ export class FogOfWar {
         }
 
         const isExplored = this.exploredTiles.has(`${tx},${ty}`);
+        const alpha = isExplored ? FOG_EXPLORED_ALPHA : FOG_HIDDEN_ALPHA;
 
-        if (isExplored) {
-          // Explored but not currently visible — dim fog
-          this.fogGraphics.fillStyle(0x000000, FOG_EXPLORED_ALPHA);
+        if (this.isIso) {
+          // Draw diamond-shaped fog tile for ISO
+          this.fogGraphics.fillStyle(0x000000, alpha);
+          const halfW = ts; // ISO tile half-width = ortho tileSize
+          const halfH = ts / 2; // ISO tile half-height
+          this.fogGraphics.beginPath();
+          this.fogGraphics.moveTo(screenX, screenY - halfH);
+          this.fogGraphics.lineTo(screenX + halfW, screenY);
+          this.fogGraphics.lineTo(screenX, screenY + halfH);
+          this.fogGraphics.lineTo(screenX - halfW, screenY);
+          this.fogGraphics.closePath();
+          this.fogGraphics.fillPath();
         } else {
-          // Never seen — dark fog
-          this.fogGraphics.fillStyle(0x000000, FOG_HIDDEN_ALPHA);
+          this.fogGraphics.fillStyle(0x000000, alpha);
+          this.fogGraphics.fillRect(tx * ts, ty * ts, ts, ts);
         }
+      }
+    }
+  }
 
-        this.fogGraphics.fillRect(tx * tileSize, ty * tileSize, tileSize, tileSize);
+  /**
+   * Render full fog covering the entire ISO map area.
+   */
+  private renderFullFogIso(alpha: number): void {
+    const ts = this.tileSize;
+    this.fogGraphics.fillStyle(0x000000, alpha);
+
+    for (let ty = 0; ty < this.mapHeightTiles; ty++) {
+      for (let tx = 0; tx < this.mapWidthTiles; tx++) {
+        const orthoCx = tx * ts + ts / 2;
+        const orthoCy = ty * ts + ts / 2;
+        const iso = orthoToIso(orthoCx, orthoCy);
+        const halfW = ts;
+        const halfH = ts / 2;
+        this.fogGraphics.beginPath();
+        this.fogGraphics.moveTo(iso.x, iso.y - halfH);
+        this.fogGraphics.lineTo(iso.x + halfW, iso.y);
+        this.fogGraphics.lineTo(iso.x, iso.y + halfH);
+        this.fogGraphics.lineTo(iso.x - halfW, iso.y);
+        this.fogGraphics.closePath();
+        this.fogGraphics.fillPath();
       }
     }
   }

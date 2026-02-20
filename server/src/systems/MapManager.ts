@@ -4,7 +4,7 @@
  * FallbackMapGenerator when a file is not found.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -25,50 +25,85 @@ const __dirname = dirname(__filename);
 const MAPS_DIR = resolve(__dirname, '..', '..', '..', 'maps');
 
 export class MapManager {
+  /** Tiled-JSON-only parsed data (static tiles, collision, Tiled-defined portals). */
+  private baseMaps: Map<string, ParsedMapData> = new Map();
+  /** Last-known mtime of each zone's overlay file (0 = no overlay on last check). */
+  private overlayMtimes: Map<string, number> = new Map();
+  /** Final merged zone data (base + overlay). */
   private zones: Map<string, ParsedMapData> = new Map();
 
   /**
-   * Load a zone's map data. Reads from disk on first call, caches after that.
-   * Merges in editor overlay data (spawn points, zone connections) if available.
+   * Load a zone's map data.
+   *
+   * The Tiled JSON is parsed once and cached permanently (it never changes at
+   * runtime).  The editor overlay (spawn points, portals placed via the Map
+   * Editor) is re-merged whenever its file modification time changes, so
+   * portal/spawn changes saved from the editor take effect immediately without
+   * a server restart.
    */
   loadZone(zoneId: string): ParsedMapData {
+    const overlayPath = resolve(MAPS_DIR, 'overlays', `${zoneId}-overlay.json`);
+    const overlayMtime = existsSync(overlayPath)
+      ? statSync(overlayPath).mtimeMs
+      : 0;
+
+    const cachedMtime = this.overlayMtimes.get(zoneId) ?? -1;
     const cached = this.zones.get(zoneId);
-    if (cached) return cached;
 
+    // Return cached result if the overlay file hasn't changed since last load.
+    if (cached && overlayMtime === cachedMtime) return cached;
+
+    // Load (or retrieve cached) Tiled base data.
+    let base = this.baseMaps.get(zoneId);
+    if (!base) {
+      base = this.loadTiledData(zoneId);
+      this.baseMaps.set(zoneId, base);
+    }
+
+    // Deep-clone the base so that mergeOverlay's mutations don't corrupt it.
+    const mapData: ParsedMapData = structuredClone(base);
+
+    // Merge editor overlay data (spawn points and zone connections).
+    this.mergeOverlay(zoneId, mapData);
+
+    this.zones.set(zoneId, mapData);
+    this.overlayMtimes.set(zoneId, overlayMtime);
+    return mapData;
+  }
+
+  /** Parse a zone's Tiled JSON from disk (or generate a fallback). */
+  private loadTiledData(zoneId: string): ParsedMapData {
     const config = DataManager.instance.zones[zoneId];
-    let mapData: ParsedMapData;
-
     if (config) {
       const filePath = resolve(MAPS_DIR, config.mapFile);
       if (existsSync(filePath)) {
         try {
           const json = JSON.parse(readFileSync(filePath, 'utf-8'));
-          mapData = parseTiledMap(json);
-          console.log(`[MapManager] Loaded zone "${zoneId}" from ${config.mapFile} (${mapData.width}×${mapData.height})`);
+          const data = parseTiledMap(json);
+          console.log(`[MapManager] Parsed Tiled data for zone "${zoneId}" from ${config.mapFile} (${data.width}×${data.height})`);
+          return data;
         } catch (err) {
           console.warn(`[MapManager] Failed to parse ${config.mapFile}, using fallback:`, err);
-          mapData = generateFallbackMap();
         }
       } else {
-        console.warn(`[MapManager] Map file not found: ${filePath}, using fallback`);
-        mapData = generateFallbackMap();
+        console.warn(`[MapManager] Map file not found for zone "${zoneId}": ${filePath}, using fallback`);
       }
     } else {
       console.warn(`[MapManager] Unknown zone "${zoneId}", using fallback map`);
-      mapData = generateFallbackMap();
     }
-
-    // Merge editor overlay data (spawn points and zone connections)
-    this.mergeOverlay(zoneId, mapData);
-
-    this.zones.set(zoneId, mapData);
-    return mapData;
+    return generateFallbackMap();
   }
 
   /**
    * Load and merge an editor overlay file into the parsed map data.
-   * Overlay data takes precedence — its spawn points and zone connections
-   * replace any that came from the Tiled JSON.
+   *
+   * Portals are managed exclusively by the Map Editor overlay.  When an
+   * overlay file exists for a zone, its portal list completely replaces any
+   * zone connections that came from the Tiled JSON — even if the overlay has
+   * zero portals.  This makes the editor the single source of truth for all
+   * portals.  Zones without an overlay file fall back to Tiled-defined portals.
+   *
+   * Non-portal spawn points (player, enemy, NPC) are merged by ID as before.
    */
   private mergeOverlay(zoneId: string, mapData: ParsedMapData): void {
     const overlayPath = resolve(MAPS_DIR, 'overlays', `${zoneId}-overlay.json`);
@@ -76,68 +111,79 @@ export class MapManager {
 
     try {
       const overlay = JSON.parse(readFileSync(overlayPath, 'utf-8'));
+      const spawnPoints: any[] = Array.isArray(overlay.spawnPoints) ? overlay.spawnPoints : [];
 
-      if (Array.isArray(overlay.spawnPoints) && overlay.spawnPoints.length > 0) {
-        // Separate portal objects from regular spawn points.
-        // The editor stores portals in spawnPoints with type "portal",
-        // but the server needs them as ZoneConnection objects in zoneConnections.
-        const regularSpawns: SpawnPointData[] = [];
-        const portalConnections: ZoneConnection[] = [];
+      // Separate portal objects from regular spawn points.
+      // The editor stores portals as spawnPoints with type "portal"; the server
+      // needs them as ZoneConnection objects.
+      const regularSpawns: SpawnPointData[] = [];
+      const portalConnections: ZoneConnection[] = [];
 
-        for (const sp of overlay.spawnPoints) {
-          if (sp.type === 'portal') {
-            // Convert portal spawn point → ZoneConnection
-            const targetZone = sp.templateId || sp.label || '';
-            if (!targetZone) {
-              console.warn(`[MapManager] Portal "${sp.id}" in "${zoneId}" has no target zone, skipping`);
-              continue;
-            }
-
-            // Look up the target zone's default spawn for the arrival position
-            const targetConfig = DataManager.instance.zones[targetZone];
-            const targetSpawn = targetConfig?.defaultSpawn ?? { x: 160, y: 160 };
-
-            portalConnections.push({
-              id: sp.id,
-              triggerRect: {
-                x: sp.x - (sp.width || 64) / 2,
-                y: sp.y - (sp.height || 64) / 2,
-                width: sp.width || 64,
-                height: sp.height || 64,
-              },
-              targetZone: targetZone as ZoneId,
-              targetSpawn,
-            });
-          } else {
-            regularSpawns.push(sp);
+      for (const sp of spawnPoints) {
+        if (sp.type === 'portal') {
+          const targetZone = sp.templateId || sp.label || '';
+          if (!targetZone) {
+            console.warn(`[MapManager] Portal "${sp.id}" in "${zoneId}" has no target zone, skipping`);
+            continue;
           }
-        }
 
-        // Merge regular spawn points (non-portal)
-        if (regularSpawns.length > 0) {
-          const overlayIds = new Set(regularSpawns.map((sp: any) => sp.id));
-          const tiledOnly = mapData.spawnPoints.filter(sp => !overlayIds.has(sp.id));
-          mapData.spawnPoints = [...tiledOnly, ...regularSpawns];
-          console.log(`[MapManager] Merged ${regularSpawns.length} overlay spawn points for "${zoneId}"`);
-        }
+          // Resolve the arrival position for the target zone.
+          // Priority: zone_entry marker in target zone's overlay that references us (fromZone / templateId === zoneId)
+          // Fallback: target zone's defaultSpawn from the DataManager registry.
+          const targetConfig = DataManager.instance.zones[targetZone];
+          let targetSpawn: { x: number; y: number } = targetConfig?.defaultSpawn ?? { x: 160, y: 160 };
 
-        // Merge portal connections
-        if (portalConnections.length > 0) {
-          const portalIds = new Set(portalConnections.map(zc => zc.id));
-          const tiledOnly = mapData.zoneConnections.filter(zc => !portalIds.has(zc.id));
-          mapData.zoneConnections = [...tiledOnly, ...portalConnections];
-          console.log(`[MapManager] Merged ${portalConnections.length} overlay portals for "${zoneId}"`);
+          const targetOverlayPath = resolve(MAPS_DIR, 'overlays', `${targetZone}-overlay.json`);
+          if (existsSync(targetOverlayPath)) {
+            try {
+              const targetOverlay = JSON.parse(readFileSync(targetOverlayPath, 'utf-8'));
+              const targetSpawnPoints: any[] = Array.isArray(targetOverlay.spawnPoints)
+                ? targetOverlay.spawnPoints : [];
+              const entryPoint = targetSpawnPoints.find(
+                (tsp: any) =>
+                  tsp.type === 'zone_entry' &&
+                  (tsp.fromZone === zoneId || tsp.templateId === zoneId),
+              );
+              if (entryPoint) {
+                targetSpawn = { x: entryPoint.x, y: entryPoint.y };
+                console.log(`[MapManager] Portal "${sp.id}" → "${targetZone}": using zone_entry at (${entryPoint.x}, ${entryPoint.y})`);
+              }
+            } catch {
+              // Fall back to defaultSpawn silently
+            }
+          }
+
+          // The Map Editor saves portal (x, y) as the top-left corner of the
+          // trigger rect (matching how ctx.fillRect draws it).
+          portalConnections.push({
+            id: sp.id,
+            triggerRect: {
+              x: sp.x,
+              y: sp.y,
+              width: sp.width || 64,
+              height: sp.height || 64,
+            },
+            targetZone: targetZone as ZoneId,
+            targetSpawn,
+          });
+        } else {
+          regularSpawns.push(sp);
         }
       }
 
-      // Also merge explicit zoneConnections if present in overlay
-      if (Array.isArray(overlay.zoneConnections) && overlay.zoneConnections.length > 0) {
-        const overlayPortalIds = new Set(overlay.zoneConnections.map((zc: any) => zc.id));
-        const tiledOnly = mapData.zoneConnections.filter(zc => !overlayPortalIds.has(zc.id));
-        mapData.zoneConnections = [...tiledOnly, ...overlay.zoneConnections];
-
-        console.log(`[MapManager] Merged ${overlay.zoneConnections.length} overlay zone connections for "${zoneId}"`);
+      // Merge regular spawn points (non-portal) — overlay entries win by ID.
+      if (regularSpawns.length > 0) {
+        const overlayIds = new Set(regularSpawns.map((sp: any) => sp.id));
+        const tiledOnly = mapData.spawnPoints.filter(sp => !overlayIds.has(sp.id));
+        mapData.spawnPoints = [...tiledOnly, ...regularSpawns];
+        console.log(`[MapManager] Merged ${regularSpawns.length} overlay spawn points for "${zoneId}"`);
       }
+
+      // Portals: overlay takes FULL authority — completely replace any Tiled
+      // zone connections.  This ensures the Map Editor is the single source of
+      // truth.  (If the overlay has zero portals, all Tiled portals are cleared.)
+      mapData.zoneConnections = portalConnections;
+      console.log(`[MapManager] Overlay set ${portalConnections.length} portal(s) for "${zoneId}" (Tiled portals replaced)`);
     } catch (err) {
       console.warn(`[MapManager] Failed to load overlay for "${zoneId}":`, err);
     }
@@ -208,6 +254,7 @@ export class MapManager {
       width: map.width,
       height: map.height,
       tileSize: map.tileSize,
+      orientation: map.orientation,
       collisionGrid: map.collisionGrid,
       tileLayers: visualLayers,
       tilesets: map.tilesets,

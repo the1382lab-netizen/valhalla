@@ -3,8 +3,15 @@ import {
   INTERPOLATION_BUFFER_MS,
   lerp,
   ClassId,
+  orthoToIso,
+  isoToOrtho,
+  ORTHO_TILE_SIZE,
 } from '@valhalla/shared';
 import { ClientDataManager } from './ClientDataManager.js';
+
+export const ENTITY_DEPTH_BASE = 600_000;
+export const NAMEPLATE_DEPTH   = 800_000;
+export const UI_DEPTH_BASE     = 1_000_000;
 
 interface RemotePlayerData {
   sprite: Phaser.GameObjects.Sprite;
@@ -23,6 +30,7 @@ interface RemotePlayerData {
   classId: string;
   level: number;
   characterName: string;
+  lastDir: string;
 }
 
 interface NPCData {
@@ -108,8 +116,12 @@ export class EntityRenderer {
   // ── Remote Players ────────────────────────────────────────
 
   addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1, characterName: string = ''): void {
-    const sprite = this.scene.add.sprite(x, y, 'remote_player');
-    sprite.setDepth(5);
+    // Convert ortho world coords to ISO screen coords
+    const isoPos = orthoToIso(x, y);
+    // Use sprite sheet — frame 18 = row 2 (down), col 0 = idle facing down
+    const sprite = this.scene.add.sprite(isoPos.x, isoPos.y, 'player_walk', 18);
+    sprite.setDepth(ENTITY_DEPTH_BASE);
+    sprite.rotation = 0;
 
     // Make sprite clickable for targeting
     sprite.setInteractive({ useHandCursor: false });
@@ -117,19 +129,15 @@ export class EntityRenderer {
       this.onPlayerClick?.(sessionId);
     });
 
-    // Tint sprite by class
-    const color = ClientDataManager.instance.getClassColor(classId) ?? 0xffffff;
-    sprite.setTint(color);
-
     // Name label: "CharName Lv.X" or fallback to "ClassName Lv.X"
     const displayName = characterName || (ClientDataManager.instance.getClass(classId)?.name ?? classId);
     const labelText = `${displayName} Lv.${level}`;
 
     // Nameplate background
     const nameBg = this.scene.add.graphics();
-    nameBg.setDepth(6);
+    nameBg.setDepth(NAMEPLATE_DEPTH);
 
-    const nameText = this.scene.add.text(x, y - 44, labelText, {
+    const nameText = this.scene.add.text(isoPos.x, isoPos.y - 44, labelText, {
       fontSize: '12px',
       fontStyle: 'bold',
       color: '#ffffff',
@@ -137,10 +145,10 @@ export class EntityRenderer {
       strokeThickness: 3,
     });
     nameText.setOrigin(0.5, 1);
-    nameText.setDepth(7);
+    nameText.setDepth(NAMEPLATE_DEPTH + 1);
 
     const hpBar = this.scene.add.graphics();
-    hpBar.setDepth(8);
+    hpBar.setDepth(NAMEPLATE_DEPTH + 2);
 
     this.remotePlayers.set(sessionId, {
       sprite,
@@ -159,6 +167,7 @@ export class EntityRenderer {
       classId,
       level,
       characterName,
+      lastDir: 'down',
     });
   }
 
@@ -177,8 +186,10 @@ export class EntityRenderer {
     const data = this.remotePlayers.get(sessionId);
     if (!data) return;
 
-    data.previousX = data.sprite.x;
-    data.previousY = data.sprite.y;
+    // Snapshot current ISO sprite position and convert back to ortho
+    const orthoPos = isoToOrtho(data.sprite.x, data.sprite.y);
+    data.previousX = orthoPos.x;
+    data.previousY = orthoPos.y;
     data.targetX = x;
     data.targetY = y;
     data.targetAngle = aimAngle;
@@ -216,8 +227,10 @@ export class EntityRenderer {
     spriteColor: number,
     spriteSize: number,
   ): void {
-    const sprite = this.scene.add.sprite(x, y, 'npc_sprite');
-    sprite.setDepth(4); // Below players (depth 5)
+    // Convert ortho world coords to ISO screen coords
+    const isoPos = orthoToIso(x, y);
+    const sprite = this.scene.add.sprite(isoPos.x, isoPos.y, 'npc_sprite');
+    sprite.setDepth(ENTITY_DEPTH_BASE);
     sprite.setTint(spriteColor || 0xff4444);
 
     // Make sprite clickable for targeting
@@ -236,9 +249,9 @@ export class EntityRenderer {
     const labelText = `${name} Lv.${level}`;
 
     const nameBg = this.scene.add.graphics();
-    nameBg.setDepth(6);
+    nameBg.setDepth(NAMEPLATE_DEPTH);
 
-    const nameText = this.scene.add.text(x, y - 44, labelText, {
+    const nameText = this.scene.add.text(isoPos.x, isoPos.y - 44, labelText, {
       fontSize: '12px',
       fontStyle: 'bold',
       color: nameColor,
@@ -246,10 +259,10 @@ export class EntityRenderer {
       strokeThickness: 3,
     });
     nameText.setOrigin(0.5, 1);
-    nameText.setDepth(7);
+    nameText.setDepth(NAMEPLATE_DEPTH + 1);
 
     const hpBar = this.scene.add.graphics();
-    hpBar.setDepth(8);
+    hpBar.setDepth(NAMEPLATE_DEPTH + 2);
 
     this.npcs.set(id, {
       sprite,
@@ -286,8 +299,10 @@ export class EntityRenderer {
     const data = this.npcs.get(id);
     if (!data) return;
 
-    data.previousX = data.sprite.x;
-    data.previousY = data.sprite.y;
+    // Snapshot current ISO sprite position and convert back to ortho
+    const orthoPos = isoToOrtho(data.sprite.x, data.sprite.y);
+    data.previousX = orthoPos.x;
+    data.previousY = orthoPos.y;
     data.targetX = x;
     data.targetY = y;
     data.targetAngle = aimAngle;
@@ -319,8 +334,10 @@ export class EntityRenderer {
   // ── Projectiles ───────────────────────────────────────────
 
   addProjectile(id: string, x: number, y: number): void {
-    const sprite = this.scene.add.sprite(x, y, 'projectile');
-    sprite.setDepth(8);
+    // Convert ortho world coords to ISO screen coords
+    const isoPos = orthoToIso(x, y);
+    const sprite = this.scene.add.sprite(isoPos.x, isoPos.y, 'projectile');
+    sprite.setDepth(ENTITY_DEPTH_BASE + 50);
 
     this.projectiles.set(id, {
       sprite,
@@ -344,8 +361,10 @@ export class EntityRenderer {
     const data = this.projectiles.get(id);
     if (!data) return;
 
-    data.previousX = data.sprite.x;
-    data.previousY = data.sprite.y;
+    // Snapshot current ISO sprite position and convert back to ortho
+    const orthoPos = isoToOrtho(data.sprite.x, data.sprite.y);
+    data.previousX = orthoPos.x;
+    data.previousY = orthoPos.y;
     data.targetX = x;
     data.targetY = y;
     data.lastUpdateTime = Date.now();
@@ -358,8 +377,10 @@ export class EntityRenderer {
     // This lets us move the fireball by setting gfx.x / gfx.y, and lets Phaser tweens
     // scale/rotate around the correct world-space origin.
     const gfx = this.drawFireball();
-    gfx.x = x;
-    gfx.y = y;
+    // Convert ortho world coords to ISO screen coords
+    const isoPos = orthoToIso(x, y);
+    gfx.x = isoPos.x;
+    gfx.y = isoPos.y;
 
     this.spellProjectiles.set(id, {
       sprite: gfx,
@@ -377,9 +398,11 @@ export class EntityRenderer {
     const data = this.spellProjectiles.get(id);
     if (!data) return;
 
-    // sprite.x / sprite.y now correctly return the Graphics world position
-    data.previousX = data.sprite.x;
-    data.previousY = data.sprite.y;
+    // sprite.x / sprite.y now correctly return the Graphics world position (ISO screen coords)
+    // Convert back to ortho for storage
+    const orthoPos = isoToOrtho(data.sprite.x, data.sprite.y);
+    data.previousX = orthoPos.x;
+    data.previousY = orthoPos.y;
 
     data.targetX = x;
     data.targetY = y;
@@ -405,7 +428,7 @@ export class EntityRenderer {
   showSpellImpact(x: number, y: number, radius: number, _skillId: string): void {
     // Outer blast ring — positioned at the detonation point
     const ring = this.scene.add.graphics();
-    ring.setDepth(10);
+    ring.setDepth(ENTITY_DEPTH_BASE + 10);
     ring.x = x;
     ring.y = y;
     ring.lineStyle(4, 0xff6600, 1);
@@ -415,7 +438,7 @@ export class EntityRenderer {
 
     // Inner bright core — also centred on the detonation point
     const core = this.scene.add.graphics();
-    core.setDepth(11);
+    core.setDepth(ENTITY_DEPTH_BASE + 11);
     core.x = x;
     core.y = y;
     core.fillStyle(0xffee00, 0.9);
@@ -450,7 +473,7 @@ export class EntityRenderer {
    */
   private drawFireball(): Phaser.GameObjects.Graphics {
     const gfx = this.scene.add.graphics();
-    gfx.setDepth(8);
+    gfx.setDepth(ENTITY_DEPTH_BASE + 50);
     // Outer glow
     gfx.fillStyle(0xff6600, 0.5);
     gfx.fillCircle(0, 0, 14);
@@ -462,14 +485,36 @@ export class EntityRenderer {
 
   // ── Melee Visual Effect ───────────────────────────────────
 
-  showMeleeSlash(x: number, y: number, angle: number): void {
-    const slash = this.scene.add.sprite(
-      x + Math.cos(angle) * 30,
-      y + Math.sin(angle) * 30,
-      'melee_slash',
-    );
-    slash.setDepth(9);
-    slash.setRotation(angle);
+  showMeleeSlash(x: number, y: number, angle: number, isIso: boolean = false): void {
+    // x,y are in screen/sprite space (ISO screen coords when isIso, ortho world coords otherwise).
+    // `angle` is always in orthogonal world space (calculated from mouse vs player in ortho).
+    // For ISO we must convert the ortho direction vector into ISO screen space so the
+    // offset and rotation match the direction the player is actually facing on screen.
+    let offsetX: number;
+    let offsetY: number;
+    let rotation: number;
+
+    if (isIso) {
+      // Transform ortho unit vector → ISO screen direction
+      // orthoToIso formula: isoX = orthoX - orthoY,  isoY = (orthoX + orthoY) / 2
+      const cosA = Math.cos(angle);
+      const sinA = Math.sin(angle);
+      const isoDx = cosA - sinA;
+      const isoDy = (cosA + sinA) / 2;
+      // Normalise so the visual offset is a consistent 30 px regardless of angle
+      const isoLen = Math.hypot(isoDx, isoDy) || 1;
+      offsetX = (isoDx / isoLen) * 30;
+      offsetY = (isoDy / isoLen) * 30;
+      rotation = Math.atan2(isoDy, isoDx);
+    } else {
+      offsetX = Math.cos(angle) * 30;
+      offsetY = Math.sin(angle) * 30;
+      rotation = angle;
+    }
+
+    const slash = this.scene.add.sprite(x + offsetX, y + offsetY, 'melee_slash');
+    slash.setDepth(ENTITY_DEPTH_BASE + 9);
+    slash.setRotation(rotation);
     slash.setAlpha(0.9);
 
     // Fade out and destroy
@@ -498,7 +543,7 @@ export class EntityRenderer {
       fontStyle: 'bold',
     });
     dmgText.setOrigin(0.5, 0.5);
-    dmgText.setDepth(50);
+    dmgText.setDepth(NAMEPLATE_DEPTH + 50);
 
     this.scene.tweens.add({
       targets: dmgText,
@@ -521,7 +566,7 @@ export class EntityRenderer {
       fontStyle: 'bold',
     });
     txt.setOrigin(0.5, 0.5);
-    txt.setDepth(50);
+    txt.setDepth(NAMEPLATE_DEPTH + 50);
 
     this.scene.tweens.add({
       targets: txt,
@@ -572,9 +617,42 @@ export class EntityRenderer {
       const elapsed = now - data.lastUpdateTime;
       const t = Math.min(elapsed / INTERPOLATION_BUFFER_MS, 1);
 
-      data.sprite.x = lerp(data.previousX, data.targetX, t);
-      data.sprite.y = lerp(data.previousY, data.targetY, t);
-      data.sprite.rotation = data.targetAngle;
+      // Lerp in ortho space
+      const orthoX = lerp(data.previousX, data.targetX, t);
+      const orthoY = lerp(data.previousY, data.targetY, t);
+
+      // Convert lerped ortho result to ISO for sprite position
+      const isoPos = orthoToIso(orthoX, orthoY);
+      data.sprite.x = isoPos.x;
+      data.sprite.y = isoPos.y;
+      data.sprite.rotation = 0;
+
+      // Directional animation based on raw ortho movement delta
+      const dx = data.targetX - data.previousX;
+      const dy = data.targetY - data.previousY;
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
+        // Moving — map ortho delta directly to sprite direction
+        // Vertical axis takes priority for diagonals
+        let dir: string;
+        if (Math.abs(dy) >= Math.abs(dx)) {
+          dir = dy < 0 ? 'up' : 'down';
+        } else {
+          dir = dx < 0 ? 'left' : 'right';
+        }
+        data.lastDir = dir;
+        if (data.sprite.anims.getName() !== `walk_${dir}` || !data.sprite.anims.isPlaying) {
+          data.sprite.play(`walk_${dir}`, true);
+        }
+      } else {
+        // Idle
+        const idleKey = `idle_${data.lastDir}`;
+        if (data.sprite.anims.getName() !== idleKey || !data.sprite.anims.isPlaying) {
+          data.sprite.play(idleKey, true);
+        }
+      }
+
+      // Dynamic depth based on ortho position
+      data.sprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(orthoX / ORTHO_TILE_SIZE) + Math.floor(orthoY / ORTHO_TILE_SIZE));
 
       data.nameText.x = data.sprite.x;
       data.nameText.y = data.sprite.y - 44;
@@ -602,9 +680,18 @@ export class EntityRenderer {
       const npcElapsed = now - data.lastUpdateTime;
       const nt = Math.min(npcElapsed / INTERPOLATION_BUFFER_MS, 1);
 
-      data.sprite.x = lerp(data.previousX, data.targetX, nt);
-      data.sprite.y = lerp(data.previousY, data.targetY, nt);
+      // Lerp in ortho space
+      const orthoX = lerp(data.previousX, data.targetX, nt);
+      const orthoY = lerp(data.previousY, data.targetY, nt);
+
+      // Convert lerped ortho result to ISO for sprite position
+      const isoPos = orthoToIso(orthoX, orthoY);
+      data.sprite.x = isoPos.x;
+      data.sprite.y = isoPos.y;
       data.sprite.rotation = data.targetAngle;
+
+      // Dynamic depth based on ortho position
+      data.sprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(orthoX / ORTHO_TILE_SIZE) + Math.floor(orthoY / ORTHO_TILE_SIZE));
 
       data.nameText.x = data.sprite.x;
       data.nameText.y = data.sprite.y - 44;
@@ -622,23 +709,36 @@ export class EntityRenderer {
       this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp);
     });
 
-    // Projectiles — interpolate positions
+    // Projectiles — interpolate positions in ortho space, convert to ISO
     this.projectiles.forEach((data) => {
       const elapsed = now - data.lastUpdateTime;
       const t = Math.min(elapsed / INTERPOLATION_BUFFER_MS, 1);
 
-      data.sprite.x = lerp(data.previousX, data.targetX, t);
-      data.sprite.y = lerp(data.previousY, data.targetY, t);
+      // Lerp in ortho space
+      const orthoX = lerp(data.previousX, data.targetX, t);
+      const orthoY = lerp(data.previousY, data.targetY, t);
+
+      // Convert lerped ortho result to ISO for sprite position
+      const isoPos = orthoToIso(orthoX, orthoY);
+      data.sprite.x = isoPos.x;
+      data.sprite.y = isoPos.y;
     });
 
     // Spell projectiles — interpolate by moving the Graphics object's world position.
     // The circles are drawn at (0, 0) in local space, so moving .x/.y is all we need.
+    // Interpolate in ortho space, convert to ISO.
     this.spellProjectiles.forEach((data) => {
       const elapsed = now - data.lastUpdateTime;
       const t = Math.min(elapsed / INTERPOLATION_BUFFER_MS, 1);
 
-      data.sprite.x = lerp(data.previousX, data.targetX, t);
-      data.sprite.y = lerp(data.previousY, data.targetY, t);
+      // Lerp in ortho space
+      const orthoX = lerp(data.previousX, data.targetX, t);
+      const orthoY = lerp(data.previousY, data.targetY, t);
+
+      // Convert lerped ortho result to ISO for sprite position
+      const isoPos = orthoToIso(orthoX, orthoY);
+      data.sprite.x = isoPos.x;
+      data.sprite.y = isoPos.y;
     });
   }
 
@@ -694,7 +794,7 @@ export class EntityRenderer {
   showMagicMissileVFX(fromX: number, fromY: number, toX: number, toY: number): void {
     // ── 1. Cast flash at caster ──
     const castFlash = this.scene.add.graphics();
-    castFlash.setDepth(12);
+    castFlash.setDepth(ENTITY_DEPTH_BASE + 12);
     castFlash.x = fromX;
     castFlash.y = fromY;
     // Outer glow
@@ -716,7 +816,7 @@ export class EntityRenderer {
 
     // ── 2. Bolt that travels from caster to target ──
     const bolt = this.scene.add.graphics();
-    bolt.setDepth(12);
+    bolt.setDepth(ENTITY_DEPTH_BASE + 12);
     bolt.x = fromX;
     bolt.y = fromY;
     // Outer soft glow
@@ -743,7 +843,7 @@ export class EntityRenderer {
 
         // ── 3. Impact flash at target ──
         const impact = this.scene.add.graphics();
-        impact.setDepth(12);
+        impact.setDepth(ENTITY_DEPTH_BASE + 12);
         impact.x = toX;
         impact.y = toY;
         // Outer burst ring

@@ -8,10 +8,12 @@ import { charactersRouter } from './routes/characters.js';
 import express from 'express';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { readdirSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const DATA_DIR = resolve(__dirname, '..', '..', 'shared', 'data');
+const SPRITES_DIR = resolve(__dirname, '..', '..', 'public', 'assets', 'sprites');
 
 // Initialize database (async — sql.js loads WASM) then start the server
 await initDatabase();
@@ -50,6 +52,27 @@ const server = defineServer({
 
     // Serve shared/data/*.json files so clients can load editor content
     app.use('/api/data', express.static(DATA_DIR));
+
+    // ── Asset discovery endpoints (for editor dropdowns) ──────
+    app.get('/api/assets/sprites/:subfolder', (req, res) => {
+      const subfolder = req.params.subfolder;
+      // Only allow known subfolders to prevent directory traversal
+      if (!['equipment', 'icons'].includes(subfolder)) {
+        res.status(400).json({ error: 'Invalid subfolder' });
+        return;
+      }
+      const dir = resolve(SPRITES_DIR, subfolder);
+      if (!existsSync(dir)) {
+        res.json({ files: [] });
+        return;
+      }
+      try {
+        const files = readdirSync(dir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
+        res.json({ files });
+      } catch (err) {
+        res.status(500).json({ error: 'Failed to read directory' });
+      }
+    });
 
     // Auth & character API routes
     app.use('/api/auth', authRouter);

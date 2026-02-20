@@ -35,6 +35,18 @@ export interface StatBlock {
   dodgeRating: number;     // decimal: 0.05 = 5% dodge chance
 }
 
+/**
+ * Represents a single item given to a character on creation.
+ * `equipped: true` means it will be placed into the character_equipment table
+ * at the slot derived from the item's equipSlot property.
+ * `equipped: false` means it will be placed into the inventory_items table.
+ */
+export interface StartingItem {
+  itemId: string;
+  quantity: number;
+  equipped: boolean;
+}
+
 export interface ClassTemplate {
   id: ClassId;
   name: string;
@@ -44,6 +56,7 @@ export interface ClassTemplate {
   allowedArmor: ArmorType;
   baseSpeed: number;       // pixels per second
   canUseMana: boolean;
+  startingItems?: StartingItem[];
 }
 
 // ── Class Templates ────────────────────────────────────────
@@ -90,6 +103,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'plate',
     baseSpeed: 144,
     canUseMana: false,
+    startingItems: [
+      { itemId: 'iron_sword', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 
   [ClassId.CLERIC]: {
@@ -131,6 +149,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'mail',
     baseSpeed: 152,
     canUseMana: true,
+    startingItems: [
+      { itemId: 'iron_mace', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 
   [ClassId.RANGER]: {
@@ -172,6 +195,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'leather',
     baseSpeed: 184,
     canUseMana: false,
+    startingItems: [
+      { itemId: 'short_bow', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 
   [ClassId.ROGUE]: {
@@ -213,6 +241,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'leather',
     baseSpeed: 168,
     canUseMana: false,
+    startingItems: [
+      { itemId: 'iron_dagger', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 
   [ClassId.SHAMAN]: {
@@ -254,6 +287,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'mail',
     baseSpeed: 152,
     canUseMana: true,
+    startingItems: [
+      { itemId: 'bone_totem', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 
   [ClassId.WIZARD]: {
@@ -295,6 +333,11 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'cloth',
     baseSpeed: 152,
     canUseMana: true,
+    startingItems: [
+      { itemId: 'oak_staff', quantity: 1, equipped: true },
+      { itemId: 'health_potion', quantity: 5, equipped: false },
+      { itemId: 'mana_potion', quantity: 3, equipped: false },
+    ],
   },
 };
 

@@ -20,7 +20,8 @@
       "dialogue": [],
       "vendorInventory": [],
       "damage": 10,
-      "leashRange": 600
+      "leashRange": 600,
+      "lootTableId": "loot_1771620382459"
     }
   }
 }

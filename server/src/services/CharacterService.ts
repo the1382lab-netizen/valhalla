@@ -8,11 +8,12 @@ import {
   ClassId,
   ALL_CLASS_IDS,
   computeDerivedStats,
-  ItemId,
   EquipSlotType,
   MAX_CHARACTERS_PER_USER,
   ZoneId,
   ZONE_REGISTRY,
+  CLASS_TEMPLATES,
+  ITEM_CATALOG,
 } from '@valhalla/shared';
 import { DataManager } from '../systems/DataManager.js';
 
@@ -68,16 +69,6 @@ export interface SaveCharacterData {
   actionBar: string[];
 }
 
-// ── Starter Equipment by Class ──────────────────────────────
-
-const STARTER_WEAPONS: Record<string, ItemId> = {
-  [ClassId.WARRIOR]: ItemId.IRON_SWORD,
-  [ClassId.CLERIC]: ItemId.IRON_MACE,
-  [ClassId.RANGER]: ItemId.SHORT_BOW,
-  [ClassId.ROGUE]: ItemId.IRON_DAGGER,
-  [ClassId.SHAMAN]: ItemId.BONE_TOTEM,
-  [ClassId.WIZARD]: ItemId.OAK_STAFF,
-};
 
 // ── Helper: query single row ────────────────────────────────
 
@@ -162,22 +153,29 @@ export function createCharacter(userId: number, name: string, classId: string): 
   const charIdResult = db.exec('SELECT last_insert_rowid() as id');
   const charId = charIdResult[0].values[0][0] as number;
 
-  // Insert starter weapon into equipment
-  const weapon = STARTER_WEAPONS[classId] ?? ItemId.IRON_SWORD;
-  db.run(
-    'INSERT INTO character_equipment (character_id, slot_type, item_id) VALUES (?, ?, ?)',
-    [charId, EquipSlotType.WEAPON, weapon],
-  );
-
-  // Insert starter inventory items (potions)
-  db.run(
-    'INSERT INTO inventory_items (character_id, slot_index, item_id, quantity) VALUES (?, ?, ?, ?)',
-    [charId, 0, ItemId.HEALTH_POTION, 5],
-  );
-  db.run(
-    'INSERT INTO inventory_items (character_id, slot_index, item_id, quantity) VALUES (?, ?, ?, ?)',
-    [charId, 1, ItemId.MANA_POTION, 3],
-  );
+  // Insert starting items from the class template (data-driven; falls back to hardcoded CLASS_TEMPLATES)
+  const classTemplate = (dm?.classes[classId]) ?? CLASS_TEMPLATES[classId as ClassId];
+  const startingItems = classTemplate?.startingItems ?? [];
+  let inventorySlot = 0;
+  for (const startingItem of startingItems) {
+    if (startingItem.equipped) {
+      // Look up the item's equipSlot from the item catalog
+      const itemTemplate = dm
+        ? dm.getItem(startingItem.itemId)
+        : (ITEM_CATALOG as Record<string, typeof ITEM_CATALOG[keyof typeof ITEM_CATALOG]>)[startingItem.itemId];
+      const slotType = itemTemplate?.equipSlot ?? EquipSlotType.WEAPON;
+      db.run(
+        'INSERT INTO character_equipment (character_id, slot_type, item_id) VALUES (?, ?, ?)',
+        [charId, slotType, startingItem.itemId],
+      );
+    } else {
+      db.run(
+        'INSERT INTO inventory_items (character_id, slot_index, item_id, quantity) VALUES (?, ?, ?, ?)',
+        [charId, inventorySlot, startingItem.itemId, startingItem.quantity],
+      );
+      inventorySlot++;
+    }
+  }
 
   saveToDisk();
 

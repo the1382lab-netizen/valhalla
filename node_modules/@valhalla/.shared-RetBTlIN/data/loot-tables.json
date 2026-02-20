@@ -1,4 +1,18 @@
 {
   "version": "1.0.0",
-  "tables": {}
+  "tables": {
+    "loot_1771620382459": {
+      "id": "loot_1771620382459",
+      "name": "New Loot Table",
+      "entries": [
+        {
+          "itemId": "cloth_hood",
+          "weight": 1,
+          "dropChance": 1,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    }
+  }
 }

@@ -1,10 +1,17 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
 
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const CATEGORIES = ['weapon', 'armor', 'accessory', 'consumable', 'misc', 'quest'];
 const EQUIP_SLOTS = ['head', 'neck', 'shoulders', 'chest', 'hands', 'waist', 'legs', 'feet', 'main_hand', 'off_hand', 'two_hand', 'ring', 'trinket'];
 const STAT_TYPES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+
+interface EquipSpriteConfig {
+  frameWidth: number;
+  frameHeight: number;
+  framesPerRow: number;
+  rows: number;
+}
 
 interface ItemTemplate {
   id: string;
@@ -16,7 +23,17 @@ interface ItemTemplate {
   stackable: boolean;
   maxStack: number;
   statBonuses: Record<string, number>;
+  equipSpriteSheet?: string;
+  equipSpriteConfig?: EquipSpriteConfig;
+  inventoryIcon?: string;
 }
+
+const DEFAULT_SPRITE_CONFIG: EquipSpriteConfig = {
+  frameWidth: 64,
+  frameHeight: 64,
+  framesPerRow: 9,
+  rows: 4,
+};
 
 export const ItemEditor: React.FC = () => {
   const items = useEditorStore(s => s.items);
@@ -26,6 +43,21 @@ export const ItemEditor: React.FC = () => {
   const saveSection = useEditorStore(s => s.saveSection);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [equipmentSprites, setEquipmentSprites] = useState<string[]>([]);
+  const [iconFiles, setIconFiles] = useState<string[]>([]);
+  const [showSpriteConfig, setShowSpriteConfig] = useState(false);
+
+  // Fetch available sprite sheets and icons from the server
+  useEffect(() => {
+    fetch('/api/assets/sprites/equipment')
+      .then(r => r.json())
+      .then(data => setEquipmentSprites(data.files || []))
+      .catch(() => setEquipmentSprites([]));
+    fetch('/api/assets/sprites/icons')
+      .then(r => r.json())
+      .then(data => setIconFiles(data.files || []))
+      .catch(() => setIconFiles([]));
+  }, []);
 
   const itemList = useMemo(() => {
     const ids = Object.keys(items.data);
@@ -86,6 +118,14 @@ export const ItemEditor: React.FC = () => {
       [selectedItemId!]: { ...selectedItem, ...updates },
     };
     updateData('items', updatedItems);
+  };
+
+  const handleUpdateSpriteConfig = (key: keyof EquipSpriteConfig, value: number) => {
+    if (!selectedItem) return;
+    const current = selectedItem.equipSpriteConfig || { ...DEFAULT_SPRITE_CONFIG };
+    handleUpdateItem({
+      equipSpriteConfig: { ...current, [key]: value },
+    });
   };
 
   const handleUpdateStatBonus = (stat: string, value: number) => {
@@ -218,6 +258,112 @@ export const ItemEditor: React.FC = () => {
                     <option key={slot} value={slot}>{slot}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* ── Equipment Sprite Sheet Overlay ──────────── */}
+              <div className="form-group">
+                <label className="form-label">Equipment Sprite Sheet</label>
+                <select
+                  className="form-select"
+                  value={selectedItem.equipSpriteSheet || ''}
+                  onChange={(e) => handleUpdateItem({ equipSpriteSheet: e.target.value || undefined })}
+                >
+                  <option value="">None</option>
+                  {equipmentSprites.map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+                {selectedItem.equipSpriteSheet && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{
+                      display: 'inline-block',
+                      width: 64,
+                      height: 64,
+                      overflow: 'hidden',
+                      border: '1px solid #555',
+                      borderRadius: 4,
+                      background: '#222',
+                    }}>
+                      <img
+                        src={`/assets/sprites/equipment/${selectedItem.equipSpriteSheet}`}
+                        alt="Sprite preview"
+                        style={{
+                          imageRendering: 'pixelated',
+                          width: (selectedItem.equipSpriteConfig?.framesPerRow ?? 9) * (selectedItem.equipSpriteConfig?.frameWidth ?? 64),
+                          height: (selectedItem.equipSpriteConfig?.rows ?? 4) * (selectedItem.equipSpriteConfig?.frameHeight ?? 64),
+                          objectFit: 'none',
+                          objectPosition: '0 0',
+                          maxWidth: 'none',
+                        }}
+                      />
+                    </div>
+                    <button
+                      className="btn btn-ghost"
+                      style={{ marginLeft: 8, fontSize: '0.8em' }}
+                      onClick={() => setShowSpriteConfig(!showSpriteConfig)}
+                    >
+                      {showSpriteConfig ? '▼ Hide Config' : '▶ Sprite Config'}
+                    </button>
+                    {showSpriteConfig && (
+                      <div className="stat-grid" style={{ marginTop: 8 }}>
+                        {(['frameWidth', 'frameHeight', 'framesPerRow', 'rows'] as const).map(key => (
+                          <div key={key} className="stat-row">
+                            <div className="stat-label">{key}</div>
+                            <div className="stat-value">
+                              <input
+                                type="number"
+                                min="1"
+                                value={(selectedItem.equipSpriteConfig || DEFAULT_SPRITE_CONFIG)[key]}
+                                onChange={(e) => handleUpdateSpriteConfig(key, parseInt(e.target.value, 10) || 1)}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Inventory Icon ──────────────────────────── */}
+              <div className="form-group">
+                <label className="form-label">Inventory Icon</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select
+                    className="form-select"
+                    style={{ flex: 1 }}
+                    value={selectedItem.inventoryIcon || ''}
+                    onChange={(e) => handleUpdateItem({ inventoryIcon: e.target.value || undefined })}
+                  >
+                    <option value="">None</option>
+                    {iconFiles.map(f => (
+                      <option key={f} value={f}>{f}</option>
+                    ))}
+                  </select>
+                  {selectedItem.inventoryIcon && (
+                    <div style={{
+                      width: 48,
+                      height: 48,
+                      border: '1px solid #555',
+                      borderRadius: 4,
+                      background: '#222',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0,
+                    }}>
+                      <img
+                        src={`/assets/sprites/icons/${selectedItem.inventoryIcon}`}
+                        alt="Icon preview"
+                        style={{
+                          maxWidth: 48,
+                          maxHeight: 48,
+                          imageRendering: 'pixelated',
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="form-row">

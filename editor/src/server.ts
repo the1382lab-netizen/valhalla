@@ -14,10 +14,14 @@ const PROJECT_ROOT = path.resolve(__dirname, '../../');
 const DATA_DIR = path.join(PROJECT_ROOT, 'shared/data');
 const MAPS_DIR = path.join(PROJECT_ROOT, 'maps');
 const OVERLAYS_DIR = path.join(MAPS_DIR, 'overlays');
+const SPRITES_DIR = path.join(PROJECT_ROOT, 'public/assets/sprites');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+
+// Serve game assets (sprites, etc.) so the editor can show previews
+app.use('/assets', express.static(path.join(PROJECT_ROOT, 'public/assets')));
 
 // GET /api/data/:filename — read a JSON data file
 app.get('/api/data/:filename', (req, res) => {
@@ -93,6 +97,22 @@ app.put('/api/overlays/:filename', (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: 'Failed to write overlay' });
+  }
+});
+
+// GET /api/assets/sprites/:subfolder — list PNG files for editor dropdowns
+app.get('/api/assets/sprites/:subfolder', (req, res) => {
+  const subfolder = req.params.subfolder;
+  if (!['equipment', 'icons'].includes(subfolder)) {
+    return res.status(400).json({ error: 'Invalid subfolder' });
+  }
+  const dir = path.join(SPRITES_DIR, subfolder);
+  if (!fs.existsSync(dir)) return res.json({ files: [] });
+  try {
+    const files = fs.readdirSync(dir).filter(f => /\.(png|jpg|jpeg|webp)$/i.test(f)).sort();
+    res.json({ files });
+  } catch (e) {
+    res.status(500).json({ error: 'Failed to read directory' });
   }
 });
 

@@ -6,6 +6,7 @@ import {
   orthoToIso,
   isoToOrtho,
   ORTHO_TILE_SIZE,
+  DEFAULT_EQUIP_SPRITE_CONFIG,
 } from '@valhalla/shared';
 import { ClientDataManager } from './ClientDataManager.js';
 
@@ -13,11 +14,19 @@ export const ENTITY_DEPTH_BASE = 600_000;
 export const NAMEPLATE_DEPTH   = 800_000;
 export const UI_DEPTH_BASE     = 1_000_000;
 
+/** Equipment overlay sprites layered on top of the character. */
+interface EquipmentOverlay {
+  slot: string;      // equip slot key (e.g. 'weapon', 'helm')
+  itemId: string;    // the item ID that produced this overlay
+  sprite: Phaser.GameObjects.Sprite;
+}
+
 interface RemotePlayerData {
   sprite: Phaser.GameObjects.Sprite;
   nameText: Phaser.GameObjects.Text;
   nameBg: Phaser.GameObjects.Graphics;
   hpBar: Phaser.GameObjects.Graphics;
+  overlays: EquipmentOverlay[];
   targetX: number;
   targetY: number;
   previousX: number;
@@ -155,6 +164,7 @@ export class EntityRenderer {
       nameText,
       nameBg,
       hpBar,
+      overlays: [],
       targetX: x,
       targetY: y,
       previousX: x,
@@ -178,6 +188,8 @@ export class EntityRenderer {
       data.nameText.destroy();
       data.nameBg.destroy();
       data.hpBar.destroy();
+      for (const overlay of data.overlays) overlay.sprite.destroy();
+      data.overlays.length = 0;
       this.remotePlayers.delete(sessionId);
     }
   }
@@ -212,6 +224,104 @@ export class EntityRenderer {
       data.level = level;
       const displayName = data.characterName || (ClientDataManager.instance.getClass(data.classId)?.name ?? data.classId);
       data.nameText.setText(`${displayName} Lv.${level}`);
+    }
+  }
+
+  // ── Equipment Overlays ───────────────────────────────────
+
+  /**
+   * Update equipment overlays for a remote player.
+   * @param equipment - Record of slot → itemId (empty string = nothing equipped)
+   */
+  updateRemotePlayerEquipment(sessionId: string, equipment: Record<string, string>): void {
+    const data = this.remotePlayers.get(sessionId);
+    if (!data) return;
+    this.syncOverlays(data.overlays, equipment, data.sprite);
+  }
+
+  /**
+   * Create/update/remove overlay sprites to match the given equipment map.
+   * Works for both remote players and can be called externally for the local player.
+   */
+  syncOverlays(
+    overlays: EquipmentOverlay[],
+    equipment: Record<string, string>,
+    baseSprite: Phaser.GameObjects.Sprite,
+  ): void {
+    const dm = ClientDataManager.instance;
+
+    // Build set of desired overlays: slot → itemId (only items with sprite sheets)
+    const desired = new Map<string, string>();
+    for (const [slot, itemId] of Object.entries(equipment)) {
+      if (!itemId) continue;
+      const item = dm.getItem(itemId);
+      if (item?.equipSpriteSheet) {
+        desired.set(slot, itemId);
+      }
+    }
+
+    // Remove overlays that are no longer needed or changed item
+    for (let i = overlays.length - 1; i >= 0; i--) {
+      const ov = overlays[i];
+      const wantedItemId = desired.get(ov.slot);
+      if (wantedItemId !== ov.itemId) {
+        ov.sprite.destroy();
+        overlays.splice(i, 1);
+      }
+    }
+
+    // Add overlays for newly equipped items
+    const existingSlots = new Set(overlays.map(o => o.slot));
+    for (const [slot, itemId] of desired) {
+      if (existingSlots.has(slot)) continue;
+      const item = dm.getItem(itemId);
+      if (!item?.equipSpriteSheet) continue;
+
+      const textureKey = `equip_sheet_${item.equipSpriteSheet}`;
+      if (!this.scene.textures.exists(textureKey)) continue;
+
+      const config = item.equipSpriteConfig ?? DEFAULT_EQUIP_SPRITE_CONFIG;
+      // Start on frame 18 (row 2 = down, col 0) to match the base sprite idle-down
+      const startFrame = Math.min(2 * config.framesPerRow, config.framesPerRow * config.rows - 1);
+      const overlay = this.scene.add.sprite(baseSprite.x, baseSprite.y, textureKey, startFrame);
+      overlay.setDepth(baseSprite.depth + 1);
+      overlays.push({ slot, itemId, sprite: overlay });
+    }
+  }
+
+  /**
+   * Sync overlay sprite positions, animations, and visibility with a base sprite.
+   * Called each frame from the update loop and externally for the local player.
+   */
+  updateOverlayPositions(
+    overlays: EquipmentOverlay[],
+    baseSprite: Phaser.GameObjects.Sprite,
+  ): void {
+    const currentAnimKey = baseSprite.anims.getName();
+    for (const ov of overlays) {
+      ov.sprite.x = baseSprite.x;
+      ov.sprite.y = baseSprite.y;
+      ov.sprite.setDepth(baseSprite.depth + 1);
+      ov.sprite.setVisible(baseSprite.visible);
+
+      // Play matching animation on the overlay if available
+      const item = ClientDataManager.instance.getItem(ov.itemId);
+      if (!item?.equipSpriteSheet) continue;
+      const textureKey = `equip_sheet_${item.equipSpriteSheet}`;
+      // Map base anim key (e.g. "walk_down") → overlay anim key
+      const overlayAnimKey = currentAnimKey ? `${textureKey}_${currentAnimKey}` : null;
+      if (overlayAnimKey && this.scene.anims.exists(overlayAnimKey)) {
+        if (ov.sprite.anims.getName() !== overlayAnimKey || !ov.sprite.anims.isPlaying) {
+          ov.sprite.play(overlayAnimKey, true);
+        }
+        // Sync frame timing with base sprite
+        if (baseSprite.anims.currentFrame) {
+          ov.sprite.anims.setCurrentFrame(
+            ov.sprite.anims.currentAnim!.frames[baseSprite.anims.currentFrame.index] ??
+            ov.sprite.anims.currentAnim!.frames[0]
+          );
+        }
+      }
     }
   }
 
@@ -668,6 +778,9 @@ export class EntityRenderer {
 
       // Draw HP bar
       this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp);
+
+      // Sync equipment overlays
+      this.updateOverlayPositions(data.overlays, data.sprite);
     });
 
     // NPCs — same interpolation as remote players

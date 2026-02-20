@@ -2,6 +2,12 @@ import React, { useMemo, useState } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
 import { StatBlockEditor, StatBlock } from '../../shared/StatBlockEditor';
 
+interface StartingItem {
+  itemId: string;
+  quantity: number;
+  equipped: boolean;
+}
+
 interface ClassTemplate {
   id: string;
   name: string;
@@ -11,6 +17,7 @@ interface ClassTemplate {
   allowedArmor: 'cloth' | 'leather' | 'mail' | 'plate';
   baseSpeed: number;
   canUseMana: boolean;
+  startingItems?: StartingItem[];
 }
 
 const DEFAULT_CLASS: Omit<ClassTemplate, 'id'> = {
@@ -56,14 +63,26 @@ const DEFAULT_CLASS: Omit<ClassTemplate, 'id'> = {
 const ARMOR_TYPES = ['cloth', 'leather', 'mail', 'plate'] as const;
 
 export const ClassEditor: React.FC = () => {
-  const { classes, skills, selectedClassId, setSelectedClassId, updateData, saveSection } = useEditorStore();
-  const [activeTab, setActiveTab] = useState<'properties' | 'baseStats' | 'perLevelGrowth' | 'preview' | 'skills'>(
+  const { classes, skills, items, selectedClassId, setSelectedClassId, updateData, saveSection } = useEditorStore();
+  const [activeTab, setActiveTab] = useState<'properties' | 'baseStats' | 'perLevelGrowth' | 'preview' | 'skills' | 'startingItems'>(
     'properties'
   );
+
+  // State for the "add starting item" form
+  const [newItemId, setNewItemId] = useState('');
+  const [newItemQty, setNewItemQty] = useState(1);
+  const [newItemEquipped, setNewItemEquipped] = useState(false);
 
   const classesData = classes.data.classes;
   const classSkillsData = skills.data.classSkills;
   const skillsData = skills.data.skills;
+  const itemCatalog: Record<string, any> = items.data;
+
+  // Sorted list of items for the "add starting item" dropdown
+  const itemOptions = useMemo(
+    () => Object.values(itemCatalog).sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    [itemCatalog]
+  );
 
   // Dynamically derive class list from the loaded JSON data
   const classIds = useMemo(() => Object.keys(classesData).sort(), [classesData]);
@@ -96,6 +115,33 @@ export const ClassEditor: React.FC = () => {
     return skillIds
       .map((id) => skillsData[id])
       .filter(Boolean) as any[];
+  };
+
+  // ── Starting Items helpers ──
+  const handleAddStartingItem = () => {
+    if (!selectedClass || !newItemId) return;
+    const existing = selectedClass.startingItems ?? [];
+    // Prevent duplicate item entries
+    if (existing.some((si) => si.itemId === newItemId)) return;
+    const updated: StartingItem[] = [...existing, { itemId: newItemId, quantity: newItemQty, equipped: newItemEquipped }];
+    handleUpdateClass({ startingItems: updated });
+    setNewItemId('');
+    setNewItemQty(1);
+    setNewItemEquipped(false);
+  };
+
+  const handleRemoveStartingItem = (itemId: string) => {
+    if (!selectedClass) return;
+    const updated = (selectedClass.startingItems ?? []).filter((si) => si.itemId !== itemId);
+    handleUpdateClass({ startingItems: updated });
+  };
+
+  const handleUpdateStartingItem = (itemId: string, changes: Partial<StartingItem>) => {
+    if (!selectedClass) return;
+    const updated = (selectedClass.startingItems ?? []).map((si) =>
+      si.itemId === itemId ? { ...si, ...changes } : si
+    );
+    handleUpdateClass({ startingItems: updated });
   };
 
   const handleMoveSkill = (index: number, direction: 'up' | 'down') => {
@@ -183,6 +229,12 @@ export const ClassEditor: React.FC = () => {
                 onClick={() => setActiveTab('skills')}
               >
                 Skills
+              </div>
+              <div
+                className={`tab ${activeTab === 'startingItems' ? 'active' : ''}`}
+                onClick={() => setActiveTab('startingItems')}
+              >
+                Starting Items
               </div>
             </div>
 
@@ -399,6 +451,142 @@ export const ClassEditor: React.FC = () => {
                         </div>
                       ))
                     )}
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'startingItems' && (
+                <div>
+                  <label className="form-label" style={{ marginBottom: 8 }}>
+                    Starting Items
+                  </label>
+                  <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 16 }}>
+                    Items given to new characters of this class. "Auto-equip" items go into equipment slots; others go into inventory.
+                  </p>
+
+                  {/* Current starting items list */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+                    {(selectedClass.startingItems ?? []).length === 0 ? (
+                      <div
+                        style={{
+                          padding: 16,
+                          backgroundColor: 'var(--bg-primary)',
+                          borderRadius: 4,
+                          color: 'var(--text-muted)',
+                          textAlign: 'center',
+                        }}
+                      >
+                        No starting items configured
+                      </div>
+                    ) : (
+                      (selectedClass.startingItems ?? []).map((si) => {
+                        const itemData = itemCatalog[si.itemId];
+                        const itemName = itemData?.name || si.itemId;
+                        return (
+                          <div
+                            key={si.itemId}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              padding: '8px 12px',
+                              backgroundColor: 'var(--bg-primary)',
+                              borderRadius: 4,
+                              gap: 10,
+                            }}
+                          >
+                            <div style={{ flex: 1, fontSize: '13px', fontWeight: 500 }}>{itemName}</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Qty</label>
+                              <input
+                                type="number"
+                                min={1}
+                                className="form-input"
+                                style={{ width: 60, padding: '2px 6px' }}
+                                value={si.quantity}
+                                onChange={(e) =>
+                                  handleUpdateStartingItem(si.itemId, {
+                                    quantity: Math.max(1, parseInt(e.target.value) || 1),
+                                  })
+                                }
+                              />
+                            </div>
+                            <label
+                              style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={si.equipped}
+                                onChange={(e) => handleUpdateStartingItem(si.itemId, { equipped: e.target.checked })}
+                              />
+                              Auto-equip
+                            </label>
+                            <button
+                              className="btn btn-danger"
+                              onClick={() => handleRemoveStartingItem(si.itemId)}
+                              style={{ padding: '3px 8px', fontSize: '11px' }}
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Add new item form */}
+                  <div
+                    style={{
+                      padding: 12,
+                      backgroundColor: 'var(--bg-primary)',
+                      borderRadius: 4,
+                      border: '1px solid var(--border-color)',
+                    }}
+                  >
+                    <label className="form-label" style={{ marginBottom: 8, fontSize: '12px' }}>
+                      Add Item
+                    </label>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <select
+                        className="form-select"
+                        style={{ flex: 1, minWidth: 160 }}
+                        value={newItemId}
+                        onChange={(e) => setNewItemId(e.target.value)}
+                      >
+                        <option value="">— Select item —</option>
+                        {itemOptions.map((item: any) => (
+                          <option key={item.id} value={item.id}>
+                            {item.name || item.id}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        min={1}
+                        className="form-input"
+                        style={{ width: 70 }}
+                        value={newItemQty}
+                        onChange={(e) => setNewItemQty(Math.max(1, parseInt(e.target.value) || 1))}
+                        placeholder="Qty"
+                      />
+                      <label
+                        style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={newItemEquipped}
+                          onChange={(e) => setNewItemEquipped(e.target.checked)}
+                        />
+                        Auto-equip
+                      </label>
+                      <button
+                        className="btn btn-primary"
+                        onClick={handleAddStartingItem}
+                        disabled={!newItemId}
+                        style={{ padding: '4px 12px', fontSize: '12px' }}
+                      >
+                        Add
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

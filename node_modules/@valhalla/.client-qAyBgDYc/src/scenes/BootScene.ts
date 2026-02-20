@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { SkillId, SkillCategory, SERVER_URL } from '@valhalla/shared';
+import { SkillId, SkillCategory, SERVER_URL, DEFAULT_EQUIP_SPRITE_CONFIG } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
 
 /**
@@ -53,6 +53,9 @@ export class BootScene extends Phaser.Scene {
 
     // ── Define player walk/idle animations ─────────────────
     this.definePlayerAnimations();
+
+    // ── Preload equipment overlays & inventory icons ────────
+    await this.loadEquipmentAssets();
 
     // Transition to login screen
     this.scene.start('LoginScene');
@@ -550,6 +553,87 @@ export class BootScene extends Phaser.Scene {
 
     gfx.generateTexture('melee_slash', size, size);
     gfx.destroy();
+  }
+
+  /**
+   * Preload equipment overlay sprite sheets and inventory icon images
+   * based on items in the data catalog. Returns a promise that resolves
+   * once all assets are loaded (or immediately if none are needed).
+   */
+  private loadEquipmentAssets(): Promise<void> {
+    const items = ClientDataManager.instance.items;
+    let hasAssets = false;
+
+    // Track which files we've already queued to avoid duplicates
+    const queuedSheets = new Set<string>();
+    const queuedIcons = new Set<string>();
+
+    for (const itemId of Object.keys(items)) {
+      const item = items[itemId];
+      if (!item) continue;
+
+      // Equipment overlay sprite sheet
+      if (item.equipSpriteSheet && !queuedSheets.has(item.equipSpriteSheet)) {
+        queuedSheets.add(item.equipSpriteSheet);
+        const config = item.equipSpriteConfig ?? DEFAULT_EQUIP_SPRITE_CONFIG;
+        this.load.spritesheet(
+          `equip_sheet_${item.equipSpriteSheet}`,
+          `assets/sprites/equipment/${item.equipSpriteSheet}`,
+          { frameWidth: config.frameWidth, frameHeight: config.frameHeight },
+        );
+        hasAssets = true;
+      }
+
+      // Inventory icon
+      if (item.inventoryIcon && !queuedIcons.has(item.inventoryIcon)) {
+        queuedIcons.add(item.inventoryIcon);
+        this.load.image(
+          `icon_${item.inventoryIcon}`,
+          `assets/sprites/icons/${item.inventoryIcon}`,
+        );
+        hasAssets = true;
+      }
+    }
+
+    if (!hasAssets) return Promise.resolve();
+
+    // Start the loader and return a promise that resolves when done
+    return new Promise<void>((resolve) => {
+      this.load.once('complete', () => {
+        // Define walk/idle animations for each equipment overlay sheet
+        for (const sheetFile of queuedSheets) {
+          const textureKey = `equip_sheet_${sheetFile}`;
+          // Find one item using this sheet to get its config
+          const refItem = Object.values(items).find(i => i.equipSpriteSheet === sheetFile);
+          const config = refItem?.equipSpriteConfig ?? DEFAULT_EQUIP_SPRITE_CONFIG;
+          const FRAMES_PER_ROW = config.framesPerRow;
+          const directions: [string, number][] = [
+            ['up', 0], ['left', 1], ['down', 2], ['right', 3],
+          ];
+          for (const [dir, row] of directions) {
+            if (row >= config.rows) continue;
+            this.anims.create({
+              key: `${textureKey}_walk_${dir}`,
+              frames: this.anims.generateFrameNumbers(textureKey, {
+                start: row * FRAMES_PER_ROW,
+                end: row * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+              }),
+              frameRate: 12,
+              repeat: -1,
+            });
+            this.anims.create({
+              key: `${textureKey}_idle_${dir}`,
+              frames: [{ key: textureKey, frame: row * FRAMES_PER_ROW }],
+              frameRate: 1,
+              repeat: 0,
+            });
+          }
+        }
+        console.log(`[BootScene] Loaded ${queuedSheets.size} equipment sheets, ${queuedIcons.size} inventory icons`);
+        resolve();
+      });
+      this.load.start();
+    });
   }
 
   /**

@@ -239,7 +239,19 @@
       },
       "allowedArmor": "cloth",
       "baseSpeed": 152,
-      "canUseMana": true
+      "canUseMana": true,
+      "startingItems": [
+        {
+          "itemId": "cloth_hood",
+          "quantity": 1,
+          "equipped": true
+        },
+        {
+          "itemId": "oak_staff",
+          "quantity": 1,
+          "equipped": true
+        }
+      ]
     }
   },
   "classColors": {

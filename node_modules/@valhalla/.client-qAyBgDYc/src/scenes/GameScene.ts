@@ -132,12 +132,15 @@ export class GameScene extends Phaser.Scene {
   private inventoryOpen: boolean = false;
   private inventoryItems: { itemId: string; quantity: number }[] = [];
   private localEquipment: Record<string, string> = { weapon: '', helm: '', chest: '', legs: '', boots: '', ring: '' };
+  /** Overlay sprites for local player equipped items (managed by EntityRenderer helpers). */
+  private localEquipOverlays: { slot: string; itemId: string; sprite: Phaser.GameObjects.Sprite }[] = [];
   private localXp: number = 0;
   private invContainer!: Phaser.GameObjects.Container;
   private invDimBg!: Phaser.GameObjects.Rectangle;    // fixed dim overlay, NOT inside invContainer
   private skillsDimBg!: Phaser.GameObjects.Rectangle; // fixed dim overlay, NOT inside skillsPaneContainer
   private panelGfx!: Phaser.GameObjects.Graphics;
   private invSlotTexts: Phaser.GameObjects.Text[] = [];
+  private invSlotIcons: (Phaser.GameObjects.Image | null)[] = [];
   private invQtyTexts: Phaser.GameObjects.Text[] = [];
   private invTooltipText!: Phaser.GameObjects.Text;
   private invTitleText!: Phaser.GameObjects.Text;
@@ -733,6 +736,15 @@ export class GameScene extends Phaser.Scene {
             player.alive,
             player.level ?? 1,
           );
+          // Sync equipment overlays for remote player
+          this.entityRenderer.updateRemotePlayerEquipment(sessionId, {
+            weapon: player.equipWeapon ?? '',
+            helm: player.equipHelm ?? '',
+            chest: player.equipChest ?? '',
+            legs: player.equipLegs ?? '',
+            boots: player.equipBoots ?? '',
+            ring: player.equipRing ?? '',
+          });
         }
         // Different zone (and wasn't in ours) → nothing to do
       }
@@ -960,6 +972,10 @@ export class GameScene extends Phaser.Scene {
     // Equipment sync
     this.network.onEquipmentChange = (equipment: Record<string, string>) => {
       this.localEquipment = equipment;
+      // Sync equipment overlay sprites on local player
+      if (this.playerSprite) {
+        this.entityRenderer.syncOverlays(this.localEquipOverlays, equipment, this.playerSprite);
+      }
       if (this.inventoryOpen) {
         this.renderCharacterPanel();
       }
@@ -1753,8 +1769,9 @@ export class GameScene extends Phaser.Scene {
     });
     this.invContainer.add(this.invTitleText);
 
-    // Inventory slot texts (no zones — we use scene-level pointer hit testing)
+    // Inventory slot texts and icon images (no zones — we use scene-level pointer hit testing)
     this.invSlotTexts = [];
+    this.invSlotIcons = [];
     this.invQtyTexts = [];
     for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
       const col = i % this.INV_COLS;
@@ -1772,6 +1789,9 @@ export class GameScene extends Phaser.Scene {
       nameText.setOrigin(0.5, 0.5);
       this.invContainer.add(nameText);
       this.invSlotTexts.push(nameText);
+
+      // Placeholder for inventory icon image (created on demand in renderInventorySlots)
+      this.invSlotIcons.push(null);
 
       const qtyText = this.add.text(sx + this.SLOT_SIZE / 2 - 6, sy + this.SLOT_SIZE / 2 - 10, '', {
         fontSize: '10px',
@@ -2369,15 +2389,45 @@ export class GameScene extends Phaser.Scene {
       this.panelGfx.lineStyle(1, itemTemplate ? 0x888888 : 0x444466, 1);
       this.panelGfx.strokeRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
 
-      // Update text
+      // Update icon / text
       if (itemTemplate) {
-        const abbr = itemTemplate.name.length > 8 ? itemTemplate.name.slice(0, 7) + '.' : itemTemplate.name;
-        this.invSlotTexts[i].setText(abbr);
-        this.invSlotTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+        const iconKey = itemTemplate.inventoryIcon ? `icon_${itemTemplate.inventoryIcon}` : null;
+        const hasIcon = iconKey && this.textures.exists(iconKey);
+
+        if (hasIcon) {
+          // Show icon image, hide text abbreviation
+          this.invSlotTexts[i].setText('');
+          if (!this.invSlotIcons[i] || this.invSlotIcons[i]!.texture.key !== iconKey) {
+            // Destroy old icon if different
+            if (this.invSlotIcons[i]) {
+              this.invSlotIcons[i]!.destroy();
+            }
+            const iconImg = this.add.image(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, iconKey);
+            // Scale icon to fit slot (leave a 2px border)
+            const maxDim = this.SLOT_SIZE - 4;
+            const scale = Math.min(maxDim / iconImg.width, maxDim / iconImg.height);
+            iconImg.setScale(scale);
+            this.invContainer.add(iconImg);
+            this.invSlotIcons[i] = iconImg;
+          }
+          this.invSlotIcons[i]!.setVisible(true);
+          this.invSlotIcons[i]!.setPosition(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2);
+        } else {
+          // No icon — use text abbreviation
+          const abbr = itemTemplate.name.length > 8 ? itemTemplate.name.slice(0, 7) + '.' : itemTemplate.name;
+          this.invSlotTexts[i].setText(abbr);
+          this.invSlotTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+          if (this.invSlotIcons[i]) {
+            this.invSlotIcons[i]!.setVisible(false);
+          }
+        }
         this.invQtyTexts[i].setText(item.quantity > 1 ? `${item.quantity}` : '');
       } else {
         this.invSlotTexts[i].setText('');
         this.invQtyTexts[i].setText('');
+        if (this.invSlotIcons[i]) {
+          this.invSlotIcons[i]!.setVisible(false);
+        }
       }
     }
 
@@ -2443,6 +2493,9 @@ export class GameScene extends Phaser.Scene {
 
         // ── Draw aim line ─────────────────────────────────────
         this.drawAimLine(input.aimAngle);
+
+        // ── Sync equipment overlay positions ─────────────────
+        this.entityRenderer.updateOverlayPositions(this.localEquipOverlays, this.playerSprite);
       }
     }
 

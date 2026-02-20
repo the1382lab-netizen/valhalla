@@ -1,4 +1,46 @@
 
+=== Feature: Equipment Sprite Sheets & Inventory Icons on Items ===
+
+Added support for visual equipment overlays in the game editor's Item Editor:
+- Each item can now have an optional equipment sprite sheet (PNG from
+  public/assets/sprites/equipment/) that gets layered on top of the player
+  character sprite when the item is equipped. Supports configurable frame
+  layout (frame width/height, frames per row, rows); defaults match the
+  existing character sheet (64×64, 9 frames/row, 4 rows).
+- Each item can have an optional inventory icon image (PNG from
+  public/assets/sprites/icons/) displayed in inventory slots.
+- Editor dropdowns list available PNGs from these folders via a new
+  /api/assets/sprites/:subfolder endpoint on the editor's Express server.
+- Client-side: BootScene preloads all equipment sprite sheets and icons at
+  startup; EntityRenderer creates per-equipment-slot overlay sprites on the
+  local player and remote players, syncing position and animation each frame.
+
+Files changed: shared/src/items.ts, editor/src/server.ts, editor/vite.config.ts,
+  editor/src/components/editors/items/ItemEditor.tsx, client/src/scenes/BootScene.ts,
+  client/src/systems/EntityRenderer.ts, client/src/scenes/GameScene.ts
+
+=== Feature: Class-Based Starting Items (Editor + Data-Driven Server) ===
+
+Classes can now define their starting items directly in the game editor instead
+of being hardcoded in the server. Each starting item has an item ID, quantity,
+and an "auto-equip" flag — equipped items go into character_equipment at the
+item's equipment slot, non-equipped items go into inventory_items.
+
+- Added StartingItem interface and startingItems field to ClassTemplate in
+  shared/src/classes.ts. Hardcoded CLASS_TEMPLATES updated with current
+  defaults (weapon + 5 health potions + 3 mana potions per class).
+- CharacterService.ts now reads startingItems from DataManager (which loads
+  from editor-saved classes.json) instead of using the hardcoded
+  STARTER_WEAPONS table and hardcoded potion inserts. Falls back to
+  CLASS_TEMPLATES if DataManager is unavailable.
+- Class Editor in the game editor has a new "Starting Items" tab: shows
+  current items with inline quantity and auto-equip controls, plus an
+  "Add Item" form with a dropdown populated from the full item catalog.
+  Changes save with the existing Save All Changes button.
+
+Files changed: shared/src/classes.ts, server/src/services/CharacterService.ts,
+  editor/src/components/editors/classes/ClassEditor.tsx
+
 === Fix: Magic Missile Now Triggers NPC Aggro ===
 
 Bug: Casting Magic Missile on an NPC did not aggro it, while Fireball did.

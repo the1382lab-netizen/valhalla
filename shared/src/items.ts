@@ -89,6 +89,22 @@ export const RARITY_COLORS: Record<ItemRarity, string> = {
 
 // ── Interfaces ───────────────────────────────────────────────
 
+/** Configuration for how an equipment sprite sheet is structured. */
+export interface EquipSpriteConfig {
+  frameWidth: number;   // default 64
+  frameHeight: number;  // default 64
+  framesPerRow: number; // default 9
+  rows: number;         // default 4 (up, left, down, right)
+}
+
+/** Default sprite config matching the character body sheet (4×9, 64×64). */
+export const DEFAULT_EQUIP_SPRITE_CONFIG: EquipSpriteConfig = {
+  frameWidth: 64,
+  frameHeight: 64,
+  framesPerRow: 9,
+  rows: 4,
+};
+
 export interface ItemTemplate {
   id: ItemId;
   name: string;
@@ -100,6 +116,12 @@ export interface ItemTemplate {
   maxStack: number;
   /** Stat bonuses when equipped (equipment only) */
   statBonuses?: Partial<StatBlock>;
+  /** Filename of equipment sprite sheet overlay (in assets/sprites/equipment/) */
+  equipSpriteSheet?: string;
+  /** Sprite sheet layout config — defaults to matching the character body sheet */
+  equipSpriteConfig?: EquipSpriteConfig;
+  /** Filename of inventory icon image (in assets/sprites/icons/) */
+  inventoryIcon?: string;
 }
 
 /** A single inventory slot (shared interface, not Colyseus schema). */

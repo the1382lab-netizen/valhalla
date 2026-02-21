@@ -201,24 +201,26 @@ export function swapInventorySlots(player: PlayerState, fromIndex: number, toInd
 }
 
 /**
- * Drop an item from inventory (destroy it).
- * @returns true if the item was dropped.
+ * Drop an item from inventory, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity } or null if the slot was invalid.
  */
-export function dropInventoryItem(player: PlayerState, slotIndex: number): boolean {
-  if (slotIndex < 0 || slotIndex >= player.inventory.length) return false;
+export function dropInventoryItem(player: PlayerState, slotIndex: number): { itemId: string; quantity: number } | null {
+  if (slotIndex < 0 || slotIndex >= player.inventory.length) return null;
+  const slot = player.inventory[slotIndex];
+  const itemData = { itemId: slot.itemId, quantity: slot.quantity };
   player.inventory.splice(slotIndex, 1);
-  return true;
+  return itemData;
 }
 
 /**
- * Drop an equipped item (unequip and destroy it).
- * @returns true if the item was dropped.
+ * Drop an equipped item, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity: 1 } or null if the slot was empty.
  */
-export function dropEquippedItem(player: PlayerState, slotType: EquipSlotType): boolean {
+export function dropEquippedItem(player: PlayerState, slotType: EquipSlotType): { itemId: string; quantity: number } | null {
   const currentlyEquipped = getEquipField(player, slotType);
-  if (!currentlyEquipped) return false;
+  if (!currentlyEquipped) return null;
   setEquipField(player, slotType, '');
-  return true;
+  return { itemId: currentlyEquipped, quantity: 1 };
 }
 
 /**

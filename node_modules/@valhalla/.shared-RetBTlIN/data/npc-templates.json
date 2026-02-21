@@ -21,7 +21,8 @@
       "vendorInventory": [],
       "damage": 10,
       "leashRange": 600,
-      "lootTableId": "loot_1771620382459"
+      "lootTableId": "loot_1771620382459",
+      "moveSpeed": 80
     }
   }
 }

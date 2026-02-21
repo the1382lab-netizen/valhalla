@@ -97,6 +97,16 @@ export class NetworkClient {
   onBuffRemoved: ((data: { targetId: string; skillId: string }) => void) | null = null;
   onActionBarData: ((data: { slots: string[] }) => void) | null = null;
 
+  // Loot bag callbacks
+  onLootBagAdd: ((bag: any, bagId: string) => void) | null = null;
+  onLootBagRemove: ((bagId: string) => void) | null = null;
+  onLootBagChange: ((bag: any, bagId: string) => void) | null = null;
+  // Direct server confirmation that a loot action succeeded — bypasses schema callbacks
+  onLootSuccess: ((bagId: string) => void) | null = null;
+
+  // Live reference to the local player's schema (set once on join, used for refreshInventory)
+  private localPlayerRef: any = null;
+
   // Chat callback
   onChatMessage: ((data: ChatMessagePayload) => void) | null = null;
 
@@ -215,6 +225,13 @@ export class NetworkClient {
         this.onChatMessage?.(data);
       });
 
+      // Loot success — direct server confirmation to force-refresh UI panels.
+      // This fires AFTER the state patch has already been applied, so reading
+      // the live schema in refreshInventory() gives the correct updated state.
+      this.room.onMessage(MessageType.LOOT_SUCCESS, (data: { bagId: string }) => {
+        this.onLootSuccess?.(data.bagId);
+      });
+
       // Use Colyseus 0.17 Callbacks API for state change listeners
       const callbacks = Callbacks.get(this.room);
 
@@ -255,13 +272,25 @@ export class NetworkClient {
         });
 
         if (isLocal) {
+          // Cache the live schema reference so refreshInventory() can read it later
+          this.localPlayerRef = player;
+
           // Fire once immediately with current state
           fireInventoryChange!();
           fireEquipmentChange!();
 
-          // Listen for add/remove on the inventory ArraySchema
+          // Listen for add/remove/change on the inventory ArraySchema.
+          // onAdd fires for existing slots too (initial state hydration), so
+          // registering onChange inside onAdd covers both existing and future slots.
+          // This is needed so that stackable-item quantity changes on existing slots
+          // (which only fire slot.onChange, not array.onAdd) trigger a re-render.
           if (player.inventory) {
-            callbacks.onAdd(player.inventory, () => {
+            callbacks.onAdd(player.inventory, (slot: any) => {
+              if (slot) {
+                callbacks.onChange(slot, () => {
+                  fireInventoryChange!();
+                });
+              }
               fireInventoryChange!();
             });
             callbacks.onRemove(player.inventory, () => {
@@ -316,6 +345,37 @@ export class NetworkClient {
       callbacks.onRemove('npcs', (_npc: any, key: any) => {
         this.onNpcRemove?.(key as string);
       });
+
+      // Loot bag state sync
+      callbacks.onAdd('lootBags', (bag: any, key: any) => {
+        const bagId = key as string;
+        this.onLootBagAdd?.(bag, bagId);
+
+        callbacks.onChange(bag, () => {
+          this.onLootBagChange?.(bag, bagId);
+        });
+
+        // Listen for item changes within the bag.
+        // onChange on individual slots catches partial-quantity updates that
+        // don't trigger onAdd/onRemove on the ArraySchema itself.
+        if (bag.items) {
+          callbacks.onAdd(bag.items, (slot: any) => {
+            if (slot) {
+              callbacks.onChange(slot, () => {
+                this.onLootBagChange?.(bag, bagId);
+              });
+            }
+            this.onLootBagChange?.(bag, bagId);
+          });
+          callbacks.onRemove(bag.items, () => {
+            this.onLootBagChange?.(bag, bagId);
+          });
+        }
+      });
+
+      callbacks.onRemove('lootBags', (_bag: any, key: any) => {
+        this.onLootBagRemove?.(key as string);
+      });
     } catch (err) {
       console.error('[Network] Connection failed:', err);
       throw err;
@@ -352,6 +412,30 @@ export class NetworkClient {
 
   sendSetActionBar(slots: string[]): void {
     this.room?.send(MessageType.SET_ACTION_BAR, { slots });
+  }
+
+  /**
+   * Force-rebuild inventoryItems from the live Colyseus schema and fire
+   * onInventoryChange. Call this when you need a guaranteed UI refresh and
+   * can't rely on nested-schema onChange callbacks (e.g. after looting).
+   */
+  refreshInventory(): void {
+    const player = this.localPlayerRef;
+    if (!player?.inventory) return;
+    const items: any[] = [];
+    for (let i = 0; i < player.inventory.length; i++) {
+      const slot = player.inventory[i];
+      items.push({ itemId: slot.itemId, quantity: slot.quantity });
+    }
+    this.onInventoryChange?.(items);
+  }
+
+  sendLootItem(bagId: string, slotIndex: number, quantity: number): void {
+    this.room?.send(MessageType.LOOT_ITEM, { bagId, slotIndex, quantity });
+  }
+
+  sendLootAll(bagId: string): void {
+    this.room?.send(MessageType.LOOT_ALL, { bagId });
   }
 
   sendChatMessage(channel: 'general' | 'world' | 'whisper', message: string, targetName?: string): void {

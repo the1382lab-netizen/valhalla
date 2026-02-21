@@ -33,6 +33,7 @@ import {
   isoToOrtho,
   tileToIso,
   ORTHO_TILE_SIZE,
+  LOOT_BAG_PICKUP_RANGE,
 } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
 import { PlayerTargetInfo, NpcTargetInfo, ENTITY_DEPTH_BASE, UI_DEPTH_BASE } from '../systems/EntityRenderer.js';
@@ -57,6 +58,9 @@ export class GameScene extends Phaser.Scene {
   private aimLine!: Phaser.GameObjects.Graphics;
   private localX: number = 0;
   private localY: number = 0;
+  /** Visual-only position that lerps toward localX/Y each frame to absorb reconcile jitter. */
+  private renderX: number = 0;
+  private renderY: number = 0;
   /** True when the current zone uses isometric rendering. */
   private isIso: boolean = false;
   /** Last facing direction for idle animation. */
@@ -82,6 +86,8 @@ export class GameScene extends Phaser.Scene {
 
   // Client-side prediction
   private pendingInputs: PendingInput[] = [];
+  /** Last inputSeq value acknowledged by the server — used to skip redundant reconciles. */
+  private _lastServerSeq: number = -1;
   private lastServerSeq: number = 0;
 
   // Map data (received from server)
@@ -106,6 +112,28 @@ export class GameScene extends Phaser.Scene {
   private npcZones: Map<string, string> = new Map();
   private npcCache: Map<string, any> = new Map();
   private visibleNpcs: Set<string> = new Set();
+  // Zone-filtering for loot bags
+  private lootBagZones: Map<string, string> = new Map();
+  private lootBagCache: Map<string, any> = new Map();
+  private visibleLootBags: Set<string> = new Set();
+
+  // ── Loot Panel State ───────────────────────────────────────
+  private lootPanelOpen: boolean = false;
+  private currentLootBagId: string | null = null;
+  private lootPanelContainer!: Phaser.GameObjects.Container;
+  private lootPanelGfx!: Phaser.GameObjects.Graphics;
+  private lootPanelSlotTexts: Phaser.GameObjects.Text[] = [];
+  private lootPanelQtyTexts: Phaser.GameObjects.Text[] = [];
+  private lootPanelSlotIcons: (Phaser.GameObjects.Image | null)[] = [];
+  private lootPanelTitleText!: Phaser.GameObjects.Text;
+  /** Cached loot panel items from the latest server state. */
+  private lootPanelItems: { itemId: string; quantity: number }[] = [];
+  // Loot panel layout constants
+  private readonly LOOT_COLS = 6;
+  private readonly LOOT_ROWS = 3;
+  private readonly LOOT_SLOT_SIZE = 48;
+  private readonly LOOT_SLOT_GAP = 4;
+  private readonly LOOT_PANEL_PAD = 10;
 
   // ── Draggable HUD panels ──────────────────────────────────
   // Per-panel offsets from their default computed positions (pixels).
@@ -150,9 +178,15 @@ export class GameScene extends Phaser.Scene {
   private charStatTexts: Phaser.GameObjects.Text[] = [];
   private charBarsGfx!: Phaser.GameObjects.Graphics;
 
+  // Item Detail Panel
+  private itemDetailPanelOpen: boolean = false;
+  private itemDetailContainer!: Phaser.GameObjects.Container;
+  private itemDetailGfx!: Phaser.GameObjects.Graphics;
+  private _itemDetailDynamic: Phaser.GameObjects.GameObject[] = [];
+
   // Drag-and-drop state
   private dragging: boolean = false;
-  private dragSource: { type: 'inventory' | 'equipment'; index?: number; slotType?: string } | null = null;
+  private dragSource: { type: 'inventory' | 'equipment' | 'lootBag'; index?: number; slotType?: string; bagId?: string; bagSlotIndex?: number } | null = null;
   private dragGhost!: Phaser.GameObjects.Text;
   private dragGhostBg!: Phaser.GameObjects.Rectangle;
   // Cached panel positions for hit-testing
@@ -346,6 +380,15 @@ export class GameScene extends Phaser.Scene {
     // Create target nameplate panel (initially hidden)
     this.createTargetNameplate();
 
+    // Create loot panel (hidden initially)
+    this.createLootPanel();
+
+    // Create item detail panel (hidden initially)
+    this.createItemDetailPanel();
+
+    // Suppress browser context menu so right-click works in-game
+    this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
     // Load persisted HUD layout, then wire up panel drag handlers
     this.loadHudLayout();
     this.setupHudDragHandlers();
@@ -368,6 +411,16 @@ export class GameScene extends Phaser.Scene {
     this.input.keyboard!.on('keydown-ESC', () => {
       if (this.chatInputActive) {
         this.cancelChatInput();
+      } else if (this.lootPanelOpen) {
+        // Close loot panel and the inventory that was auto-opened with it
+        this.closeLootPanel();
+        if (this.inventoryOpen) {
+          this.toggleInventory();
+        }
+      } else if (this.inventoryOpen) {
+        this.toggleInventory();
+      } else if (this.skillsPaneOpen) {
+        this.toggleSkillsPane();
       }
     });
 
@@ -549,6 +602,12 @@ export class GameScene extends Phaser.Scene {
         this.entityRenderer.removeNPC(nid);
       }
       this.visibleNpcs.clear();
+      for (const bid of this.visibleLootBags) {
+        this.entityRenderer.removeLootBag(bid);
+      }
+      this.visibleLootBags.clear();
+      // Close loot panel on zone change
+      if (this.lootPanelOpen) this.closeLootPanel();
 
       // 2. Switch zone
       this.currentZoneId = data.zoneId;
@@ -587,9 +646,22 @@ export class GameScene extends Phaser.Scene {
         }
       }
 
-      // 4. Teleport the local player to the new spawn
+      // 5. Re-add loot bags that are in our new zone
+      for (const [bid, bagZone] of this.lootBagZones) {
+        if (bagZone === this.currentZoneId) {
+          const cached = this.lootBagCache.get(bid);
+          if (cached) {
+            this.entityRenderer.addLootBag(bid, cached.x, cached.y, bagZone);
+            this.visibleLootBags.add(bid);
+          }
+        }
+      }
+
+      // 6. Teleport the local player to the new spawn
       this.localX = data.spawnX;
       this.localY = data.spawnY;
+      this.renderX = data.spawnX;
+      this.renderY = data.spawnY;
       if (this.playerSprite) {
         const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
         this.playerSprite.setPosition(playerIso.x, playerIso.y);
@@ -599,6 +671,7 @@ export class GameScene extends Phaser.Scene {
 
       // 5. Clear pending inputs — server position is authoritative after zone change
       this.pendingInputs = [];
+      this._lastServerSeq = -1;
     };
 
     this.network.onPlayerAdd = (player: any, sessionId: string) => {
@@ -606,6 +679,8 @@ export class GameScene extends Phaser.Scene {
         // This is us — set up local player
         this.localX = player.x;
         this.localY = player.y;
+        this.renderX = player.x;
+        this.renderY = player.y;
         this.localHp = player.hp;
         this.localMaxHp = player.maxHp;
         this.localMana = player.mana ?? 0;
@@ -964,9 +1039,9 @@ export class GameScene extends Phaser.Scene {
     // Inventory sync
     this.network.onInventoryChange = (items: any[]) => {
       this.inventoryItems = items;
-      if (this.inventoryOpen) {
-        this.renderInventorySlots();
-      }
+      // Always refresh the render so looted/moved items appear immediately,
+      // regardless of how the panel was opened.
+      this.renderInventorySlots();
     };
 
     // Equipment sync
@@ -1083,6 +1158,64 @@ export class GameScene extends Phaser.Scene {
     this.network.onChatMessage = (data: ChatMessagePayload) => {
       this.receiveChatMessage(data);
     };
+
+    // ── Loot Bags ──
+    this.network.onLootBagAdd = (bag: any, bagId: string) => {
+      const bagZone = bag.zoneId ?? 'grasslands';
+      this.lootBagZones.set(bagId, bagZone);
+      this.lootBagCache.set(bagId, { x: bag.x, y: bag.y, zoneId: bagZone, items: bag.items });
+
+      if (bagZone === this.currentZoneId) {
+        this.entityRenderer.addLootBag(bagId, bag.x, bag.y, bagZone);
+        this.visibleLootBags.add(bagId);
+      }
+    };
+
+    this.network.onLootBagChange = (bag: any, bagId: string) => {
+      this.lootBagCache.set(bagId, { x: bag.x, y: bag.y, zoneId: bag.zoneId, items: bag.items });
+
+      // Live-update loot panel if this bag is currently open
+      if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+        this.refreshLootPanelItems(bag);
+      }
+    };
+
+    this.network.onLootBagRemove = (bagId: string) => {
+      // Close loot panel if viewing this bag
+      if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+        this.closeLootPanel();
+      }
+      if (this.visibleLootBags.has(bagId)) {
+        this.entityRenderer.removeLootBag(bagId);
+        this.visibleLootBags.delete(bagId);
+      }
+      this.lootBagZones.delete(bagId);
+      this.lootBagCache.delete(bagId);
+    };
+
+    // Direct server confirmation that a loot action succeeded.
+    // By the time this fires, the Colyseus state patch has already been applied,
+    // so we can safely read the live schema state to force-refresh both panels.
+    this.network.onLootSuccess = (bagId: string) => {
+      // Refresh loot panel from live bag schema (bypasses onLootBagChange callback)
+      if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+        const cached = this.lootBagCache.get(bagId);
+        if (cached) {
+          this.refreshLootPanelItems(cached);
+        }
+      }
+      // Force-rebuild inventory from live player schema (bypasses onInventoryChange callback)
+      this.network.refreshInventory();
+    };
+
+    // Wire up bag click handler on entity renderer
+    this.entityRenderer.onBagClick = (bagId: string, button: number) => {
+      this.entityClickConsumed = true;
+      if (button === 2) {
+        // Right-click → open loot panel
+        this.openLootPanel(bagId);
+      }
+    };
   }
 
   /**
@@ -1091,9 +1224,9 @@ export class GameScene extends Phaser.Scene {
   private getCombatTextPosition(entityId: string): { x: number; y: number } | null {
     if (entityId === this.network.sessionId) {
       if (this.isIso) {
-        return orthoToIso(this.localX, this.localY);
+        return orthoToIso(this.renderX, this.renderY);
       }
-      return { x: this.localX, y: this.localY };
+      return { x: this.renderX, y: this.renderY };
     }
     return this.entityRenderer.getPlayerPosition(entityId)
       ?? this.entityRenderer.getNPCPosition(entityId);
@@ -1422,8 +1555,7 @@ export class GameScene extends Phaser.Scene {
     // ── Compute current screen rects for each panel's drag handle ──────────
     const getChatHandleRect = () => {
       const cam = this.cameras.main;
-      const hudRight = this.classHudText ? this.classHudText.x + this.classHudText.width + 10 : this.CHAT_LEFT_X;
-      const px = Math.max(this.CHAT_LEFT_X, hudRight) + this.chatOffset.x;
+      const px = this.CHAT_LEFT_X + this.chatOffset.x;
       const py = cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y;
       return { x: px, y: py, w: this.chatEffectiveW, h: TITLE_H };
     };
@@ -1975,15 +2107,28 @@ export class GameScene extends Phaser.Scene {
       if (!this.inventoryOpen) return;
       if (this.hudDragTarget !== null) return; // panel drag takes priority
 
+      // Item detail panel close button (must be checked before drag logic)
+      if (this.itemDetailPanelOpen && this.isItemDetailCloseBtn(pointer.x, pointer.y)) {
+        this.closeItemDetailPanel();
+        return;
+      }
+
       // Adjust for the container's current drag offset
       const px = pointer.x - this.invOffset.x;
       const py = pointer.y - this.invOffset.y;
+
+      const isShift = (pointer.event as MouseEvent).shiftKey;
 
       // Check inventory slot
       const invSlot = this.getInventorySlotAt(px, py);
       if (invSlot >= 0) {
         const item = this.inventoryItems[invSlot];
         if (item) {
+          // Shift+click: open item detail pane instead of dragging
+          if (isShift) {
+            this.showItemDetail(item.itemId);
+            return;
+          }
           const template = ClientDataManager.instance.getItem(item.itemId);
           if (template) {
             this.startDrag(
@@ -2001,6 +2146,11 @@ export class GameScene extends Phaser.Scene {
       if (equipSlot) {
         const equippedId = this.localEquipment[equipSlot] || '';
         if (equippedId) {
+          // Shift+click on equipped item: open item detail pane
+          if (isShift) {
+            this.showItemDetail(equippedId);
+            return;
+          }
           const template = ClientDataManager.instance.getItem(equippedId);
           if (template) {
             this.startDrag(
@@ -2008,6 +2158,29 @@ export class GameScene extends Phaser.Scene {
               template.name,
               RARITY_COLORS[template.rarity] ?? '#ffffff',
             );
+          }
+        }
+      }
+
+      // Check loot panel slot (left-click drag from loot panel)
+      if (this.lootPanelOpen && this.currentLootBagId && pointer.button === 0) {
+        const lootSlot = this.getLootSlotAt(pointer.x, pointer.y);
+        if (lootSlot >= 0) {
+          const item = this.lootPanelItems[lootSlot];
+          if (item) {
+            // Shift+click: inspect item before looting
+            if (isShift) {
+              this.showItemDetail(item.itemId);
+              return;
+            }
+            const template = ClientDataManager.instance.getItem(item.itemId);
+            if (template) {
+              this.startDrag(
+                { type: 'lootBag', bagId: this.currentLootBagId, bagSlotIndex: lootSlot },
+                template.name,
+                RARITY_COLORS[template.rarity] ?? '#ffffff',
+              );
+            }
           }
         }
       }
@@ -2081,7 +2254,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private startDrag(
-    source: { type: 'inventory' | 'equipment'; index?: number; slotType?: string },
+    source: { type: 'inventory' | 'equipment' | 'lootBag'; index?: number; slotType?: string; bagId?: string; bagSlotIndex?: number },
     itemName: string,
     color: string,
   ): void {
@@ -2152,6 +2325,10 @@ export class GameScene extends Phaser.Scene {
     // Inventory panel bounds
     if (px >= this.invX && px <= this.invX + this.invPanelW &&
         py >= this.panelY && py <= this.panelY + this.invPanelH) {
+      return true;
+    }
+    // Loot panel bounds
+    if (this.lootPanelOpen && this.isInsideLootPanel(px, py)) {
       return true;
     }
     return false;
@@ -2245,6 +2422,15 @@ export class GameScene extends Phaser.Scene {
         // Equipment → Ground: drop equipped item
         this.network.sendDropItem('equipment', undefined, slotType);
       }
+    } else if (this.dragSource.type === 'lootBag') {
+      // Loot bag → Inventory: loot the item
+      const bagId = this.dragSource.bagId!;
+      const bagSlotIndex = this.dragSource.bagSlotIndex!;
+      const lootItem = this.lootPanelItems[bagSlotIndex];
+      if (lootItem && (targetInvSlot >= 0 || insidePanels)) {
+        this.network.sendLootItem(bagId, bagSlotIndex, lootItem.quantity);
+      }
+      // Dropping outside panels from loot panel = do nothing
     }
   }
 
@@ -2256,6 +2442,8 @@ export class GameScene extends Phaser.Scene {
       this.invContainer.setPosition(this.invOffset.x, this.invOffset.y);
       this.renderInventorySlots();
       this.renderCharacterPanel();
+    } else {
+      this.closeItemDetailPanel();
     }
   }
 
@@ -2469,12 +2657,32 @@ export class GameScene extends Phaser.Scene {
       // ── Store for reconciliation ────────────────────────────
       this.pendingInputs.push({ input, dt });
 
-      // ── Update local sprite ─────────────────────────────────
+      // ── Update local sprite (via render interpolation) ──────
       if (this.localAlive) {
-        const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+        // Smooth renderX/Y toward the authoritative localX/Y each frame.
+        // This absorbs any micro-corrections from server reconciliation
+        // without adding perceptible input lag (~2 px at 200 speed).
+        const rdx = this.localX - this.renderX;
+        const rdy = this.localY - this.renderY;
+        const rDistSq = rdx * rdx + rdy * rdy;
+        if (rDistSq < 0.25) {
+          // Sub-pixel — snap to avoid endless chase
+          this.renderX = this.localX;
+          this.renderY = this.localY;
+        } else if (rDistSq > 2500) {
+          // > 50 px — teleport / zone change, snap immediately
+          this.renderX = this.localX;
+          this.renderY = this.localY;
+        } else {
+          const smoothT = 1 - Math.exp(-25 * dt);
+          this.renderX += rdx * smoothT;
+          this.renderY += rdy * smoothT;
+        }
+
+        const playerIso = this.isIso ? orthoToIso(this.renderX, this.renderY) : { x: this.renderX, y: this.renderY };
         this.playerSprite.x = playerIso.x;
         this.playerSprite.y = playerIso.y;
-        this.playerSprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(this.localX / 64) + Math.floor(this.localY / 64));
+        this.playerSprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(this.renderX / 64) + Math.floor(this.renderY / 64));
 
         // Directional sprite animation based on movement
         const moveDir = this.getMovementDir(input);
@@ -2496,6 +2704,21 @@ export class GameScene extends Phaser.Scene {
 
         // ── Sync equipment overlay positions ─────────────────
         this.entityRenderer.updateOverlayPositions(this.localEquipOverlays, this.playerSprite);
+      }
+    }
+
+    // ── Auto-close loot panel if too far ────────────────────
+    if (this.lootPanelOpen && this.currentLootBagId) {
+      const bagOrtho = this.entityRenderer.getLootBagOrthoPosition(this.currentLootBagId);
+      if (bagOrtho) {
+        const dx = this.localX - bagOrtho.x;
+        const dy = this.localY - bagOrtho.y;
+        if (dx * dx + dy * dy > LOOT_BAG_PICKUP_RANGE * LOOT_BAG_PICKUP_RANGE) {
+          this.closeLootPanel();
+        }
+      } else {
+        // Bag no longer exists
+        this.closeLootPanel();
       }
     }
 
@@ -2593,17 +2816,43 @@ export class GameScene extends Phaser.Scene {
    * any inputs the server hasn't processed yet.
    */
   private reconcile(serverX: number, serverY: number, serverSeq: number): void {
-    // Drop all inputs that have been acknowledged by the server
+    // If the server hasn't acknowledged any new input since the last reconcile,
+    // no positions will have changed on the server side — skip the work entirely.
+    if (serverSeq === this._lastServerSeq) return;
+    this._lastServerSeq = serverSeq;
+
+    // Drop all inputs the server has already processed.
     this.pendingInputs = this.pendingInputs.filter((p) => p.input.seq > serverSeq);
 
-    // Start from authoritative position
+    // Save the current client-predicted position so we can measure error below.
+    const predictedX = this.localX;
+    const predictedY = this.localY;
+
+    // Compute the server-authoritative position by re-applying every unacknowledged input.
     this.localX = serverX;
     this.localY = serverY;
-
-    // Re-apply unacknowledged inputs
     for (const pending of this.pendingInputs) {
       this.applyInputLocally(pending.input, pending.dt);
     }
+
+    // ── Smooth error correction ───────────────────────────────
+    // Instead of hard-snapping, blend small prediction errors so micro-corrections
+    // don't produce visible pops.  Large errors (genuine desyncs) still snap immediately.
+    const errX  = this.localX - predictedX;
+    const errY  = this.localY - predictedY;
+    const errSq = errX * errX + errY * errY;
+
+    if (errSq < 1) {
+      // Sub-pixel error — discard entirely and trust the client prediction.
+      this.localX = predictedX;
+      this.localY = predictedY;
+    } else if (errSq < 144) {
+      // Small error (< 12 px) — blend 35 % of the way toward the correction.
+      // This spreads the adjustment over ~3 server patches (~150 ms) invisibly.
+      this.localX = predictedX + errX * 0.35;
+      this.localY = predictedY + errY * 0.35;
+    }
+    // errSq >= 144 (>= 12 px) — genuine desync, hard-snap (position already set).
   }
 
   /**
@@ -2614,10 +2863,10 @@ export class GameScene extends Phaser.Scene {
     this.aimLine.lineStyle(2, 0xff4444, 0.7);
 
     const len = 40;
-    const startX = this.localX + Math.cos(angle) * 20;
-    const startY = this.localY + Math.sin(angle) * 20;
-    const endX = this.localX + Math.cos(angle) * (20 + len);
-    const endY = this.localY + Math.sin(angle) * (20 + len);
+    const startX = this.renderX + Math.cos(angle) * 20;
+    const startY = this.renderY + Math.sin(angle) * 20;
+    const endX = this.renderX + Math.cos(angle) * (20 + len);
+    const endY = this.renderY + Math.sin(angle) * (20 + len);
 
     if (this.isIso) {
       const isoStart = orthoToIso(startX, startY);
@@ -2696,8 +2945,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private repositionChatPanel(camW: number, camH: number): void {
-    const hudTextRight = this.classHudText ? this.classHudText.x + this.classHudText.width + 10 : 0;
-    const panelX = Math.max(this.CHAT_LEFT_X, hudTextRight);
+    const panelX = this.CHAT_LEFT_X;
     const panelY = camH - this.CHAT_H - this.CHAT_BOTTOM_MARGIN;
 
     this.chatBgGfx.setPosition(panelX, panelY);
@@ -2718,10 +2966,7 @@ export class GameScene extends Phaser.Scene {
 
   private drawChatPanel(): void {
     const cam = this.cameras.main;
-    // Dynamically place the panel just to the right of the HUD text (class/level/HP/mana),
-    // with a small gap, so it never overlaps regardless of text content length.
-    const hudTextRight = this.classHudText.x + this.classHudText.width + 10;
-    const panelX = Math.max(this.CHAT_LEFT_X, hudTextRight) + this.chatOffset.x;
+    const panelX = this.CHAT_LEFT_X + this.chatOffset.x;
     const panelY = cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y;
 
     // Compute effective width: fill the gap between the HUD text and the action bar
@@ -3411,5 +3656,524 @@ export class GameScene extends Phaser.Scene {
     this.input.on('pointerdown', onPointerDown);
     this.input.on('pointermove', onPointerMove);
     this.input.on('pointerup', onPointerUp);
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // LOOT PANEL
+  // ═══════════════════════════════════════════════════════════
+
+  private get lootPanelW(): number {
+    return this.LOOT_COLS * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP) + this.LOOT_SLOT_GAP + this.LOOT_PANEL_PAD * 2;
+  }
+
+  private get lootPanelH(): number {
+    return this.LOOT_ROWS * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP) + this.LOOT_SLOT_GAP + 70; // 34 title + 36 button area
+  }
+
+  private createLootPanel(): void {
+    const cam = this.cameras.main;
+    this.lootPanelContainer = this.add.container(0, 0);
+    this.lootPanelContainer.setScrollFactor(0);
+    this.lootPanelContainer.setDepth(UI_DEPTH_BASE + 250);
+    this.lootPanelContainer.setVisible(false);
+
+    this.lootPanelGfx = this.add.graphics();
+    this.lootPanelContainer.add(this.lootPanelGfx);
+
+    this.lootPanelTitleText = this.add.text(0, 0, 'Loot', {
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: '#ffcc00',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.lootPanelContainer.add(this.lootPanelTitleText);
+
+    // "Loot All" button text (positioned in renderLootPanel)
+    const lootAllText = this.add.text(0, 0, 'Loot All', {
+      fontSize: '12px',
+      fontStyle: 'bold',
+      color: '#ffffff',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    lootAllText.setOrigin(0.5, 0.5);
+    this.lootPanelContainer.add(lootAllText);
+    (this as any)._lootAllBtnText = lootAllText;
+
+    // Create slot texts and qty texts
+    const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+    for (let i = 0; i < maxSlots; i++) {
+      const slotText = this.add.text(0, 0, '', {
+        fontSize: '9px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 1,
+      });
+      slotText.setOrigin(0.5, 0.5);
+      this.lootPanelContainer.add(slotText);
+      this.lootPanelSlotTexts.push(slotText);
+      this.lootPanelSlotIcons.push(null);
+
+      const qtyText = this.add.text(0, 0, '', {
+        fontSize: '9px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 2,
+      });
+      qtyText.setOrigin(1, 1);
+      this.lootPanelContainer.add(qtyText);
+      this.lootPanelQtyTexts.push(qtyText);
+    }
+
+    // Register click handlers for loot panel
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (!this.lootPanelOpen || !this.currentLootBagId) return;
+
+      // Right-click on loot slot = auto-loot
+      if (pointer.button === 2) {
+        const slot = this.getLootSlotAt(pointer.x, pointer.y);
+        if (slot >= 0) {
+          const item = this.lootPanelItems[slot];
+          if (item) {
+            this.network.sendLootItem(this.currentLootBagId, slot, item.quantity);
+          }
+        }
+        return;
+      }
+
+      if (pointer.button === 0) {
+        // Shift+left-click on loot slot = inspect item
+        if ((pointer.event as MouseEvent).shiftKey) {
+          const slot = this.getLootSlotAt(pointer.x, pointer.y);
+          if (slot >= 0) {
+            const item = this.lootPanelItems[slot];
+            if (item) {
+              this.showItemDetail(item.itemId);
+              return;
+            }
+          }
+        }
+
+        // Left-click: close button
+        if (this.isLootPanelCloseBtn(pointer.x, pointer.y)) {
+          this.closeLootPanel();
+          return;
+        }
+
+        // Left-click: Loot All button
+        if (this.isLootAllBtn(pointer.x, pointer.y)) {
+          this.network.sendLootAll(this.currentLootBagId);
+          return;
+        }
+      }
+    });
+  }
+
+  private openLootPanel(bagId: string): void {
+    const cached = this.lootBagCache.get(bagId);
+    if (!cached) return;
+
+    this.currentLootBagId = bagId;
+    this.lootPanelOpen = true;
+    this.lootPanelContainer.setVisible(true);
+
+    // Auto-open inventory
+    if (!this.inventoryOpen) {
+      this.toggleInventory();
+    }
+
+    // Parse items from the bag state
+    this.refreshLootPanelItems(cached);
+    this.renderLootPanel();
+  }
+
+  private closeLootPanel(): void {
+    this.lootPanelOpen = false;
+    this.currentLootBagId = null;
+    this.lootPanelContainer.setVisible(false);
+    this.lootPanelItems = [];
+  }
+
+  private refreshLootPanelItems(bag: any): void {
+    this.lootPanelItems = [];
+    if (bag.items) {
+      // Colyseus ArraySchema — iterate with forEach or indexed access
+      if (typeof bag.items.forEach === 'function') {
+        bag.items.forEach((slot: any) => {
+          if (slot && slot.itemId) {
+            this.lootPanelItems.push({ itemId: slot.itemId, quantity: slot.quantity ?? 1 });
+          }
+        });
+      } else if (bag.items.length !== undefined) {
+        for (let i = 0; i < bag.items.length; i++) {
+          const slot = bag.items[i];
+          if (slot && slot.itemId) {
+            this.lootPanelItems.push({ itemId: slot.itemId, quantity: slot.quantity ?? 1 });
+          }
+        }
+      }
+    }
+
+    // If bag is empty, auto-close
+    if (this.lootPanelItems.length === 0 && this.lootPanelOpen) {
+      this.closeLootPanel();
+      return;
+    }
+
+    if (this.lootPanelOpen) {
+      this.renderLootPanel();
+    }
+  }
+
+  private renderLootPanel(): void {
+    const cam = this.cameras.main;
+    const panelW = this.lootPanelW;
+    const panelH = this.lootPanelH;
+
+    // Position to the left of the inventory panel
+    const px = this.panelStartX + this.invOffset.x - panelW - 8;
+    const py = this.panelY + this.invOffset.y;
+    this.lootPanelContainer.setPosition(px, py);
+
+    // Draw background
+    this.lootPanelGfx.clear();
+    this.lootPanelGfx.fillStyle(0x1a1a2e, 0.95);
+    this.lootPanelGfx.fillRoundedRect(0, 0, panelW, panelH, 6);
+    this.lootPanelGfx.lineStyle(2, 0xccaa44, 0.8);
+    this.lootPanelGfx.strokeRoundedRect(0, 0, panelW, panelH, 6);
+
+    // Title bar
+    this.lootPanelGfx.fillStyle(0x2a2a3e, 0.9);
+    this.lootPanelGfx.fillRect(2, 2, panelW - 4, 28);
+
+    this.lootPanelTitleText.setPosition(this.LOOT_PANEL_PAD, 7);
+
+    // Close button (X) in title bar
+    this.lootPanelGfx.fillStyle(0xff4444, 0.7);
+    this.lootPanelGfx.fillRect(panelW - 24, 5, 18, 18);
+    this.lootPanelGfx.lineStyle(2, 0xffffff, 0.9);
+    this.lootPanelGfx.lineBetween(panelW - 20, 9, panelW - 10, 19);
+    this.lootPanelGfx.lineBetween(panelW - 10, 9, panelW - 20, 19);
+
+    const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+    const dm = ClientDataManager.instance;
+
+    // Draw slots
+    for (let i = 0; i < maxSlots; i++) {
+      const col = i % this.LOOT_COLS;
+      const row = Math.floor(i / this.LOOT_COLS);
+      const sx = this.LOOT_PANEL_PAD + col * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+      const sy = 34 + this.LOOT_SLOT_GAP + row * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+
+      const item = this.lootPanelItems[i];
+
+      // Slot background
+      if (item) {
+        const template = dm.getItem(item.itemId);
+        const rarityColor = template ? (RARITY_COLORS[template.rarity] ?? '#333344') : '#333344';
+        const hexColor = parseInt(rarityColor.replace('#', ''), 16);
+        this.lootPanelGfx.fillStyle(hexColor, 0.25);
+      } else {
+        this.lootPanelGfx.fillStyle(0x333344, 0.6);
+      }
+      this.lootPanelGfx.fillRect(sx, sy, this.LOOT_SLOT_SIZE, this.LOOT_SLOT_SIZE);
+      this.lootPanelGfx.lineStyle(1, 0x555566, 0.6);
+      this.lootPanelGfx.strokeRect(sx, sy, this.LOOT_SLOT_SIZE, this.LOOT_SLOT_SIZE);
+
+      // Destroy old icon if it exists
+      if (this.lootPanelSlotIcons[i]) {
+        this.lootPanelSlotIcons[i]!.destroy();
+        this.lootPanelSlotIcons[i] = null;
+      }
+
+      if (item) {
+        const template = dm.getItem(item.itemId);
+        const iconKey = template?.inventoryIcon ? `icon_${template.inventoryIcon}` : null;
+
+        if (iconKey && this.textures.exists(iconKey)) {
+          const iconImg = this.add.image(sx + this.LOOT_SLOT_SIZE / 2, sy + this.LOOT_SLOT_SIZE / 2, iconKey);
+          const maxDim = this.LOOT_SLOT_SIZE - 4;
+          const scale = Math.min(maxDim / iconImg.width, maxDim / iconImg.height);
+          iconImg.setScale(scale);
+          this.lootPanelContainer.add(iconImg);
+          this.lootPanelSlotIcons[i] = iconImg;
+          this.lootPanelSlotTexts[i].setText('');
+        } else {
+          const abbr = template ? template.name.slice(0, 5) : item.itemId.slice(0, 5);
+          this.lootPanelSlotTexts[i].setText(abbr);
+          const rarityColor = template ? (RARITY_COLORS[template.rarity] ?? '#ffffff') : '#ffffff';
+          this.lootPanelSlotTexts[i].setColor(rarityColor);
+        }
+
+        this.lootPanelSlotTexts[i].setPosition(sx + this.LOOT_SLOT_SIZE / 2, sy + this.LOOT_SLOT_SIZE / 2);
+
+        // Quantity badge
+        if (item.quantity > 1) {
+          this.lootPanelQtyTexts[i].setText(`${item.quantity}`);
+          this.lootPanelQtyTexts[i].setPosition(sx + this.LOOT_SLOT_SIZE - 2, sy + this.LOOT_SLOT_SIZE - 2);
+        } else {
+          this.lootPanelQtyTexts[i].setText('');
+        }
+      } else {
+        this.lootPanelSlotTexts[i].setText('');
+        this.lootPanelQtyTexts[i].setText('');
+      }
+    }
+
+    // "Loot All" button at bottom
+    const btnW = 90;
+    const btnH = 24;
+    const btnX = (panelW - btnW) / 2;
+    const btnY = panelH - btnH - 8;
+    this.lootPanelGfx.fillStyle(0x44aa44, 0.8);
+    this.lootPanelGfx.fillRoundedRect(btnX, btnY, btnW, btnH, 4);
+    this.lootPanelGfx.lineStyle(1, 0x66cc66, 0.9);
+    this.lootPanelGfx.strokeRoundedRect(btnX, btnY, btnW, btnH, 4);
+
+    // Position the "Loot All" text
+    const lootAllText = (this as any)._lootAllBtnText as Phaser.GameObjects.Text;
+    if (lootAllText) {
+      lootAllText.setPosition(btnX + btnW / 2, btnY + btnH / 2);
+    }
+  }
+
+  /** Get the loot panel slot at a given screen position (absolute, not offset-adjusted). */
+  private getLootSlotAt(screenX: number, screenY: number): number {
+    if (!this.lootPanelOpen) return -1;
+
+    // Convert from screen to loot panel local coords
+    const px = screenX - this.lootPanelContainer.x;
+    const py = screenY - this.lootPanelContainer.y;
+
+    const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+    for (let i = 0; i < maxSlots; i++) {
+      const col = i % this.LOOT_COLS;
+      const row = Math.floor(i / this.LOOT_COLS);
+      const sx = this.LOOT_PANEL_PAD + col * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+      const sy = 34 + this.LOOT_SLOT_GAP + row * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+
+      if (px >= sx && px <= sx + this.LOOT_SLOT_SIZE && py >= sy && py <= sy + this.LOOT_SLOT_SIZE) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** Check if a screen position is inside the loot panel. */
+  private isInsideLootPanel(screenX: number, screenY: number): boolean {
+    const px = screenX - this.lootPanelContainer.x;
+    const py = screenY - this.lootPanelContainer.y;
+    return px >= 0 && px <= this.lootPanelW && py >= 0 && py <= this.lootPanelH;
+  }
+
+  /** Check if a screen position hits the loot panel close button. */
+  private isLootPanelCloseBtn(screenX: number, screenY: number): boolean {
+    const px = screenX - this.lootPanelContainer.x;
+    const py = screenY - this.lootPanelContainer.y;
+    return px >= this.lootPanelW - 24 && px <= this.lootPanelW - 6 && py >= 5 && py <= 23;
+  }
+
+  /** Check if a screen position hits the "Loot All" button. */
+  private isLootAllBtn(screenX: number, screenY: number): boolean {
+    const px = screenX - this.lootPanelContainer.x;
+    const py = screenY - this.lootPanelContainer.y;
+    const btnW = 90;
+    const btnH = 24;
+    const btnX = (this.lootPanelW - btnW) / 2;
+    const btnY = this.lootPanelH - btnH - 8;
+    return px >= btnX && px <= btnX + btnW && py >= btnY && py <= btnY + btnH;
+  }
+
+  // ── Item Detail Panel ────────────────────────────────────────
+
+  /** Create the item detail panel container (hidden on startup). */
+  private createItemDetailPanel(): void {
+    this.itemDetailContainer = this.add.container(0, 0);
+    this.itemDetailContainer.setScrollFactor(0);
+    this.itemDetailContainer.setDepth(UI_DEPTH_BASE + 300);
+    this.itemDetailContainer.setVisible(false);
+
+    this.itemDetailGfx = this.add.graphics();
+    this.itemDetailContainer.add(this.itemDetailGfx);
+  }
+
+  /**
+   * Populate and show the item detail panel for the given item ID.
+   * Shift+clicking an inventory or equipment slot calls this.
+   */
+  private showItemDetail(itemId: string): void {
+    const template = ClientDataManager.instance.getItem(itemId);
+    if (!template) return;
+
+    // Destroy any previously created dynamic objects
+    for (const obj of this._itemDetailDynamic) {
+      obj.destroy();
+    }
+    this._itemDetailDynamic = [];
+    this.itemDetailGfx.clear();
+
+    const PANEL_W = 224;
+    const PADDING = 12;
+    const TITLE_H = 34;
+    const LINE_H = 18;
+    const rarityColor = RARITY_COLORS[template.rarity as keyof typeof RARITY_COLORS] ?? '#cccccc';
+
+    // Build stat bonus lines
+    const statLines: string[] = [];
+    if (template.statBonuses) {
+      const STAT_LABELS: Record<string, string> = {
+        hp: 'HP',
+        mana: 'Mana',
+        strength: 'Strength',
+        stamina: 'Stamina',
+        dexterity: 'Dexterity',
+        intelligence: 'Intelligence',
+        wisdom: 'Wisdom',
+        physicalResist: 'Phys Resist',
+        spellResist: 'Spell Resist',
+        critChance: 'Crit Chance',
+        critDamage: 'Crit Damage',
+        physicalDefense: 'Phys Defense',
+        blockRating: 'Block',
+        dodgeRating: 'Dodge',
+      };
+      const PCT_STATS = new Set(['critChance', 'critDamage', 'blockRating', 'dodgeRating', 'physicalResist', 'spellResist']);
+      for (const [key, val] of Object.entries(template.statBonuses)) {
+        if (val === undefined || val === 0) continue;
+        const label = STAT_LABELS[key] ?? key;
+        const numVal = val as number;
+        const isPct = PCT_STATS.has(key);
+        const display = isPct ? `+${(numVal * 100).toFixed(1)}%` : `+${numVal}`;
+        statLines.push(`${display} ${label}`);
+      }
+    }
+
+    // Calculate panel height dynamically based on content
+    const DESC_WRAP_W = PANEL_W - PADDING * 2;
+    // Rough estimate: 6.5px average char width at 11px font
+    const charsPerLine = Math.floor(DESC_WRAP_W / 6.5);
+    const descLineCount = Math.ceil(template.description.length / charsPerLine) + 1;
+    const descH = Math.max(descLineCount * 15, 15);
+    const hasDivider = statLines.length > 0;
+
+    let PANEL_H =
+      TITLE_H +
+      PADDING + LINE_H +          // rarity / category row
+      PADDING / 2 + descH +       // description
+      (hasDivider ? PADDING + 1 : 0) +
+      statLines.length * LINE_H +
+      PADDING;
+    PANEL_H = Math.max(PANEL_H, 100);
+
+    // Draw panel background with gold border
+    this.itemDetailGfx.fillStyle(0x1a1a2e, 0.97);
+    this.itemDetailGfx.fillRoundedRect(0, 0, PANEL_W, PANEL_H, 6);
+    this.itemDetailGfx.lineStyle(2, 0xccaa44, 0.9);
+    this.itemDetailGfx.strokeRoundedRect(0, 0, PANEL_W, PANEL_H, 6);
+
+    // Title bar background
+    this.itemDetailGfx.fillStyle(0x111122, 0.9);
+    this.itemDetailGfx.fillRoundedRect(1, 1, PANEL_W - 2, TITLE_H - 2, { tl: 5, tr: 5, bl: 0, br: 0 });
+
+    // Item name in rarity colour
+    const titleText = this.add.text(PADDING, TITLE_H / 2, template.name, {
+      fontSize: '13px',
+      fontStyle: 'bold',
+      color: rarityColor,
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    titleText.setOrigin(0, 0.5);
+    this.itemDetailContainer.add(titleText);
+    this._itemDetailDynamic.push(titleText);
+
+    // Close [✕] button — rendered as plain text; click is handled via scene-level
+    // pointerdown + isItemDetailCloseBtn() to avoid the Phaser Container input bug.
+    const closeBtn = this.add.text(PANEL_W - PADDING, TITLE_H / 2, '✕', {
+      fontSize: '13px',
+      color: '#aaaaaa',
+      stroke: '#000000',
+      strokeThickness: 1,
+    });
+    closeBtn.setOrigin(1, 0.5);
+    this.itemDetailContainer.add(closeBtn);
+    this._itemDetailDynamic.push(closeBtn);
+
+    // Rarity + category + equip-slot line
+    let curY = TITLE_H + PADDING;
+    const rarityLabel = template.rarity.charAt(0).toUpperCase() + template.rarity.slice(1);
+    const categoryLabel = template.category.charAt(0).toUpperCase() + template.category.slice(1);
+    const slotLabel = template.equipSlot
+      ? ` — ${template.equipSlot.charAt(0).toUpperCase() + template.equipSlot.slice(1)}`
+      : '';
+    const badgeText = this.add.text(PADDING, curY, `${rarityLabel} ${categoryLabel}${slotLabel}`, {
+      fontSize: '11px',
+      fontStyle: 'italic',
+      color: rarityColor,
+      stroke: '#000000',
+      strokeThickness: 1,
+    });
+    this.itemDetailContainer.add(badgeText);
+    this._itemDetailDynamic.push(badgeText);
+    curY += LINE_H + PADDING / 2;
+
+    // Description (word-wrapped)
+    const descText = this.add.text(PADDING, curY, template.description, {
+      fontSize: '11px',
+      color: '#cccccc',
+      wordWrap: { width: DESC_WRAP_W },
+      lineSpacing: 2,
+    });
+    this.itemDetailContainer.add(descText);
+    this._itemDetailDynamic.push(descText);
+    curY += descText.height + PADDING / 2;
+
+    // Stat bonuses section
+    if (statLines.length > 0) {
+      // Divider line
+      this.itemDetailGfx.lineStyle(1, 0x444466, 0.9);
+      this.itemDetailGfx.lineBetween(PADDING, curY, PANEL_W - PADDING, curY);
+      curY += PADDING / 2 + 2;
+
+      for (const line of statLines) {
+        const statText = this.add.text(PADDING, curY, line, {
+          fontSize: '11px',
+          color: '#55ff77',
+          stroke: '#000000',
+          strokeThickness: 1,
+        });
+        this.itemDetailContainer.add(statText);
+        this._itemDetailDynamic.push(statText);
+        curY += LINE_H;
+      }
+    }
+
+    // Position to the right of the inventory panel, aligned to its top edge
+    const rightEdge = this.panelStartX + this.invOffset.x + this.totalPanelW + 8;
+    const topY = this.panelY + this.invOffset.y;
+    this.itemDetailContainer.setPosition(rightEdge, topY);
+
+    this.itemDetailPanelOpen = true;
+    this.itemDetailContainer.setVisible(true);
+  }
+
+  /** Returns true if the screen position is over the item detail panel's close button. */
+  private isItemDetailCloseBtn(screenX: number, screenY: number): boolean {
+    const px = screenX - this.itemDetailContainer.x;
+    const py = screenY - this.itemDetailContainer.y;
+    // Hit area covers the right ~32px of the 34px-tall title bar
+    return px >= 192 && px <= 226 && py >= 2 && py <= 32;
+  }
+
+  /** Hide the item detail panel and clean up its dynamic objects. */
+  private closeItemDetailPanel(): void {
+    this.itemDetailPanelOpen = false;
+    this.itemDetailContainer.setVisible(false);
+    for (const obj of this._itemDetailDynamic) {
+      obj.destroy();
+    }
+    this._itemDetailDynamic = [];
+    this.itemDetailGfx.clear();
   }
 }

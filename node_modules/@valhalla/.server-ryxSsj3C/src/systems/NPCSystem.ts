@@ -160,8 +160,16 @@ export class NPCSystem {
           if (dist > 30) {
             const moveX = (dx / dist) * chaseSpeed * dt;
             const moveY = (dy / dist) * chaseSpeed * dt;
-            npc.x += moveX;
-            npc.y += moveY;
+            const col = getCollision(npc.zoneId);
+            if (col) {
+              const resolved = col.resolveMovement(npc.x, npc.y, moveX, moveY);
+              const clamped  = col.clampToMap(resolved.x, resolved.y);
+              npc.x = clamped.x;
+              npc.y = clamped.y;
+            } else {
+              npc.x += moveX;
+              npc.y += moveY;
+            }
           }
 
           // Face the target
@@ -216,8 +224,18 @@ export class NPCSystem {
         const dy = spawnY - npc.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > 2) {
-          npc.x += (dx / dist) * returnSpeed * dt;
-          npc.y += (dy / dist) * returnSpeed * dt;
+          const moveX = (dx / dist) * returnSpeed * dt;
+          const moveY = (dy / dist) * returnSpeed * dt;
+          const col = getCollision(npc.zoneId);
+          if (col) {
+            const resolved = col.resolveMovement(npc.x, npc.y, moveX, moveY);
+            const clamped  = col.clampToMap(resolved.x, resolved.y);
+            npc.x = clamped.x;
+            npc.y = clamped.y;
+          } else {
+            npc.x += moveX;
+            npc.y += moveY;
+          }
         } else {
           npc.x = spawnX;
           npc.y = spawnY;

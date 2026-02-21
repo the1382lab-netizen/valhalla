@@ -121,6 +121,12 @@ export enum MessageType {
 
   // ── Chat ──
   CHAT_MESSAGE = 'chatMessage',
+
+  // ── Loot ──
+  LOOT_ITEM = 'lootItem',
+  LOOT_ALL = 'lootAll',
+  // Server → client confirmation: refresh loot panel + inventory immediately
+  LOOT_SUCCESS = 'lootSuccess',
 }
 
 // ── Chat ─────────────────────────────────────────────────────

@@ -59,3 +59,123 @@ Fix:
 - GameRoom passes `this.npcSystem` as the delegate at both call sites
 
 Files changed: SkillEffectHandler.ts, SkillSystem.ts, GameRoom.ts
+
+=== Feature: Ground Loot Bag System ===
+
+Items dropped by players or generated from NPC kills now appear on the ground as
+loot bags instead of being destroyed. Players right-click a bag to open a loot
+panel, then can right-click items to auto-loot or drag them into their inventory.
+
+Server-side:
+- New LootBagState Colyseus schema (BagSlotState + LootBagState) synced to all
+  clients via GameState.lootBags MapSchema.
+- New LootBagSystem handles bag spawning, proximity-based merging (within 80px),
+  per-item and loot-all pickup, distance validation, and 5-minute despawn timer.
+- Connects the pre-existing (but unused) loot table infrastructure: NPC deaths
+  now roll their NPCTemplate.lootTableId via DataManager and spawn bags with the
+  resulting items at the NPC's death location.
+- InventorySystem drop functions now return item data instead of discarding it,
+  allowing the GameRoom to route dropped items into loot bags.
+- GameRoom handles LOOT_ITEM and LOOT_ALL messages from clients.
+
+Client-side:
+- BootScene generates a procedural loot bag sprite texture.
+- EntityRenderer manages loot bag sprites with zone filtering, click callbacks
+  (supporting right-click for loot panel), and ortho-to-ISO positioning.
+- NetworkClient wires up Colyseus Callbacks for lootBags state sync (onAdd,
+  onChange, onRemove) and exposes sendLootItem/sendLootAll methods.
+- GameScene adds a full loot panel UI: 6×3 slot grid with item icons/names,
+  rarity-colored backgrounds, quantity badges, "Loot All" button, and close
+  button. Right-click on slot = auto-loot entire stack. Left-click-drag from
+  loot panel to inventory = loot single item. Panel auto-closes when bag empties,
+  is removed, player moves out of range, or presses Escape. Browser context menu
+  is suppressed. Drag system extended with 'lootBag' source type.
+
+Files changed: shared/src/types.ts, shared/src/items.ts,
+  server/src/schema/LootBagState.ts (NEW), server/src/schema/GameState.ts,
+  server/src/systems/LootBagSystem.ts (NEW), server/src/systems/InventorySystem.ts,
+  server/src/rooms/GameRoom.ts, client/src/systems/NetworkClient.ts,
+  client/src/systems/EntityRenderer.ts, client/src/scenes/BootScene.ts,
+  client/src/scenes/GameScene.ts
+
+=== Fix: Loot Panel and Inventory Not Updating in Real-Time ===
+
+Bug: Right-clicking an item in the loot bag would succeed on the server (items
+visible in inventory after panel close/reopen) but neither the loot panel nor
+the inventory panel would refresh visually in real-time.
+
+Root cause: Colyseus v0.17 Callbacks do not reliably fire for nested
+ArraySchema mutations. callbacks.onRemove(bag.items) failed to fire on splice,
+and callbacks.onChange(player) didn't cascade for quantity changes on existing
+inventory slots, leaving both panels stale until the user manually re-opened
+the inventory (which triggered a re-render via toggleInventory).
+
+Fix: Added a LOOT_SUCCESS server→client message sent after any successful loot
+(lootItem or lootAll). By the time it arrives, the Colyseus state patch is
+already applied. The client handler force-refreshes both panels by reading the
+live schema directly — bag.items via the loot bag cache, and player.inventory
+via the new NetworkClient.refreshInventory() method — bypassing the unreliable
+nested-schema callbacks entirely.
+
+Files: shared/src/types.ts, server/src/rooms/GameRoom.ts,
+       client/src/systems/NetworkClient.ts, client/src/scenes/GameScene.ts
+
+=== Fix: Loot/Inventory Not Updating Consistently ===
+
+Bug: Right-clicking items in a loot bag would inconsistently fail to update
+the loot panel and/or the inventory display.
+
+Root cause: Two related issues in NetworkClient's Colyseus state listeners:
+
+1. Inventory ArraySchema — when addItem stacks onto an existing slot, it only
+   updates slot.quantity (firing slot.onChange). The array-level onAdd/onRemove
+   callbacks don't fire for this case. The player.onChange catch-all may not
+   cascade to nested schema changes in Colyseus v0.17, so the inventory display
+   was not always refreshed for stackable items.
+
+2. Loot bag items ArraySchema — same problem: if a slot's quantity changed
+   without a full splice (e.g. partial looting), neither onAdd nor onRemove
+   fired on the array, leaving the panel stale.
+
+Fix: Inside callbacks.onAdd for both player.inventory and bag.items, register
+callbacks.onChange on each individual slot so that any property change on the
+slot (including quantity) reliably triggers a re-render. Since Colyseus fires
+onAdd for existing items at registration time, this pattern also covers slots
+present in the initial server state.
+
+Files changed: client/src/systems/NetworkClient.ts
+
+=== Fix: Right-Click Loot Looting All Items ===
+
+Bug: Right-clicking an item in the loot panel looted more items than expected
+(appeared to loot the entire bag instead of just the right-clicked slot).
+
+Root cause: The setupDragAndDrop pointerdown handler checked for loot panel slot
+hits without filtering by mouse button, so right-clicking a slot would start a
+drag in addition to firing the right-click auto-loot. On pointerup, handleDrop
+would fire and send a second sendLootItem message for the same slot — doubling
+up the loot action.
+
+Fix: Added `pointer.button === 0` check to the loot-bag drag-start section in
+setupDragAndDrop so only left-clicks can initiate a drag from the loot panel.
+Right-clicks now only trigger the direct auto-loot handler in createLootPanel.
+
+Files changed: client/src/scenes/GameScene.ts
+
+=== Fix: NPC Collision with Map Walls ===
+
+Bug: NPCs could walk through walls and other solid map tiles.
+
+Root cause: NPCSystem.update() already received a `getCollision` callback for
+looking up the CollisionSystem per zone, but never called it. Both movement
+paths — chasing a player and returning to spawn — applied delta-position directly
+(npc.x += moveX) with no collision check.
+
+Fix: Both movement paths now call `getCollision(npc.zoneId)` and, when a
+CollisionSystem is available for the zone, route the movement delta through
+`col.resolveMovement()` (which handles wall-sliding) followed by `col.clampToMap()`
+(which keeps the NPC inside the map bounds). If the zone's collision data isn't
+loaded yet, the code falls back to the old unchecked movement so NPCs still move
+on unloaded zones rather than freezing.
+
+Files changed: server/src/systems/NPCSystem.ts

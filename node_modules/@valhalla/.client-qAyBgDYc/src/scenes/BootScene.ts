@@ -48,6 +48,9 @@ export class BootScene extends Phaser.Scene {
     // ── Generate melee slash texture ─────────────────────────
     this.generateMeleeTexture();
 
+    // ── Generate loot bag texture ─────────────────────────────
+    this.generateLootBagTexture();
+
     // ── Generate skill icon textures ───────────────────────
     this.generateSkillIcons();
 
@@ -552,6 +555,34 @@ export class BootScene extends Phaser.Scene {
     gfx.strokePath();
 
     gfx.generateTexture('melee_slash', size, size);
+    gfx.destroy();
+  }
+
+  private generateLootBagTexture(): void {
+    const size = 28;
+    const gfx = this.add.graphics();
+
+    // Bag body — brown rounded sack shape
+    gfx.fillStyle(0x8B6914, 1);
+    gfx.fillRoundedRect(4, 8, size - 8, size - 10, 4);
+
+    // Bag top — darker cinch
+    gfx.fillStyle(0x6B4F10, 1);
+    gfx.fillRect(8, 6, size - 16, 5);
+
+    // Tie/knot
+    gfx.fillStyle(0x9E7B1A, 1);
+    gfx.fillCircle(size / 2, 6, 3);
+
+    // Highlight
+    gfx.fillStyle(0xB8942A, 0.5);
+    gfx.fillRoundedRect(7, 12, 6, 8, 2);
+
+    // Gold coin glint peeking out
+    gfx.fillStyle(0xFFD700, 0.8);
+    gfx.fillCircle(size / 2 + 3, 10, 2);
+
+    gfx.generateTexture('loot_bag', size, size);
     gfx.destroy();
   }
 

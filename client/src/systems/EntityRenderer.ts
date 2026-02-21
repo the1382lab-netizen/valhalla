@@ -81,6 +81,13 @@ export interface NpcTargetInfo {
   npcType: string;
 }
 
+interface LootBagData {
+  sprite: Phaser.GameObjects.Sprite;
+  zoneId: string;
+  x: number; // ortho world X
+  y: number; // ortho world Y
+}
+
 interface ProjectileData {
   sprite: Phaser.GameObjects.Sprite;
   targetX: number;
@@ -112,11 +119,14 @@ export class EntityRenderer {
   private npcs: Map<string, NPCData> = new Map();
   private projectiles: Map<string, ProjectileData> = new Map();
   private spellProjectiles: Map<string, SpellProjectileData> = new Map();
+  private lootBags: Map<string, LootBagData> = new Map();
 
   /** Called when a remote player sprite is left-clicked. */
   public onPlayerClick?: (sessionId: string) => void;
   /** Called when an NPC sprite is left-clicked. */
   public onNpcClick?: (npcId: string) => void;
+  /** Called when a loot bag sprite is clicked (button: 0=left, 2=right). */
+  public onBagClick?: (bagId: string, button: number) => void;
 
   constructor(scene: Phaser.Scene) {
     this.scene = scene;
@@ -439,6 +449,48 @@ export class EntityRenderer {
     const data = this.npcs.get(id);
     if (!data) return null;
     return { x: data.sprite.x, y: data.sprite.y };
+  }
+
+  // ── Loot Bags ────────────────────────────────────────────
+
+  addLootBag(bagId: string, x: number, y: number, zoneId: string): void {
+    if (this.lootBags.has(bagId)) return;
+
+    const isoPos = orthoToIso(x, y);
+    const sprite = this.scene.add.sprite(isoPos.x, isoPos.y, 'loot_bag');
+    sprite.setDepth(ENTITY_DEPTH_BASE - 1); // slightly below entities
+    sprite.setInteractive({ useHandCursor: true });
+
+    sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      this.onBagClick?.(bagId, pointer.button);
+    });
+
+    this.lootBags.set(bagId, { sprite, zoneId, x, y });
+  }
+
+  removeLootBag(bagId: string): void {
+    const data = this.lootBags.get(bagId);
+    if (data) {
+      data.sprite.destroy();
+      this.lootBags.delete(bagId);
+    }
+  }
+
+  hasLootBag(bagId: string): boolean {
+    return this.lootBags.has(bagId);
+  }
+
+  getLootBagPosition(bagId: string): { x: number; y: number } | null {
+    const data = this.lootBags.get(bagId);
+    if (!data) return null;
+    return { x: data.sprite.x, y: data.sprite.y };
+  }
+
+  /** Get the ortho world position of a loot bag. */
+  getLootBagOrthoPosition(bagId: string): { x: number; y: number } | null {
+    const data = this.lootBags.get(bagId);
+    if (!data) return null;
+    return { x: data.x, y: data.y };
   }
 
   // ── Projectiles ───────────────────────────────────────────

@@ -168,7 +168,7 @@
         "wisdom": 1,
         "spellResist": 2
       },
-      "equipSpriteSheet": "HEAD_robe_hood.png"
+      "equipSpriteSheet": "TORSO_robe_shirt_brown.png"
     },
     "leather_leggings": {
       "id": "leather_leggings",
@@ -210,7 +210,8 @@
       "statBonuses": {
         "wisdom": 1,
         "spellResist": 1
-      }
+      },
+      "equipSpriteSheet": "LEGS_robe_skirt.png"
     },
     "leather_boots": {
       "id": "leather_boots",

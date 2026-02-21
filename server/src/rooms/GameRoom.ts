@@ -9,6 +9,7 @@ import { SkillSystem, SkillSystemEvent } from '../systems/SkillSystem.js';
 import { DataManager } from '../systems/DataManager.js';
 import { NPCSystem } from '../systems/NPCSystem.js';
 import { SpellProjectileSystem, SpellProjectileEvent } from '../systems/SpellProjectileSystem.js';
+import { LootBagSystem } from '../systems/LootBagSystem.js';
 import {
   InputPayload,
   MessageType,
@@ -55,6 +56,7 @@ export class GameRoom extends Room<{ state: GameState }> {
   private mapManager!: MapManager;
   private skillSystem!: SkillSystem;
   private npcSystem!: NPCSystem;
+  private lootBagSystem!: LootBagSystem;
   private inputQueues: Map<string, InputPayload[]> = new Map();
 
   /** Maps sessionId → persistent character data for save/load. */
@@ -70,6 +72,10 @@ export class GameRoom extends Room<{ state: GameState }> {
   private zoneCache: Map<string, ZoneCacheEntry> = new Map();
 
   onCreate(): void {
+    // Keep the room alive when the last player leaves so that world state
+    // (loot bags, NPC spawns, etc.) is preserved between sessions.
+    this.autoDispose = false;
+
     this.setState(new GameState());
 
     // Initialize data manager — loads JSON data files from editor
@@ -85,6 +91,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.spellProjectileSystem = new SpellProjectileSystem(defaultEntry.collision);
     this.skillSystem = new SkillSystem();
     this.npcSystem = new NPCSystem();
+    this.lootBagSystem = new LootBagSystem();
 
     // Spawn NPCs for all known zones
     for (const zoneId of Object.keys(DataManager.instance.zones)) {
@@ -128,15 +135,47 @@ export class GameRoom extends Room<{ state: GameState }> {
       }
     });
 
-    // Drop item (from inventory or equipment)
+    // Drop item (from inventory or equipment) → spawn loot bag on ground
     this.onMessage(MessageType.DROP_ITEM, (client: Client, data: { source: string; slotIndex?: number; slotType?: string }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || !player.alive) return;
 
+      let droppedItem: { itemId: string; quantity: number } | null = null;
+
       if (data.source === 'inventory' && data.slotIndex !== undefined) {
-        dropInventoryItem(player, data.slotIndex);
+        droppedItem = dropInventoryItem(player, data.slotIndex);
       } else if (data.source === 'equipment' && data.slotType) {
-        dropEquippedItem(player, data.slotType as EquipSlotType);
+        droppedItem = dropEquippedItem(player, data.slotType as EquipSlotType);
+      }
+
+      if (droppedItem) {
+        this.lootBagSystem.spawnBag(player.zoneId, player.x, player.y, [droppedItem], this.state.lootBags);
+      }
+    });
+
+    // Loot a single item from a ground bag
+    this.onMessage(MessageType.LOOT_ITEM, (client: Client, data: { bagId: string; slotIndex: number; quantity: number }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+      const bag = this.state.lootBags.get(data.bagId);
+      if (!bag) return;
+      const ok = this.lootBagSystem.lootItem(player, bag, data.slotIndex, data.quantity);
+      if (ok) {
+        // Direct confirmation so the client can force-refresh both panels
+        // without depending on Colyseus nested-schema change callbacks.
+        client.send(MessageType.LOOT_SUCCESS, { bagId: data.bagId });
+      }
+    });
+
+    // Loot all items from a ground bag
+    this.onMessage(MessageType.LOOT_ALL, (client: Client, data: { bagId: string }) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player || !player.alive) return;
+      const bag = this.state.lootBags.get(data.bagId);
+      if (!bag) return;
+      const looted = this.lootBagSystem.lootAll(player, bag);
+      if (looted > 0) {
+        client.send(MessageType.LOOT_SUCCESS, { bagId: data.bagId });
       }
     });
 
@@ -585,7 +624,10 @@ export class GameRoom extends Room<{ state: GameState }> {
     );
     this.broadcastCombatEvents(npcEvents);
 
-    // 7. Check zone transitions (portal triggers)
+    // 7. Update loot bags (despawn empty / expired bags)
+    this.lootBagSystem.update(now, this.state.lootBags);
+
+    // 8. Check zone transitions (portal triggers)
     this.checkZoneTransitions();
   }
 
@@ -682,6 +724,10 @@ export class GameRoom extends Room<{ state: GameState }> {
   private broadcastCombatEvents(events: CombatEvent[]): void {
     for (const event of events) {
       this.broadcast(event.type, event.data);
+      // Spawn loot bag when NPC dies
+      if (event.type === 'npcDied') {
+        this.spawnNpcLoot(event.data.targetId);
+      }
     }
   }
 
@@ -697,7 +743,25 @@ export class GameRoom extends Room<{ state: GameState }> {
       } else {
         // playerHit, playerDied, npcHit, npcDied — reuse existing message types
         this.broadcast(event.type, event.data);
+        // Spawn loot bag when NPC dies from spell
+        if (event.type === 'npcDied') {
+          this.spawnNpcLoot((event.data as any).targetId);
+        }
       }
+    }
+  }
+
+  /**
+   * Look up an NPC's loot table and spawn a loot bag at its position.
+   */
+  private spawnNpcLoot(npcId: string): void {
+    const npc = this.state.npcs.get(npcId);
+    if (!npc) return;
+    const template = DataManager.instance.npcTemplates[npc.templateId];
+    if (!template?.lootTableId) return;
+    const loot = this.lootBagSystem.rollLootTable(template.lootTableId);
+    if (loot.length > 0) {
+      this.lootBagSystem.spawnBag(npc.zoneId, npc.x, npc.y, loot, this.state.lootBags);
     }
   }
 

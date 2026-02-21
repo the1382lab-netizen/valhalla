@@ -11,6 +11,20 @@
           "dropChance": 1,
           "minQuantity": 1,
           "maxQuantity": 1
+        },
+        {
+          "itemId": "cloth_robe",
+          "weight": 1,
+          "dropChance": 1,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "cloth_pants",
+          "weight": 1,
+          "dropChance": 1,
+          "minQuantity": 1,
+          "maxQuantity": 1
         }
       ]
     }

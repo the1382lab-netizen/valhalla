@@ -15,7 +15,7 @@
 
 import { MapSchema } from '@colyseus/schema';
 import { NPCState } from '../schema/NPCState.js';
-import { PlayerState } from '../schema/PlayerState.js';
+import { PlayerState, applyShieldAbsorption } from '../schema/PlayerState.js';
 import { DataManager } from './DataManager.js';
 import { MapManager } from './MapManager.js';
 import { CollisionSystem } from './CollisionSystem.js';
@@ -39,6 +39,8 @@ interface SpawnedNPCData {
   leashRange: number;
   /** Last time this NPC attacked (ms timestamp) */
   lastAttackTime: number;
+  /** Threat table — tracks cumulative threat per player (sessionId → threat) */
+  threatTable: Map<string, number>;
 }
 
 export class NPCSystem {
@@ -85,6 +87,7 @@ export class NPCSystem {
         aggroTarget: null,
         leashRange: template.leashRange ?? (template.aggroRange ?? 200) * 3,
         lastAttackTime: 0,
+        threatTable: new Map(),
       });
 
       spawned++;
@@ -121,6 +124,7 @@ export class NPCSystem {
           npc.y = spawnY;
           data.respawnAt = 0;
           data.aggroTarget = null;
+          data.threatTable.clear();
 
           // Re-add to synced state if it was removed
           if (!gameNpcs.has(id)) {
@@ -150,6 +154,7 @@ export class NPCSystem {
           if (dxSpawn * dxSpawn + dySpawn * dySpawn > data.leashRange * data.leashRange) {
             // Too far from spawn, reset
             data.aggroTarget = null;
+            data.threatTable.clear();
             npc.x = spawnX;
             npc.y = spawnY;
             npc.hp = template.hp; // Full heal on reset
@@ -184,7 +189,9 @@ export class NPCSystem {
             data.lastAttackTime = now;
 
             if (target.alive && now >= target.invulnerableUntil) {
-              const damage = Math.max(1, baseDamage);
+              let damage = Math.max(1, baseDamage);
+              // Apply shield absorption (Shield of Faith) before HP damage
+              damage = applyShieldAbsorption(target, damage);
               target.hp -= damage;
               target.invulnerableUntil = now + INVULNERABILITY_MS;
 
@@ -255,20 +262,34 @@ export class NPCSystem {
 
     data.npc.hp = Math.max(0, data.npc.hp - damage);
 
-    // Aggro toward attacker (only if canAggro allows it)
+    // Accumulate threat — damage dealt = threat generated
     const canAggro = data.template.canAggro ?? (data.template.type === 'enemy');
-    if (!data.aggroTarget && canAggro) {
-      data.aggroTarget = attackerId;
+    if (canAggro) {
+      data.threatTable.set(attackerId, (data.threatTable.get(attackerId) ?? 0) + damage);
     }
 
     if (data.npc.hp <= 0) {
       data.npc.alive = false;
       data.respawnAt = now + data.template.respawnMs;
       data.aggroTarget = null;
+      data.threatTable.clear();
       return { died: true, xpReward: data.template.xpReward };
     }
 
     return { died: false, xpReward: 0 };
+  }
+
+  /**
+   * Taunt an NPC — add bonus threat to the player's current threat and
+   * immediately force the NPC to target them.
+   */
+  tauntNpc(npcId: string, playerId: string, bonusThreat: number): void {
+    const data = this.npcs.get(npcId);
+    if (!data || !data.npc.alive) return;
+
+    const current = data.threatTable.get(playerId) ?? 0;
+    data.threatTable.set(playerId, current + bonusThreat);
+    data.aggroTarget = playerId;
   }
 
   /**
@@ -289,6 +310,68 @@ export class NPCSystem {
       }
     }
     return result;
+  }
+
+  // ── Admin API (called from admin REST routes) ──
+
+  /**
+   * Register an externally-created NPC (e.g. from admin spawn) so the
+   * AI system tracks it like any other NPC.
+   */
+  registerAdminNPC(npcId: string, npc: NPCState, spawnX: number, spawnY: number, template: NPCTemplate): void {
+    this.npcs.set(npcId, {
+      npc,
+      spawnX,
+      spawnY,
+      template,
+      respawnAt: 0,
+      aggroTarget: null,
+      leashRange: template.leashRange ?? (template.aggroRange ?? 200) * 3,
+      lastAttackTime: 0,
+      threatTable: new Map(),
+    });
+  }
+
+  /**
+   * Force-kill an NPC from admin. Sets it dead and starts respawn timer.
+   */
+  adminKill(npcId: string): void {
+    const data = this.npcs.get(npcId);
+    if (!data) return;
+    data.npc.alive = false;
+    data.npc.hp = 0;
+    data.respawnAt = Date.now() + data.template.respawnMs;
+    data.aggroTarget = null;
+    data.threatTable.clear();
+  }
+
+  /**
+   * Force-respawn a dead NPC immediately from admin.
+   */
+  adminRespawn(npcId: string, gameNpcs: MapSchema<NPCState>): void {
+    const data = this.npcs.get(npcId);
+    if (!data) return;
+    data.npc.alive = true;
+    data.npc.hp = data.template.hp;
+    data.npc.x = data.spawnX;
+    data.npc.y = data.spawnY;
+    data.respawnAt = 0;
+    data.aggroTarget = null;
+    data.threatTable.clear();
+    if (!gameNpcs.has(npcId)) {
+      gameNpcs.set(npcId, data.npc);
+    }
+  }
+
+  /**
+   * Permanently delete an NPC from admin — removes it from the game state
+   * and from the AI tracking map so it will never respawn.
+   */
+  adminDelete(npcId: string, gameNpcs: MapSchema<NPCState>): void {
+    // Remove from AI tracker first (cancels any pending respawn timer)
+    this.npcs.delete(npcId);
+    // Remove from Colyseus state so clients stop seeing it
+    gameNpcs.delete(npcId);
   }
 
   // ── Private ──
@@ -320,17 +403,29 @@ export class NPCSystem {
 
     const aggroRange = template.aggroRange ?? 200;
 
-    // If already aggroed, verify target still valid
-    if (data.aggroTarget) {
-      const target = players.get(data.aggroTarget);
-      if (!target || !target.alive || target.zoneId !== npc.zoneId) {
-        data.aggroTarget = null;
-      } else {
-        return; // Keep current target
+    // ── Phase 1: Prune threat table — remove dead / disconnected / wrong-zone entries ──
+    for (const [sessionId] of data.threatTable) {
+      const p = players.get(sessionId);
+      if (!p || !p.alive || p.zoneId !== npc.zoneId) {
+        data.threatTable.delete(sessionId);
       }
     }
 
-    // Scan for nearest player in aggro range
+    // ── Phase 2: Threat-based targeting — pick highest-threat valid player ──
+    if (data.threatTable.size > 0) {
+      let bestId: string | null = null;
+      let bestThreat = -1;
+      for (const [sessionId, threat] of data.threatTable) {
+        if (threat > bestThreat) {
+          bestThreat = threat;
+          bestId = sessionId;
+        }
+      }
+      data.aggroTarget = bestId;
+      return;
+    }
+
+    // ── Phase 3: Proximity fallback — no one has dealt damage yet ──
     let nearest: string | null = null;
     let nearestDist = aggroRange * aggroRange;
 
@@ -345,6 +440,10 @@ export class NPCSystem {
       }
     });
 
+    if (nearest) {
+      // Seed a small initial threat so proximity-aggroed players appear in the table
+      data.threatTable.set(nearest, 1);
+    }
     data.aggroTarget = nearest;
   }
 }

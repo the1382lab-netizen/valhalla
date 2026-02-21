@@ -5,7 +5,8 @@ export type EditorSection =
   | 'npcs' | 'loot'
   | 'zones' | 'ui'
   | 'maps'
-  | 'balance' | 'validation';
+  | 'balance' | 'validation'
+  | 'admin';
 
 interface DataSection<T> {
   data: T;

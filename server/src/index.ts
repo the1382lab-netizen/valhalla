@@ -5,6 +5,7 @@ import { SERVER_PORT, ROOM_NAME } from '@valhalla/shared';
 import { initDatabase } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
+import { adminRouter } from './routes/admin.js';
 import express from 'express';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -77,6 +78,9 @@ const server = defineServer({
     // Auth & character API routes
     app.use('/api/auth', authRouter);
     app.use('/api/characters', charactersRouter);
+
+    // Admin dashboard API (for game editor)
+    app.use('/api/admin', adminRouter);
   },
 });
 

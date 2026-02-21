@@ -10,7 +10,7 @@
  */
 
 import { MapSchema } from '@colyseus/schema';
-import { PlayerState } from '../schema/PlayerState.js';
+import { PlayerState, applyShieldAbsorption } from '../schema/PlayerState.js';
 import { SpellProjectileState } from '../schema/SpellProjectileState.js';
 import { NPCState } from '../schema/NPCState.js';
 import { CollisionSystem } from './CollisionSystem.js';
@@ -228,11 +228,7 @@ export class SpellProjectileSystem {
           type: 'npcDied',
           data: { targetId: npcId, killerId: proj.ownerId, xpReward },
         });
-        // Award XP to the caster
-        const caster = players.get(proj.ownerId);
-        if (caster) {
-          caster.xp = (caster.xp ?? 0) + xpReward;
-        }
+        // XP is now awarded centrally by GameRoom.awardKillXP via broadcastSpellProjectileEvents
       }
     });
 
@@ -301,6 +297,9 @@ export class SpellProjectileSystem {
 
     // 7. Floor, minimum 1
     damage = Math.max(1, Math.floor(damage));
+
+    // Apply shield absorption (Shield of Faith) before HP damage
+    damage = applyShieldAbsorption(target, damage);
 
     // Apply
     target.hp -= damage;

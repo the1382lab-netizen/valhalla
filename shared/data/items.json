@@ -108,7 +108,8 @@
       "statBonuses": {
         "stamina": 2,
         "physicalDefense": 2
-      }
+      },
+      "equipSpriteSheet": "HEAD_plate_armor_helmet.png"
     },
     "cloth_hood": {
       "id": "cloth_hood",
@@ -152,7 +153,8 @@
       "statBonuses": {
         "stamina": 3,
         "physicalDefense": 4
-      }
+      },
+      "equipSpriteSheet": "TORSO_chain_armor_torso.png"
     },
     "cloth_robe": {
       "id": "cloth_robe",
@@ -196,7 +198,8 @@
       "statBonuses": {
         "stamina": 2,
         "physicalDefense": 3
-      }
+      },
+      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
     },
     "cloth_pants": {
       "id": "cloth_pants",
@@ -239,7 +242,8 @@
       "statBonuses": {
         "stamina": 1,
         "physicalDefense": 2
-      }
+      },
+      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
     },
     "cloth_sandals": {
       "id": "cloth_sandals",
@@ -315,6 +319,20 @@
       "rarity": "common",
       "stackable": true,
       "maxStack": 9999
+    },
+    "item_1771651247461": {
+      "id": "item_1771651247461",
+      "name": "Iron Boots",
+      "description": "Sturdy iron boots.",
+      "category": "armor",
+      "rarity": "common",
+      "equipSlot": "hands",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "constitution": 2
+      },
+      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
     }
   }
 }

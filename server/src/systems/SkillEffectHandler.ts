@@ -53,6 +53,16 @@ export interface SkillEffectContext {
    * Using this instead of mutating target.hp directly ensures aggro is triggered.
    */
   damageNpc?: (npcId: string, damage: number, attackerId: string, now: number) => { died: boolean; xpReward: number };
+  /**
+   * Delegate to taunt an NPC via NPCSystem.
+   * Sets the player's threat to max(all threats) + bonus and forces aggro switch.
+   */
+  tauntNpc?: (npcId: string, playerId: string, bonusThreat: number) => void;
+  /**
+   * Delegate to award XP through GameRoom's centralized party-aware distribution.
+   * playerId is the player.id (== sessionId) of the killer.
+   */
+  awardXP?: (playerId: string, amount: number) => void;
 }
 
 // ── Skill Event Types ──────────────────────────────────────
@@ -146,7 +156,7 @@ function defaultEffect(
   skill: SkillTemplate,
   allPlayers: PlayerMap,
   now: number,
-  _ctx?: SkillEffectContext,
+  ctx?: SkillEffectContext,
 ): SkillEvent[] {
   const events: SkillEvent[] = [];
 
@@ -167,9 +177,17 @@ function defaultEffect(
       const critMult = isCrit ? 1 + (caster.stats?.critDamage ?? 0.5) : 1;
       const finalDamage = Math.round(scaledDamage * critMult);
 
-      t.hp = Math.max(0, t.hp - finalDamage);
-      if (t.hp <= 0) {
-        t.alive = false;
+      // Route NPC damage through NPCSystem so aggro + XP rewards work correctly.
+      if (isNpcTarget(t) && ctx?.damageNpc) {
+        const { xpReward } = ctx.damageNpc(t.id, finalDamage, caster.id, now);
+        if (xpReward > 0) {
+          ctx?.awardXP ? ctx.awardXP(caster.id, xpReward) : (caster.xp = (caster.xp ?? 0) + xpReward);
+        }
+      } else {
+        t.hp = Math.max(0, t.hp - finalDamage);
+        if (t.hp <= 0) {
+          t.alive = false;
+        }
       }
 
       events.push({ type: 'damage', targetId: t.id, damage: finalDamage, isCrit });
@@ -190,7 +208,12 @@ function defaultEffect(
 
   // ── Healing skills (player targets only) ──
   if (skill.baseHealing) {
-    // Healing only applies to players — NPCs don't receive heals from skills
+    // singleAlly heals require a valid player target — never silently fall back to the caster.
+    // Upstream validation should already block this, but this is a hard safety net.
+    if (skill.targetType === 'singleAlly' && (!target || isNpcTarget(target))) {
+      return events; // fizzle — no valid ally in scope
+    }
+    // For self / aoeSelf / other healing, fall back to caster when there is no explicit target.
     const healTarget = (target && !isNpcTarget(target)) ? target : caster;
     if (healTarget.alive) {
       const [min, max] = skill.baseHealing;
@@ -409,10 +432,13 @@ function magicMissileHandler(
   const critMult = isCrit ? 1 + (caster.stats?.critDamage ?? 0.5) : 1;
   const finalDamage = Math.round(scaledDamage * critMult);
 
-  // Route NPC damage through NPCSystem so aggro is triggered correctly.
+  // Route NPC damage through NPCSystem so aggro + XP rewards work correctly.
   // Fall back to direct mutation for player targets (PvP) where no delegate is needed.
   if (isNpcTarget(target) && ctx?.damageNpc) {
-    ctx.damageNpc(target.id, finalDamage, caster.id, now);
+    const { xpReward } = ctx.damageNpc(target.id, finalDamage, caster.id, now);
+    if (xpReward > 0) {
+      ctx?.awardXP ? ctx.awardXP(caster.id, xpReward) : (caster.xp = (caster.xp ?? 0) + xpReward);
+    }
   } else {
     target.hp = Math.max(0, target.hp - finalDamage);
     if (target.hp <= 0) {
@@ -425,3 +451,75 @@ function magicMissileHandler(
 
 // Register the Magic Missile handler
 registerEffectHandler(SkillId.WIZARD_MAGIC_MISSILE, magicMissileHandler);
+
+// ── Taunt Handler ─────────────────────────────────────────
+// Adds a level-scaled threat bonus and forces the NPC to target the caster.
+// Base threat: 50, scaling: +20 per level → Lv1 = 70, Lv10 = 250, Lv25 = 550.
+
+const TAUNT_BASE_THREAT = 50;
+const TAUNT_PER_LEVEL   = 20;
+
+function tauntHandler(
+  caster: PlayerState,
+  target: CombatTarget | null,
+  skill: SkillTemplate,
+  _allPlayers: PlayerMap,
+  _now: number,
+  ctx?: SkillEffectContext,
+): SkillEvent[] {
+  if (!target || !isNpcTarget(target) || !target.alive) return [];
+  if (!ctx?.tauntNpc) return [];
+
+  const bonusThreat = TAUNT_BASE_THREAT + TAUNT_PER_LEVEL * caster.level;
+  ctx.tauntNpc(target.id, caster.id, bonusThreat);
+
+  return [{
+    type: 'buff',
+    targetId: target.id,
+    skillId: skill.id,
+    durationMs: skill.buffDurationMs ?? 6000,
+  }];
+}
+
+registerEffectHandler(SkillId.WARRIOR_TAUNT, tauntHandler);
+
+// ── Shield of Faith Handler ────────────────────────────────
+// Wraps the target player in an absorbing shield.
+// Shield HP = 30 + wisdom * 1.5 (rounds to nearest int).
+// Overwrites any existing shield on the target (refresh semantics).
+
+function shieldOfFaithHandler(
+  caster: PlayerState,
+  target: CombatTarget | null,
+  skill: SkillTemplate,
+  _allPlayers: PlayerMap,
+  now: number,
+  _ctx?: SkillEffectContext,
+): SkillEvent[] {
+  // Must target a living player (or fall back to caster)
+  const shieldTarget = (target && !isNpcTarget(target)) ? target : caster;
+  if (!shieldTarget.alive) return [];
+
+  const wisdom = getStatValue(caster, 'wisdom');
+  const shieldAmount = Math.round(30 + wisdom * 1.5);
+
+  // Apply the shield (overwrites/refreshes existing shield)
+  shieldTarget.shieldHp = shieldAmount;
+
+  // Apply buff for duration tracking and UI
+  applyBuff(shieldTarget, {
+    skillId: skill.id,
+    casterId: caster.id,
+    appliedAt: now,
+    expiresAt: now + (skill.buffDurationMs ?? 15000),
+  });
+
+  return [{
+    type: 'buff',
+    targetId: shieldTarget.id,
+    skillId: skill.id,
+    durationMs: skill.buffDurationMs ?? 15000,
+  }];
+}
+
+registerEffectHandler(SkillId.CLERIC_SHIELD_OF_FAITH, shieldOfFaithHandler);

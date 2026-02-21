@@ -116,6 +116,27 @@ app.get('/api/assets/sprites/:subfolder', (req, res) => {
   }
 });
 
+// ── Admin proxy — forward /api/admin/* to the game server (port 2567) ───
+const GAME_SERVER_URL = 'http://localhost:2567';
+
+app.all('/api/admin/:action', async (req, res) => {
+  const url = `${GAME_SERVER_URL}/api/admin/${req.params.action}`;
+  try {
+    const fetchOpts: RequestInit = {
+      method: req.method,
+      headers: { 'Content-Type': 'application/json' },
+    };
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      fetchOpts.body = JSON.stringify(req.body);
+    }
+    const upstream = await fetch(url, fetchOpts);
+    const data = await upstream.json();
+    res.status(upstream.status).json(data);
+  } catch (err: any) {
+    res.status(502).json({ error: `Game server unreachable: ${err.message}` });
+  }
+});
+
 const PORT = 5181;
 app.listen(PORT, () => {
   console.log(`\n  Valhalla Editor API server running on http://localhost:${PORT}`);

@@ -33,11 +33,12 @@ export interface NPCMap {
 }
 
 /**
- * Minimal interface for applying damage to an NPC via NPCSystem.
+ * Minimal interface for NPC combat operations via NPCSystem.
  * Keeps SkillSystem decoupled from the full NPCSystem class.
  */
-export interface NPCDamageDelegate {
+export interface NPCCombatDelegate {
   damageNPC(npcId: string, damage: number, attackerId: string, now: number): { died: boolean; xpReward: number };
+  tauntNpc(npcId: string, playerId: string, bonusThreat: number): void;
 }
 
 // ── Result types for communicating back to GameRoom ────────
@@ -137,7 +138,8 @@ export class SkillSystem {
     groundX?: number | null,
     groundY?: number | null,
     allNPCs?: NPCMap,
-    npcDelegate?: NPCDamageDelegate,
+    npcDelegate?: NPCCombatDelegate,
+    awardXPDelegate?: (playerId: string, amount: number) => void,
   ): SkillSystemEvent[] {
     const skill = DataManager.instance.getSkill(skillId);
     if (!skill) {
@@ -159,6 +161,8 @@ export class SkillSystem {
       groundY: groundY ?? null,
       allNPCs,
       damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
+      tauntNpc: npcDelegate ? (id, pId, bonus) => npcDelegate.tauntNpc(id, pId, bonus) : undefined,
+      awardXP: awardXPDelegate ?? undefined,
     };
 
     if (skill.castTimeMs === 0) {
@@ -202,7 +206,8 @@ export class SkillSystem {
     now: number,
     spellProjectiles?: MapSchema<SpellProjectileState>,
     allNPCs?: NPCMap,
-    npcDelegate?: NPCDamageDelegate,
+    npcDelegate?: NPCCombatDelegate,
+    awardXPDelegate?: (playerId: string, amount: number) => void,
   ): SkillSystemEvent[] {
     const events: SkillSystemEvent[] = [];
 
@@ -233,12 +238,32 @@ export class SkillSystem {
         const skill = DataManager.instance.getSkill(cast.skillId);
         if (skill) {
           const target = this.resolveTarget(cast.targetId, allPlayers, allNPCs);
+
+          // Re-validate single-target skills at fire time: the target may have
+          // died, disconnected, or been invalidated during the cast window.
+          if (skill.targetType === 'singleEnemy' || skill.targetType === 'singleAlly') {
+            if (!target || !target.alive) {
+              events.push({ type: 'castFailed', casterId: player.id, reason: 'Target is no longer valid' });
+              continue;
+            }
+            if (skill.targetType === 'singleAlly' && cast.targetId && !allPlayers.get(cast.targetId)) {
+              events.push({ type: 'castFailed', casterId: player.id, reason: 'Invalid target' });
+              continue;
+            }
+            if (skill.targetType === 'singleEnemy' && cast.targetId && allPlayers.get(cast.targetId)) {
+              events.push({ type: 'castFailed', casterId: player.id, reason: 'Invalid target' });
+              continue;
+            }
+          }
+
           const ctx: SkillEffectContext = {
             spellProjectiles,
             groundX: cast.groundX,
             groundY: cast.groundY,
             allNPCs,
             damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
+            tauntNpc: npcDelegate ? (id, pId, bonus) => npcDelegate.tauntNpc(id, pId, bonus) : undefined,
+            awardXP: awardXPDelegate ?? undefined,
           };
           const castEvents = this.completeCast(player, target, skill, allPlayers, now, ctx);
           events.push(...castEvents);
@@ -335,6 +360,14 @@ export class SkillSystem {
       const target = this.resolveTarget(targetId, allPlayers, allNPCs);
       if (!target) return 'Invalid target';
       if (!target.alive) return 'Target is dead';
+      // singleAlly must resolve to a player (not an NPC)
+      if (skill.targetType === 'singleAlly' && !allPlayers.get(targetId)) {
+        return 'Invalid target';
+      }
+      // singleEnemy must resolve to an NPC (not a player)
+      if (skill.targetType === 'singleEnemy' && allPlayers.get(targetId)) {
+        return 'Invalid target';
+      }
     }
 
     // Range check (for single-target skills)
@@ -473,6 +506,10 @@ export class SkillSystem {
     for (const buff of player.activeBuffs) {
       // Check expiration
       if (now >= buff.expiresAt) {
+        // Clear shield when Shield of Faith expires naturally
+        if (buff.skillId === SkillId.CLERIC_SHIELD_OF_FAITH) {
+          player.shieldHp = 0;
+        }
         events.push({ type: 'buffExpired', targetId: player.id, skillId: buff.skillId });
         continue;
       }

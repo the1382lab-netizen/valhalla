@@ -38,6 +38,12 @@ const sections: { label: string; items: NavItem[] }[] = [
       { id: 'validation', label: 'Validation', icon: '✅' },
     ],
   },
+  {
+    label: 'Server',
+    items: [
+      { id: 'admin', label: 'Live Dashboard', icon: '🖥' },
+    ],
+  },
 ];
 
 export const Sidebar: React.FC = () => {

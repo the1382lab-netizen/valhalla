@@ -29,6 +29,7 @@ import {
   ACTION_BAR_SLOTS,
   getAvailableSkills,
   ChatMessagePayload,
+  PartyMemberInfo,
   orthoToIso,
   isoToOrtho,
   tileToIso,
@@ -69,6 +70,7 @@ export class GameScene extends Phaser.Scene {
   // Local player vitals
   private localHp: number = 100;
   private localMaxHp: number = 100;
+  private localShieldHp: number = 0;
   private localMana: number = 0;
   private localMaxMana: number = 0;
   private localAlive: boolean = true;
@@ -142,7 +144,7 @@ export class GameScene extends Phaser.Scene {
   private invOffset:       { x: number; y: number } = { x: 0, y: 0 };
   private skillsOffset:    { x: number; y: number } = { x: 0, y: 0 };
   // Active drag state
-  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | 'target' | null = null;
+  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | 'target' | 'party' | 'buffs' | null = null;
   private hudDragStartMouse:  { x: number; y: number } = { x: 0, y: 0 };
   private hudDragStartOffset: { x: number; y: number } = { x: 0, y: 0 };
   // Cached screen rects for the action bar and skills pane (updated each draw).
@@ -257,7 +259,7 @@ export class GameScene extends Phaser.Scene {
   /** ID of the currently targeted entity (player sessionId or NPC id), or null. */
   private currentTargetId: string | null = null;
   /** Type of the currently targeted entity. */
-  private currentTargetType: 'player' | 'npc' | null = null;
+  private currentTargetType: 'player' | 'npc' | 'self' | null = null;
   /**
    * Set to true when an entity sprite was just clicked, so the global
    * pointer-down handler (which moves the player) can skip that frame.
@@ -272,6 +274,29 @@ export class GameScene extends Phaser.Scene {
   private targetNameplateHpBar!: Phaser.GameObjects.Graphics;
   private targetNameplateHpText!: Phaser.GameObjects.Text;
   private targetNameplateTitleHandle!: { x: number; y: number; w: number; h: number };
+
+  // ── Party System ──────────────────────────────────────────
+  private partyMembers: PartyMemberInfo[] = [];
+  private partyMemberData: Map<string, { hp: number; maxHp: number; mana: number; maxMana: number; level: number; alive: boolean; shieldHp: number }> = new Map();
+  private remotePlayerShieldHp: Map<string, number> = new Map();
+
+  // Buffs panel
+  private localBuffs: Map<string, { skillId: string; appliedAt: number; expiresAt: number }> = new Map();
+  private buffsOffset: { x: number; y: number } = { x: 0, y: 0 };
+  private buffsPanelContainer!: Phaser.GameObjects.Container;
+  private buffsPanelBg!: Phaser.GameObjects.Graphics;
+  private buffsPanelRowGfx: Phaser.GameObjects.Graphics[] = [];
+  private buffsPanelAbbrTexts: Phaser.GameObjects.Text[] = [];
+  private buffsPanelNameTexts: Phaser.GameObjects.Text[] = [];
+  private buffsPanelTimerTexts: Phaser.GameObjects.Text[] = [];
+  private buffsPanelTitleHandle: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 0, h: 0 };
+  private partyOffset: { x: number; y: number } = { x: 0, y: 0 };
+  private partyPanelContainer!: Phaser.GameObjects.Container;
+  private partyPanelBg!: Phaser.GameObjects.Graphics;
+  private partyPanelTexts: Phaser.GameObjects.Text[] = [];
+  private partyPanelHpBars: Phaser.GameObjects.Graphics[] = [];
+  private partyPanelManaBars: Phaser.GameObjects.Graphics[] = [];
+  private partyPanelTitleHandle: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 0, h: 0 };
 
   // Layout constants
   private readonly CHAT_MAX_W = 360;   // maximum panel width
@@ -380,6 +405,12 @@ export class GameScene extends Phaser.Scene {
     // Create target nameplate panel (initially hidden)
     this.createTargetNameplate();
 
+    // Create party panel (initially hidden)
+    this.createPartyPanel();
+
+    // Create buffs panel (initially hidden)
+    this.createBuffsPanel();
+
     // Create loot panel (hidden initially)
     this.createLootPanel();
 
@@ -451,11 +482,23 @@ export class GameScene extends Phaser.Scene {
 
       const skill = ClientDataManager.instance.getSkill(skillId);
 
-      // Single-target skills require a target to be selected
+      // Single-target skills require a target to be selected, and the target
+      // must match the skill's target class (ally = player, enemy = NPC).
       if (skill?.targetType === 'singleEnemy' || skill?.targetType === 'singleAlly') {
-        if (!this.currentTargetId) {
+        const showErr = (msg: string) => {
           const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
-          if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, 'No target', '#ff8844');
+          if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, msg, '#ff8844');
+        };
+        if (!this.currentTargetId) {
+          showErr('No target');
+          return;
+        }
+        if (skill.targetType === 'singleAlly' && this.currentTargetType !== 'player' && this.currentTargetType !== 'self') {
+          showErr('Invalid target');
+          return;
+        }
+        if (skill.targetType === 'singleEnemy' && this.currentTargetType !== 'npc') {
+          showErr('Invalid target');
           return;
         }
         this.network.sendCastSkill(skillId, this.currentTargetId);
@@ -683,6 +726,7 @@ export class GameScene extends Phaser.Scene {
         this.renderY = player.y;
         this.localHp = player.hp;
         this.localMaxHp = player.maxHp;
+        this.localShieldHp = player.shieldHp ?? 0;
         this.localMana = player.mana ?? 0;
         this.localMaxMana = player.maxMana ?? 0;
         this.localAlive = player.alive;
@@ -731,6 +775,7 @@ export class GameScene extends Phaser.Scene {
         // Update local state from server
         this.localHp = player.hp;
         this.localMaxHp = player.maxHp;
+        this.localShieldHp = player.shieldHp ?? 0;
         this.localMana = player.mana ?? 0;
         this.localMaxMana = player.maxMana ?? 0;
         this.localSpeed = player.speed ?? this.localSpeed;
@@ -822,6 +867,22 @@ export class GameScene extends Phaser.Scene {
           });
         }
         // Different zone (and wasn't in ours) → nothing to do
+
+        // Track shield for target pane (remote players only)
+        this.remotePlayerShieldHp.set(sessionId, player.shieldHp ?? 0);
+      }
+
+      // Update party member data cache (fires for ALL players, not just our zone)
+      if (this.partyMembers.some(m => m.sessionId === sessionId)) {
+        this.partyMemberData.set(sessionId, {
+          hp: player.hp ?? 0,
+          maxHp: player.maxHp ?? 1,
+          mana: player.mana ?? 0,
+          maxMana: player.maxMana ?? 0,
+          level: player.level ?? 1,
+          alive: player.alive ?? true,
+          shieldHp: player.shieldHp ?? 0,
+        });
       }
     };
 
@@ -830,6 +891,7 @@ export class GameScene extends Phaser.Scene {
       this.entityRenderer.removeRemotePlayer(sessionId);
       this.remotePlayerZones.delete(sessionId);
       this.remotePlayerCache.delete(sessionId);
+      this.remotePlayerShieldHp.delete(sessionId);
     };
 
     // Projectile callbacks — only render projectiles whose owner is in our zone.
@@ -1142,15 +1204,27 @@ export class GameScene extends Phaser.Scene {
 
     this.network.onBuffApplied = (data: { targetId: string; skillId: string; durationMs: number }) => {
       const skill = ClientDataManager.instance.getSkill(data.skillId);
-      if (skill && data.targetId === this.network.sessionId) {
-        this.entityRenderer.showCombatText(this.localX, this.localY - 30, `+${skill.name}`, '#88ccff');
+      if (data.targetId === this.network.sessionId) {
+        if (skill) {
+          this.entityRenderer.showCombatText(this.localX, this.localY - 30, `+${skill.name}`, '#88ccff');
+        }
+        // Track in local buff list for the buffs panel
+        const now = Date.now();
+        this.localBuffs.set(data.skillId, {
+          skillId: data.skillId,
+          appliedAt: now,
+          expiresAt: now + data.durationMs,
+        });
       }
     };
 
     this.network.onBuffRemoved = (data: { targetId: string; skillId: string }) => {
       const skill = ClientDataManager.instance.getSkill(data.skillId);
-      if (skill && data.targetId === this.network.sessionId) {
-        this.entityRenderer.showCombatText(this.localX, this.localY - 30, `-${skill.name}`, '#888888');
+      if (data.targetId === this.network.sessionId) {
+        if (skill) {
+          this.entityRenderer.showCombatText(this.localX, this.localY - 30, `-${skill.name}`, '#888888');
+        }
+        this.localBuffs.delete(data.skillId);
       }
     };
 
@@ -1208,6 +1282,27 @@ export class GameScene extends Phaser.Scene {
       this.network.refreshInventory();
     };
 
+    // Level-up notification — show a prominent gold message on screen
+    this.network.onLevelUp = (newLevel: number) => {
+      // Large gold combat text over the player
+      const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+      if (pos) {
+        this.entityRenderer.showCombatText(pos.x, pos.y - 50, `LEVEL UP! (${newLevel})`, '#ffdd44');
+      }
+      // Also announce in chat as a system message
+      this.pushSystemChat(`You have reached level ${newLevel}!`);
+    };
+
+    // ── Party system callbacks ──
+    this.network.onPartyUpdate = (members: PartyMemberInfo[]) => {
+      this.partyMembers = members;
+      // Prune stale data for members no longer in party
+      const memberSet = new Set(members.map(m => m.sessionId));
+      for (const key of this.partyMemberData.keys()) {
+        if (!memberSet.has(key)) this.partyMemberData.delete(key);
+      }
+    };
+
     // Wire up bag click handler on entity renderer
     this.entityRenderer.onBagClick = (bagId: string, button: number) => {
       this.entityClickConsumed = true;
@@ -1248,6 +1343,20 @@ export class GameScene extends Phaser.Scene {
     this.playerSprite = this.add.sprite(playerIso.x, playerIso.y, 'player_walk', 18);
     this.playerSprite.setDepth(ENTITY_DEPTH_BASE);
     this.playerSprite.rotation = 0;
+
+    // Allow clicking the local player sprite to self-target
+    this.playerSprite.setInteractive({ useHandCursor: false });
+    this.playerSprite.on('pointerdown', () => {
+      this.entityClickConsumed = true;
+      this.inputManager.suppressNextMelee = true;
+      const selfId = this.network.sessionId;
+      if (!selfId) return;
+      if (this.currentTargetId === selfId && this.currentTargetType === 'self') {
+        this.clearTarget(); // click self again = deselect
+      } else {
+        this.setTarget(selfId, 'self');
+      }
+    });
 
     // Aim indicator line
     this.aimLine = this.add.graphics();
@@ -1438,6 +1547,13 @@ export class GameScene extends Phaser.Scene {
     this.hpBarGfx.fillStyle(hpColor, 1);
     this.hpBarGfx.fillRect(barX, hpBarY, barWidth * hpRatio, barHeight);
 
+    // Shield overlay — cyan tint on HP bar when Shield of Faith is active
+    if (this.localShieldHp > 0 && this.localMaxHp > 0) {
+      const shieldRatio = Math.min(1, this.localShieldHp / this.localMaxHp);
+      this.hpBarGfx.fillStyle(0x00ccff, 0.45);
+      this.hpBarGfx.fillRect(barX, hpBarY, barWidth * shieldRatio, barHeight);
+    }
+
     this.hpBarGfx.lineStyle(1, 0xffffff, 0.5);
     this.hpBarGfx.strokeRect(barX - 2, hpBarY - 2, barWidth + 4, barHeight + 4);
 
@@ -1479,7 +1595,8 @@ export class GameScene extends Phaser.Scene {
       : this.localMaxEnergy > 0
         ? `  EP: ${Math.floor(this.localEnergy)}/${this.localMaxEnergy}`
         : '';
-    this.classHudText.setText(`${displayName} Lv.${this.localLevel}  HP: ${this.localHp}/${this.localMaxHp}${resourceStr}`);
+    const shieldStr = this.localShieldHp > 0 ? `  Shield: ${this.localShieldHp}` : '';
+    this.classHudText.setText(`${displayName} Lv.${this.localLevel}  HP: ${this.localHp}/${this.localMaxHp}${resourceStr}${shieldStr}`);
 
     // Position class HUD above bars
     const hasResourceBar = this.localMaxMana > 0 || this.localMaxEnergy > 0;
@@ -1527,6 +1644,8 @@ export class GameScene extends Phaser.Scene {
       if (saved.inv)       this.invOffset       = saved.inv;
       if (saved.skills)    this.skillsOffset    = saved.skills;
       if (saved.target)    this.targetOffset    = saved.target;
+      if (saved.party)     this.partyOffset     = saved.party;
+      if (saved.buffs)     this.buffsOffset     = saved.buffs;
     } catch { /* ignore malformed data */ }
   }
 
@@ -1538,8 +1657,19 @@ export class GameScene extends Phaser.Scene {
         inv:       this.invOffset,
         skills:    this.skillsOffset,
         target:    this.targetOffset,
+        party:     this.partyOffset,
+        buffs:     this.buffsOffset,
       }));
     } catch { /* ignore */ }
+  }
+
+  /**
+   * Phaser lifecycle — called when the scene is stopped or replaced (e.g. logging out,
+   * returning to character select). Saves HUD layout as a safety net so positions are
+   * never lost even if the player leaves without completing a drag gesture.
+   */
+  shutdown(): void {
+    this.saveHudLayout();
   }
 
   /**
@@ -1625,6 +1755,20 @@ export class GameScene extends Phaser.Scene {
         this.hudDragStartOffset = { ...this.targetOffset };
         return;
       }
+      // Party panel drag handle (only when party is visible)
+      if (this.partyMembers.length > 0 && hitRect(this.partyPanelTitleHandle, px, py)) {
+        this.hudDragTarget      = 'party';
+        this.hudDragStartMouse  = { x: px, y: py };
+        this.hudDragStartOffset = { ...this.partyOffset };
+        return;
+      }
+      // Buffs panel drag handle (only when at least one buff is active)
+      if (this.localBuffs.size > 0 && hitRect(this.buffsPanelTitleHandle, px, py)) {
+        this.hudDragTarget      = 'buffs';
+        this.hudDragStartMouse  = { x: px, y: py };
+        this.hudDragStartOffset = { ...this.buffsOffset };
+        return;
+      }
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
@@ -1657,6 +1801,12 @@ export class GameScene extends Phaser.Scene {
             this.getTargetNameplateDefaultX() + newOffset.x,
             this.getTargetNameplateDefaultY() + newOffset.y,
           );
+          break;
+        case 'party':
+          this.partyOffset = newOffset;
+          break;
+        case 'buffs':
+          this.buffsOffset = newOffset;
           break;
       }
     });
@@ -1752,6 +1902,331 @@ export class GameScene extends Phaser.Scene {
     this.targetNameplateTitleHandle = { x: defaultX, y: defaultY, w: NW, h: TH };
   }
 
+  // ── Party Panel ─────────────────────────────────────────────
+
+  private createPartyPanel(): void {
+    const PW = 160;  // panel width
+    const TH = 20;   // title strip height
+
+    const defaultX = 12;
+    const defaultY = 200;
+
+    this.partyPanelContainer = this.add.container(
+      defaultX + this.partyOffset.x,
+      defaultY + this.partyOffset.y,
+    );
+    this.partyPanelContainer.setScrollFactor(0);
+    this.partyPanelContainer.setDepth(UI_DEPTH_BASE + 75);
+    this.partyPanelContainer.setVisible(false);
+
+    // Background (redrawn dynamically based on member count)
+    this.partyPanelBg = this.add.graphics();
+    this.partyPanelContainer.add(this.partyPanelBg);
+
+    // Title text
+    const titleText = this.add.text(PW / 2, TH / 2, 'Party', {
+      fontSize: '11px',
+      color: '#8888bb',
+      fontStyle: 'bold',
+    });
+    titleText.setOrigin(0.5, 0.5);
+    this.partyPanelContainer.add(titleText);
+
+    // Pre-create slots for up to 4 members (name text + HP bar + mana bar each)
+    for (let i = 0; i < 4; i++) {
+      const nameText = this.add.text(8, TH + 4 + i * 38, '', {
+        fontSize: '11px',
+        color: '#ffffff',
+        fontStyle: 'bold',
+      });
+      nameText.setOrigin(0, 0);
+      this.partyPanelTexts.push(nameText);
+      this.partyPanelContainer.add(nameText);
+
+      const hpBar = this.add.graphics();
+      this.partyPanelHpBars.push(hpBar);
+      this.partyPanelContainer.add(hpBar);
+
+      const manaBar = this.add.graphics();
+      this.partyPanelManaBars.push(manaBar);
+      this.partyPanelContainer.add(manaBar);
+    }
+
+    // Cache initial title handle rect
+    this.partyPanelTitleHandle = { x: defaultX, y: defaultY, w: PW, h: TH };
+  }
+
+  // ── Buffs Panel ──────────────────────────────────────────────
+
+  private createBuffsPanel(): void {
+    const MAX_BUFFS = 8;
+    const PW = 180;
+    const TH = 20;
+
+    this.buffsPanelContainer = this.add.container(0, 0);
+    this.buffsPanelContainer.setScrollFactor(0);
+    this.buffsPanelContainer.setDepth(UI_DEPTH_BASE + 76);
+    this.buffsPanelContainer.setVisible(false);
+
+    // Background graphics (redrawn each frame based on buff count)
+    this.buffsPanelBg = this.add.graphics();
+    this.buffsPanelContainer.add(this.buffsPanelBg);
+
+    // Title text — fixed at the top center of the panel
+    const titleText = this.add.text(PW / 2, TH / 2, 'Buffs', {
+      fontSize: '11px',
+      color: '#8888bb',
+      fontStyle: 'bold',
+    }).setOrigin(0.5, 0.5);
+    this.buffsPanelContainer.add(titleText);
+
+    // Pre-create one slot per possible displayed buff
+    for (let i = 0; i < MAX_BUFFS; i++) {
+      // Graphics: icon box fill + timer progress bar
+      const rowGfx = this.add.graphics();
+      this.buffsPanelRowGfx.push(rowGfx);
+      this.buffsPanelContainer.add(rowGfx);
+
+      // Abbreviation text, centered over the icon box
+      const abbrText = this.add.text(0, 0, '', {
+        fontSize: '8px',
+        fontFamily: 'monospace',
+        color: '#ffffff',
+        fontStyle: 'bold',
+      }).setOrigin(0.5, 0.5);
+      this.buffsPanelAbbrTexts.push(abbrText);
+      this.buffsPanelContainer.add(abbrText);
+
+      // Buff name
+      const nameText = this.add.text(0, 0, '', {
+        fontSize: '9px',
+        fontFamily: 'monospace',
+        color: '#dddddd',
+      }).setOrigin(0, 0);
+      this.buffsPanelNameTexts.push(nameText);
+      this.buffsPanelContainer.add(nameText);
+
+      // Countdown timer (right-aligned)
+      const timerText = this.add.text(0, 0, '', {
+        fontSize: '9px',
+        fontFamily: 'monospace',
+        color: '#aaaaaa',
+      }).setOrigin(1, 0);
+      this.buffsPanelTimerTexts.push(timerText);
+      this.buffsPanelContainer.add(timerText);
+    }
+  }
+
+  private updateBuffsPanel(): void {
+    const MAX_BUFFS = 8;
+    const PW = 180;
+    const TH = 20;
+    const ROW_H = 28;
+    const ICON_SIZE = 16;
+    const BAR_H = 4;
+    const now = Date.now();
+
+    // Prune expired buffs
+    for (const [skillId, buff] of this.localBuffs) {
+      if (now >= buff.expiresAt) this.localBuffs.delete(skillId);
+    }
+
+    const buffs = Array.from(this.localBuffs.values());
+
+    if (buffs.length === 0) {
+      this.buffsPanelContainer.setVisible(false);
+      return;
+    }
+
+    this.buffsPanelContainer.setVisible(true);
+
+    const cam = this.cameras.main;
+    const displayCount = Math.min(buffs.length, MAX_BUFFS);
+    const panelH = TH + displayCount * ROW_H + 4;
+
+    // Fixed default: bottom of panel sits 72px from screen bottom, centered horizontally.
+    // Panel grows upward as buffs are added.
+    const defaultX = Math.round(cam.width / 2 - PW / 2);
+    const defaultY = cam.height - 72 - panelH;
+    const px = defaultX + this.buffsOffset.x;
+    const py = defaultY + this.buffsOffset.y;
+    this.buffsPanelContainer.setPosition(px, py);
+    this.buffsPanelTitleHandle = { x: px, y: py, w: PW, h: TH };
+
+    // Redraw background
+    this.buffsPanelBg.clear();
+    this.buffsPanelBg.fillStyle(0x12122a, 0.92);
+    this.buffsPanelBg.fillRoundedRect(0, 0, PW, panelH, 4);
+    this.buffsPanelBg.lineStyle(1, 0x44446a, 1);
+    this.buffsPanelBg.strokeRoundedRect(0, 0, PW, panelH, 4);
+    // Title strip
+    this.buffsPanelBg.fillStyle(0x22225a, 0.98);
+    this.buffsPanelBg.fillRoundedRect(0, 0, PW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+
+    // Update each slot
+    for (let i = 0; i < MAX_BUFFS; i++) {
+      if (i < displayCount) {
+        const buff = buffs[i];
+        const skill = ClientDataManager.instance.getSkill(buff.skillId);
+        const iconColor = skill?.iconColor ?? 0x555577;
+        const abbrev    = skill?.iconAbbrev ?? '??';
+        const skillName = skill?.name ?? buff.skillId;
+
+        const rowY   = TH + 4 + i * ROW_H;
+        const iconX  = 8;
+        const iconY  = rowY + 2;
+        const barX   = 8;
+        const barY   = rowY + ICON_SIZE + 6;
+        const barW   = PW - 16;
+
+        // Duration progress (1 → 0 as buff counts down)
+        const total   = buff.expiresAt - buff.appliedAt;
+        const elapsed = now - buff.appliedAt;
+        const ratio   = total > 0 ? Math.max(0, 1 - elapsed / total) : 0;
+
+        // Icon box
+        this.buffsPanelRowGfx[i].clear();
+        this.buffsPanelRowGfx[i].fillStyle(iconColor, 1);
+        this.buffsPanelRowGfx[i].fillRect(iconX, iconY, ICON_SIZE, ICON_SIZE);
+        this.buffsPanelRowGfx[i].lineStyle(1, 0xffffff, 0.4);
+        this.buffsPanelRowGfx[i].strokeRect(iconX, iconY, ICON_SIZE, ICON_SIZE);
+
+        // Timer progress bar
+        this.buffsPanelRowGfx[i].fillStyle(0x1a1a2e, 1);
+        this.buffsPanelRowGfx[i].fillRect(barX, barY, barW, BAR_H);
+        this.buffsPanelRowGfx[i].fillStyle(iconColor, 0.85);
+        this.buffsPanelRowGfx[i].fillRect(barX, barY, Math.floor(barW * ratio), BAR_H);
+        this.buffsPanelRowGfx[i].setVisible(true);
+
+        // Abbreviation (centered in icon)
+        this.buffsPanelAbbrTexts[i].setText(abbrev);
+        this.buffsPanelAbbrTexts[i].setPosition(iconX + ICON_SIZE / 2, iconY + ICON_SIZE / 2);
+        this.buffsPanelAbbrTexts[i].setVisible(true);
+
+        // Buff name (truncated)
+        const displayName = skillName.length > 13 ? skillName.slice(0, 13) + '…' : skillName;
+        this.buffsPanelNameTexts[i].setText(displayName);
+        this.buffsPanelNameTexts[i].setPosition(iconX + ICON_SIZE + 4, iconY);
+        this.buffsPanelNameTexts[i].setVisible(true);
+
+        // Countdown timer
+        const secsLeft = Math.ceil(Math.max(0, buff.expiresAt - now) / 1000);
+        this.buffsPanelTimerTexts[i].setText(`${secsLeft}s`);
+        this.buffsPanelTimerTexts[i].setPosition(PW - 6, iconY);
+        this.buffsPanelTimerTexts[i].setVisible(true);
+      } else {
+        this.buffsPanelRowGfx[i].clear();
+        this.buffsPanelRowGfx[i].setVisible(false);
+        this.buffsPanelAbbrTexts[i].setVisible(false);
+        this.buffsPanelNameTexts[i].setVisible(false);
+        this.buffsPanelTimerTexts[i].setVisible(false);
+      }
+    }
+  }
+
+  private updatePartyPanel(): void {
+    // Filter out self from display list
+    const displayMembers = this.partyMembers.filter(m => m.sessionId !== this.network.sessionId);
+
+    if (displayMembers.length === 0) {
+      this.partyPanelContainer.setVisible(false);
+      return;
+    }
+
+    this.partyPanelContainer.setVisible(true);
+
+    const PW = 160;
+    const TH = 20;
+    const ROW_H = 38;
+    const BAR_H = 7;
+    const BAR_W = PW - 16;
+    const panelH = TH + displayMembers.length * ROW_H + 4;
+
+    const defaultX = 12;
+    const defaultY = 200;
+    const px = defaultX + this.partyOffset.x;
+    const py = defaultY + this.partyOffset.y;
+
+    this.partyPanelContainer.setPosition(px, py);
+    this.partyPanelTitleHandle = { x: px, y: py, w: PW, h: TH };
+
+    // Redraw background
+    this.partyPanelBg.clear();
+    this.partyPanelBg.fillStyle(0x12122a, 0.92);
+    this.partyPanelBg.fillRoundedRect(0, 0, PW, panelH, 4);
+    this.partyPanelBg.lineStyle(1, 0x44446a, 1);
+    this.partyPanelBg.strokeRoundedRect(0, 0, PW, panelH, 4);
+    // Title strip
+    this.partyPanelBg.fillStyle(0x22225a, 0.98);
+    this.partyPanelBg.fillRoundedRect(0, 0, PW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+    // Title text
+    this.partyPanelBg.fillStyle(0x8888bb, 1);
+    // We'll just render the title via a small text approach by overlaying it on the bg
+    // Actually, let's use the first draw to place it. We need a text object for the title.
+    // For simplicity, use the bg graphics and manually draw the title each frame via an inline text reuse.
+
+    // Update member rows
+    for (let i = 0; i < 4; i++) {
+      if (i < displayMembers.length) {
+        const member = displayMembers[i];
+        const data = this.partyMemberData.get(member.sessionId);
+        const hp = data?.hp ?? 0;
+        const maxHp = data?.maxHp ?? 1;
+        const mana = data?.mana ?? 0;
+        const maxMana = data?.maxMana ?? 1;
+        const alive = data?.alive ?? true;
+
+        const rowY = TH + 4 + i * ROW_H;
+
+        // Name
+        const displayName = member.characterName.length > 14
+          ? member.characterName.slice(0, 14) + '…'
+          : member.characterName;
+        this.partyPanelTexts[i].setText(displayName);
+        this.partyPanelTexts[i].setPosition(8, rowY);
+        this.partyPanelTexts[i].setColor(alive ? '#ffffff' : '#666666');
+        this.partyPanelTexts[i].setVisible(true);
+
+        // HP bar
+        const hpBarY = rowY + 16;
+        const hpRatio = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
+        this.partyPanelHpBars[i].clear();
+        // Background
+        this.partyPanelHpBars[i].fillStyle(0x1a1a1a, 1);
+        this.partyPanelHpBars[i].fillRect(8, hpBarY, BAR_W, BAR_H);
+        // Fill
+        const hpColor = hpRatio > 0.5 ? 0x44bb44 : hpRatio > 0.25 ? 0xdddd44 : 0xdd4444;
+        this.partyPanelHpBars[i].fillStyle(hpColor, 1);
+        this.partyPanelHpBars[i].fillRect(8, hpBarY, Math.floor(BAR_W * hpRatio), BAR_H);
+        // Shield overlay (Shield of Faith) — cyan tint proportional to remaining absorption
+        const memberShieldHp = data?.shieldHp ?? 0;
+        if (memberShieldHp > 0 && maxHp > 0) {
+          const shieldRatio = Math.min(1, memberShieldHp / maxHp);
+          this.partyPanelHpBars[i].fillStyle(0x00ccff, 0.45);
+          this.partyPanelHpBars[i].fillRect(8, hpBarY, Math.floor(BAR_W * shieldRatio), BAR_H);
+        }
+        this.partyPanelHpBars[i].setVisible(true);
+
+        // Mana bar
+        const manaBarY = hpBarY + BAR_H + 2;
+        const manaRatio = maxMana > 0 ? Math.max(0, mana / maxMana) : 0;
+        this.partyPanelManaBars[i].clear();
+        this.partyPanelManaBars[i].fillStyle(0x1a1a1a, 1);
+        this.partyPanelManaBars[i].fillRect(8, manaBarY, BAR_W, BAR_H);
+        this.partyPanelManaBars[i].fillStyle(0x4466dd, 1);
+        this.partyPanelManaBars[i].fillRect(8, manaBarY, Math.floor(BAR_W * manaRatio), BAR_H);
+        this.partyPanelManaBars[i].setVisible(true);
+      } else {
+        // Hide unused slots
+        this.partyPanelTexts[i].setVisible(false);
+        this.partyPanelHpBars[i].clear();
+        this.partyPanelHpBars[i].setVisible(false);
+        this.partyPanelManaBars[i].clear();
+        this.partyPanelManaBars[i].setVisible(false);
+      }
+    }
+  }
+
   private updateTargetNameplate(): void {
     if (!this.currentTargetId || !this.currentTargetType) {
       this.targetNameplateContainer.setVisible(false);
@@ -1766,6 +2241,7 @@ export class GameScene extends Phaser.Scene {
     let hp = 0;
     let maxHp = 1;
     let isEnemy = false;
+    let shieldHp = 0;
 
     if (this.currentTargetType === 'player') {
       const info: PlayerTargetInfo | null = this.entityRenderer.getPlayerTargetInfo(this.currentTargetId);
@@ -1775,6 +2251,15 @@ export class GameScene extends Phaser.Scene {
       hp = info.hp;
       maxHp = info.maxHp;
       isEnemy = false;
+      shieldHp = this.remotePlayerShieldHp.get(this.currentTargetId) ?? 0;
+    } else if (this.currentTargetType === 'self') {
+      // Local player — read directly from scene fields (always up to date)
+      name = this.localCharacterName || (ClientDataManager.instance.getClass(this.localClassId)?.name ?? this.localClassId);
+      level = this.localLevel;
+      hp = this.localHp;
+      maxHp = this.localMaxHp;
+      isEnemy = false;
+      shieldHp = this.localShieldHp;
     } else {
       const info: NpcTargetInfo | null = this.entityRenderer.getNpcTargetInfo(this.currentTargetId);
       if (!info) { this.clearTarget(); return; }
@@ -1818,11 +2303,18 @@ export class GameScene extends Phaser.Scene {
     this.targetNameplateHpBar.fillStyle(fillColor, 1);
     this.targetNameplateHpBar.fillRect(barX, barY, Math.max(0, barW * hpRatio), barH);
 
+    // Shield overlay (Shield of Faith) — cyan tint proportional to remaining absorption
+    if (shieldHp > 0 && maxHp > 0) {
+      const shieldRatio = Math.min(1, shieldHp / maxHp);
+      this.targetNameplateHpBar.fillStyle(0x00ccff, 0.45);
+      this.targetNameplateHpBar.fillRect(barX, barY, Math.max(0, barW * shieldRatio), barH);
+    }
+
     // HP text
     this.targetNameplateHpText.setText(`${Math.round(hp)} / ${Math.round(maxHp)}`);
   }
 
-  private setTarget(id: string, type: 'player' | 'npc'): void {
+  private setTarget(id: string, type: 'player' | 'npc' | 'self'): void {
     this.currentTargetId = id;
     this.currentTargetType = type;
     this.targetNameplateContainer.setPosition(
@@ -2728,6 +3220,8 @@ export class GameScene extends Phaser.Scene {
     this.drawCastBar();
     this.drawChatPanel();
     this.updateTargetNameplate();
+    this.updatePartyPanel();
+    this.updateBuffsPanel();
 
     // ── Interpolate remote players + projectiles ────────────
     this.entityRenderer.update();
@@ -3080,6 +3574,23 @@ export class GameScene extends Phaser.Scene {
         return;
       }
       this.network.sendChatMessage('whisper', msg, targetName);
+
+    } else if (lc.startsWith('/invite ')) {
+      const name = raw.slice(8).trim();
+      if (name.length === 0) {
+        this.pushSystemChat('Usage: /invite PlayerName');
+        return;
+      }
+      this.network.sendPartyInvite(name);
+
+    } else if (lc === '/accept') {
+      this.network.sendPartyAccept();
+
+    } else if (lc === '/decline') {
+      this.network.sendPartyDecline();
+
+    } else if (lc === '/leave') {
+      this.network.sendPartyLeave();
 
     } else if (raw.startsWith('/')) {
       this.pushSystemChat(`Unknown command: ${raw.split(' ')[0]}`);

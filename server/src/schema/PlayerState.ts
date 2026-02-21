@@ -1,5 +1,5 @@
 import { Schema, ArraySchema, defineTypes } from '@colyseus/schema';
-import { PLAYER_MAX_HP } from '@valhalla/shared';
+import { PLAYER_MAX_HP, SkillId } from '@valhalla/shared';
 import type { ResolvedStats } from '@valhalla/shared';
 
 // ── Active Buff (server-only tracking) ─────────────────────
@@ -47,6 +47,9 @@ export class PlayerState extends Schema {
   energy: number = 0;
   maxEnergy: number = 0;
   alive: boolean = true;
+
+  // ── Shield (synced) ── remaining absorption from Shield of Faith etc.
+  shieldHp: number = 0;
 
   // ── Casting State (synced for cast bar) ────────────
   castingSkillId: string = '';
@@ -105,6 +108,7 @@ defineTypes(PlayerState, {
   energy: 'float32',
   maxEnergy: 'int16',
   alive: 'boolean',
+  shieldHp: 'int16',
   castingSkillId: 'string',
   castingStartedAt: 'float64',
   castingDurationMs: 'uint16',
@@ -117,3 +121,28 @@ defineTypes(PlayerState, {
   equipRing: 'string',
   inventory: [InventorySlotState],
 });
+
+// ── Shield Absorption Helper ─────────────────────────────────
+
+/**
+ * Apply incoming damage against the player's shield (shieldHp) first.
+ * Returns the remaining damage that should be applied to the player's HP.
+ * When the shield is fully depleted, removes the Shield of Faith buff and
+ * resets shieldHp to 0.
+ */
+export function applyShieldAbsorption(player: PlayerState, incomingDamage: number): number {
+  if (player.shieldHp <= 0) return incomingDamage;
+
+  const absorbed = Math.min(player.shieldHp, incomingDamage);
+  player.shieldHp -= absorbed;
+
+  if (player.shieldHp <= 0) {
+    player.shieldHp = 0;
+    // Remove the shield buff so SkillSystem doesn't double-expire it
+    player.activeBuffs = player.activeBuffs.filter(
+      b => b.skillId !== SkillId.CLERIC_SHIELD_OF_FAITH,
+    );
+  }
+
+  return Math.max(0, incomingDamage - absorbed);
+}

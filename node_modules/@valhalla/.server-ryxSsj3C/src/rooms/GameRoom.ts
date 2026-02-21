@@ -24,7 +24,11 @@ import {
   ZoneConnection,
   ACTION_BAR_SLOTS,
   ChatMessagePayload,
+  PartyMemberInfo,
+  PartyUpdatePayload,
   hasRangedAttack,
+  xpRequiredForLevel,
+  MAX_LEVEL,
 } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken, JwtPayload } from '../services/AuthService.js';
@@ -49,6 +53,12 @@ interface ZoneCacheEntry {
   respawnPoint: { x: number; y: number };
 }
 
+/** Module-level reference so admin routes can access the live room instance. */
+let _activeGameRoom: GameRoom | null = null;
+export function getActiveGameRoom(): GameRoom | null {
+  return _activeGameRoom;
+}
+
 export class GameRoom extends Room<{ state: GameState }> {
   private movement!: MovementSystem;
   private combat!: CombatSystem;
@@ -62,6 +72,15 @@ export class GameRoom extends Room<{ state: GameState }> {
   /** Maps sessionId → persistent character data for save/load. */
   private sessionData: Map<string, SessionData> = new Map();
 
+  // ── Party state ──
+  /** partyId → Set of member sessionIds */
+  private parties: Map<string, Set<string>> = new Map();
+  /** sessionId → partyId */
+  private playerParty: Map<string, string> = new Map();
+  /** invitee sessionId → inviter sessionId */
+  private pendingInvites: Map<string, string> = new Map();
+  private nextPartyId = 0;
+
   /** Interval handle for periodic saves. */
   private saveInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -72,6 +91,9 @@ export class GameRoom extends Room<{ state: GameState }> {
   private zoneCache: Map<string, ZoneCacheEntry> = new Map();
 
   onCreate(): void {
+    // Store reference for admin routes
+    _activeGameRoom = this;
+
     // Keep the room alive when the last player leaves so that world state
     // (loot bags, NPC spawns, etc.) is preserved between sessions.
     this.autoDispose = false;
@@ -205,6 +227,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         data.groundY ?? null,
         this.state.npcs,
         this.npcSystem,
+        (pid, xp) => this.awardKillXP(pid, xp),
       );
       this.broadcastSkillEvents(events, client);
     });
@@ -278,7 +301,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         let targetClient: Client | null = null;
         for (const c of this.clients) {
           const p = this.state.players.get(c.sessionId);
-          if (p?.characterName === data.targetName) {
+          if (p?.characterName.toLowerCase() === data.targetName.toLowerCase()) {
             targetClient = c;
             break;
           }
@@ -303,13 +326,133 @@ export class GameRoom extends Room<{ state: GameState }> {
       }
     });
 
+    // ── Party System ─────────────────────────────────────────
+    this.onMessage(MessageType.PARTY_INVITE, (client: Client, data: { targetName: string }) => {
+      const inviter = this.state.players.get(client.sessionId);
+      if (!inviter) return;
+      if (!data.targetName || typeof data.targetName !== 'string') return;
+
+      // Find target by character name
+      let targetSessionId: string | null = null;
+      let targetPlayer: PlayerState | null = null;
+      for (const c of this.clients) {
+        const p = this.state.players.get(c.sessionId);
+        if (p && p.characterName.toLowerCase() === data.targetName.toLowerCase()) {
+          targetSessionId = c.sessionId;
+          targetPlayer = p;
+          break;
+        }
+      }
+
+      if (!targetSessionId || !targetPlayer) {
+        this.sendSystemChat(client, `Player "${data.targetName}" is not online.`);
+        return;
+      }
+
+      if (targetSessionId === client.sessionId) {
+        this.sendSystemChat(client, 'You cannot invite yourself.');
+        return;
+      }
+
+      // Check if target is already in a full party
+      const targetPartyId = this.playerParty.get(targetSessionId);
+      if (targetPartyId) {
+        const targetParty = this.parties.get(targetPartyId);
+        if (targetParty && targetParty.size >= 4) {
+          this.sendSystemChat(client, `${targetPlayer.characterName}'s party is full.`);
+          return;
+        }
+      }
+
+      // Check if inviter's party is full
+      const inviterPartyId = this.playerParty.get(client.sessionId);
+      if (inviterPartyId) {
+        const inviterParty = this.parties.get(inviterPartyId);
+        if (inviterParty && inviterParty.size >= 4) {
+          this.sendSystemChat(client, 'Your party is full.');
+          return;
+        }
+      }
+
+      // Store pending invite (overwrites any existing invite for the target)
+      this.pendingInvites.set(targetSessionId, client.sessionId);
+
+      // Notify both
+      const targetClient = this.clients.find(c => c.sessionId === targetSessionId);
+      if (targetClient) {
+        this.sendSystemChat(targetClient, `${inviter.characterName} has invited you to a party. Type /accept to join.`);
+      }
+      this.sendSystemChat(client, `Invite sent to ${targetPlayer.characterName}.`);
+    });
+
+    this.onMessage(MessageType.PARTY_ACCEPT, (client: Client) => {
+      const inviterSessionId = this.pendingInvites.get(client.sessionId);
+      if (!inviterSessionId) {
+        this.sendSystemChat(client, 'You have no pending party invite.');
+        return;
+      }
+      this.pendingInvites.delete(client.sessionId);
+
+      const inviter = this.state.players.get(inviterSessionId);
+      const accepter = this.state.players.get(client.sessionId);
+      if (!inviter || !accepter) return;
+
+      // Get or create inviter's party
+      let partyId = this.playerParty.get(inviterSessionId);
+      if (!partyId) {
+        partyId = `party_${this.nextPartyId++}`;
+        this.parties.set(partyId, new Set([inviterSessionId]));
+        this.playerParty.set(inviterSessionId, partyId);
+      }
+
+      const party = this.parties.get(partyId)!;
+      if (party.size >= 4) {
+        this.sendSystemChat(client, 'The party is full.');
+        return;
+      }
+
+      // If accepter is already in a different party, remove them first
+      this.removeFromParty(client.sessionId, true);
+
+      // Add to party
+      party.add(client.sessionId);
+      this.playerParty.set(client.sessionId, partyId);
+
+      // Notify all members
+      for (const sid of party) {
+        const c = this.clients.find(cl => cl.sessionId === sid);
+        if (c) {
+          this.sendSystemChat(c, `${accepter.characterName} has joined the party.`);
+        }
+      }
+
+      this.sendPartyUpdate(partyId);
+    });
+
+    this.onMessage(MessageType.PARTY_DECLINE, (client: Client) => {
+      const inviterSessionId = this.pendingInvites.get(client.sessionId);
+      if (!inviterSessionId) return;
+      this.pendingInvites.delete(client.sessionId);
+
+      const decliner = this.state.players.get(client.sessionId);
+      const inviterClient = this.clients.find(c => c.sessionId === inviterSessionId);
+      if (inviterClient && decliner) {
+        this.sendSystemChat(inviterClient, `${decliner.characterName} declined your party invite.`);
+      }
+    });
+
+    this.onMessage(MessageType.PARTY_LEAVE, (client: Client) => {
+      this.removeFromParty(client.sessionId);
+    });
+
     console.log(`[GameRoom] Room created. Default zone: ${this.defaultZoneId}, Tick: ${SERVER_TICK_RATE}Hz`);
   }
 
   /**
    * Lazily load and cache a zone's collision, connections, and respawn point.
+   * Public so admin routes can trigger zone loading for teleports.
    */
-  private loadZoneCache(zoneId: string): ZoneCacheEntry {
+  loadZoneCache(zoneId: string): ZoneCacheEntry {
     const existing = this.zoneCache.get(zoneId);
     if (existing) return existing;
 
@@ -513,6 +656,14 @@ export class GameRoom extends Room<{ state: GameState }> {
       }
     }
 
+    // Clean up party membership and pending invites
+    this.removeFromParty(client.sessionId);
+    this.pendingInvites.delete(client.sessionId);
+    // Also clear any invite where this player was the inviter
+    for (const [invitee, inviter] of this.pendingInvites) {
+      if (inviter === client.sessionId) this.pendingInvites.delete(invitee);
+    }
+
     this.state.players.delete(client.sessionId);
     this.inputQueues.delete(client.sessionId);
     this.sessionData.delete(client.sessionId);
@@ -607,7 +758,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.broadcastSpellProjectileEvents(spellEvents);
 
     // 4. Skill system update (cast progression, energy regen, buff ticking)
-    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem);
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp));
     this.broadcastSkillEvents(skillEvents);
 
     // 5. Check respawns — handle per-player zone respawn points
@@ -627,7 +778,27 @@ export class GameRoom extends Room<{ state: GameState }> {
     // 7. Update loot bags (despawn empty / expired bags)
     this.lootBagSystem.update(now, this.state.lootBags);
 
-    // 8. Check zone transitions (portal triggers)
+    // 8. Level-up check — process pending XP thresholds
+    this.state.players.forEach((player, sessionId) => {
+      if (!player.alive || player.level >= MAX_LEVEL) return;
+      let leveled = false;
+      while (player.level < MAX_LEVEL) {
+        const needed = xpRequiredForLevel(player.level);
+        if (player.xp < needed) break;
+        player.xp -= needed;
+        player.level++;
+        leveled = true;
+      }
+      if (leveled) {
+        this.applyStats(player); // recompute stats + full heal
+        const client = this.clients.find(c => c.sessionId === sessionId);
+        if (client) {
+          client.send(MessageType.LEVEL_UP, { level: player.level });
+        }
+      }
+    });
+
+    // 9. Check zone transitions (portal triggers)
     this.checkZoneTransitions();
   }
 
@@ -724,9 +895,10 @@ export class GameRoom extends Room<{ state: GameState }> {
   private broadcastCombatEvents(events: CombatEvent[]): void {
     for (const event of events) {
       this.broadcast(event.type, event.data);
-      // Spawn loot bag when NPC dies
+      // Spawn loot bag and award XP when NPC dies
       if (event.type === 'npcDied') {
         this.spawnNpcLoot(event.data.targetId);
+        this.awardKillXP(event.data.killerId, event.data.xpReward);
       }
     }
   }
@@ -743,9 +915,10 @@ export class GameRoom extends Room<{ state: GameState }> {
       } else {
         // playerHit, playerDied, npcHit, npcDied — reuse existing message types
         this.broadcast(event.type, event.data);
-        // Spawn loot bag when NPC dies from spell
+        // Spawn loot bag and award XP when NPC dies from spell
         if (event.type === 'npcDied') {
           this.spawnNpcLoot((event.data as any).targetId);
+          this.awardKillXP((event.data as any).killerId, (event.data as any).xpReward);
         }
       }
     }
@@ -789,7 +962,7 @@ export class GameRoom extends Room<{ state: GameState }> {
           break;
 
         case 'castComplete':
-          // Broadcast skill effects (damage numbers, heals, etc.)
+          // Broadcast skill effects (damage numbers, heals, buffs, etc.)
           for (const fx of event.events) {
             // If the target is an NPC, use the NPC_HIT message type so the client
             // can look up the NPC position and show the damage flash correctly.
@@ -799,8 +972,15 @@ export class GameRoom extends Room<{ state: GameState }> {
                 damage: fx.damage,
                 isCrit: fx.isCrit,
                 killerId: event.casterId,
-                casterId: event.casterId,   // alias used for VFX lookups
-                skillId: event.skillId,     // skill that caused the hit (for per-skill VFX)
+                casterId: event.casterId,
+                skillId: event.skillId,
+              });
+            } else if (fx.type === 'buff' || fx.type === 'debuff') {
+              // Send a dedicated BUFF_APPLIED message so clients can track active effects
+              this.broadcast(MessageType.BUFF_APPLIED, {
+                targetId: fx.targetId,
+                skillId: fx.skillId,
+                durationMs: fx.durationMs,
               });
             } else {
               this.broadcast(MessageType.SKILL_EFFECT, {
@@ -846,6 +1026,122 @@ export class GameRoom extends Room<{ state: GameState }> {
           break;
       }
     }
+  }
+
+  // ── Party Helpers ─────────────────────────────────────────
+
+  /** Send a system chat message to a single client. */
+  private sendSystemChat(client: Client, message: string): void {
+    client.send(MessageType.CHAT_MESSAGE, {
+      channel: 'system',
+      senderName: '',
+      message,
+      timestamp: Date.now(),
+    } as ChatMessagePayload);
+  }
+
+  /** Send PARTY_UPDATE to all members of a party. */
+  private sendPartyUpdate(partyId: string): void {
+    const party = this.parties.get(partyId);
+    if (!party) return;
+
+    const members: PartyMemberInfo[] = [];
+    for (const sid of party) {
+      const p = this.state.players.get(sid);
+      if (p) {
+        members.push({ sessionId: sid, characterName: p.characterName });
+      }
+    }
+
+    const payload: PartyUpdatePayload = { members };
+    for (const sid of party) {
+      const c = this.clients.find(cl => cl.sessionId === sid);
+      if (c) {
+        c.send(MessageType.PARTY_UPDATE, payload);
+      }
+    }
+  }
+
+  /**
+   * Remove a player from their party. If the party has <2 members, disband.
+   * @param silent  If true, skip "X left the party" notifications (used for party-switch on accept)
+   */
+  private removeFromParty(sessionId: string, silent = false): void {
+    const partyId = this.playerParty.get(sessionId);
+    if (!partyId) return;
+
+    const party = this.parties.get(partyId);
+    if (!party) {
+      this.playerParty.delete(sessionId);
+      return;
+    }
+
+    party.delete(sessionId);
+    this.playerParty.delete(sessionId);
+
+    const leaver = this.state.players.get(sessionId);
+
+    if (party.size <= 1) {
+      // Disband — notify the remaining member
+      for (const sid of party) {
+        this.playerParty.delete(sid);
+        const c = this.clients.find(cl => cl.sessionId === sid);
+        if (c) {
+          if (!silent) this.sendSystemChat(c, 'The party has been disbanded.');
+          c.send(MessageType.PARTY_UPDATE, { members: [] } as PartyUpdatePayload);
+        }
+      }
+      this.parties.delete(partyId);
+    } else {
+      // Notify remaining members
+      if (!silent) {
+        for (const sid of party) {
+          const c = this.clients.find(cl => cl.sessionId === sid);
+          if (c && leaver) {
+            this.sendSystemChat(c, `${leaver.characterName} has left the party.`);
+          }
+        }
+      }
+      this.sendPartyUpdate(partyId);
+    }
+
+    // Tell the leaver their party is now empty
+    const leaverClient = this.clients.find(c => c.sessionId === sessionId);
+    if (leaverClient && !silent) {
+      leaverClient.send(MessageType.PARTY_UPDATE, { members: [] } as PartyUpdatePayload);
+      this.sendSystemChat(leaverClient, 'You have left the party.');
+    }
+  }
+
+  // ── XP Distribution ─────────────────────────────────────────
+
+  /**
+   * Award kill XP to a player (or their party if applicable).
+   * Party members in the same zone split a +10% bonus equally.
+   */
+  private awardKillXP(killerId: string, baseXP: number): void {
+    const killer = this.state.players.get(killerId);
+    if (!killer || baseXP <= 0) return;
+
+    const partyId = this.playerParty.get(killerId);
+    if (partyId) {
+      const members = this.parties.get(partyId);
+      if (members && members.size > 1) {
+        const bonusXP = Math.floor(baseXP * 1.10);
+        const zoneMembers: PlayerState[] = [];
+        for (const sid of members) {
+          const p = this.state.players.get(sid);
+          if (p && p.alive && p.zoneId === killer.zoneId) zoneMembers.push(p);
+        }
+        if (zoneMembers.length > 0) {
+          const share = Math.max(1, Math.floor(bonusXP / zoneMembers.length));
+          for (const p of zoneMembers) p.xp = (p.xp ?? 0) + share;
+          return;
+        }
+      }
+    }
+    // Solo or no zone-mates: full XP to killer
+    killer.xp = (killer.xp ?? 0) + baseXP;
   }
 
   // ── Persistence Helpers ──────────────────────────────────
@@ -913,6 +1209,9 @@ export class GameRoom extends Room<{ state: GameState }> {
   }
 
   onDispose(): void {
+    // Clear admin reference
+    _activeGameRoom = null;
+
     // Save all players on room dispose
     this.saveAllPlayers();
 

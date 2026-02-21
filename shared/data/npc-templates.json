@@ -8,7 +8,7 @@
       "type": "enemy",
       "level": 1,
       "stats": {},
-      "hp": 100,
+      "hp": 300,
       "mana": 0,
       "behaviorType": "aggressive",
       "aggroRange": 100,
@@ -16,13 +16,35 @@
       "skills": [],
       "spriteColor": 16777215,
       "spriteSize": 1,
-      "xpReward": 0,
+      "xpReward": 100,
       "dialogue": [],
       "vendorInventory": [],
       "damage": 10,
       "leashRange": 600,
       "lootTableId": "loot_1771620382459",
       "moveSpeed": 80
+    },
+    "npc_1771709765831": {
+      "id": "npc_1771709765831",
+      "name": "Tough Guy",
+      "description": "",
+      "type": "enemy",
+      "level": 2,
+      "stats": {},
+      "hp": 800,
+      "mana": 0,
+      "behaviorType": "patrol",
+      "respawnMs": 60000,
+      "skills": [
+        "wizard_magic_missile"
+      ],
+      "spriteColor": 16777215,
+      "spriteSize": 1,
+      "xpReward": 200,
+      "dialogue": [],
+      "vendorInventory": [],
+      "damage": 40,
+      "canAggro": true
     }
   }
 }

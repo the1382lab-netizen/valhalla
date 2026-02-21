@@ -131,9 +131,9 @@
       "classId": "cleric",
       "levelRequired": 1,
       "resourceType": "mana",
-      "resourceCost": 15,
+      "resourceCost": 50,
       "castTimeMs": 1500,
-      "cooldownMs": 2000,
+      "cooldownMs": 4000,
       "range": 320,
       "targetType": "singleAlly",
       "category": "healing",
@@ -153,8 +153,8 @@
       "classId": "cleric",
       "levelRequired": 1,
       "resourceType": "mana",
-      "resourceCost": 12,
-      "castTimeMs": 2000,
+      "resourceCost": 40,
+      "castTimeMs": 3000,
       "cooldownMs": 3000,
       "range": 256,
       "targetType": "singleEnemy",
@@ -163,7 +163,7 @@
       "iconAbbrev": "SM",
       "scalingStat": "wisdom",
       "baseDamage": [
-        16,
+        25,
         24
       ],
       "effectNotes": "Holy damage to single target"
@@ -176,7 +176,7 @@
       "levelRequired": 3,
       "resourceType": "mana",
       "resourceCost": 20,
-      "castTimeMs": 0,
+      "castTimeMs": 2000,
       "cooldownMs": 12000,
       "range": 320,
       "targetType": "singleAlly",
@@ -274,7 +274,7 @@
       "classId": "ranger",
       "levelRequired": 1,
       "resourceType": "energy",
-      "resourceCost": 20,
+      "resourceCost": 60,
       "castTimeMs": 2000,
       "cooldownMs": 4000,
       "range": 512,
@@ -284,7 +284,7 @@
       "iconAbbrev": "AS",
       "scalingStat": "dexterity",
       "baseDamage": [
-        25,
+        60,
         35
       ],
       "effectNotes": "High-damage ranged attack"

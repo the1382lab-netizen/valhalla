@@ -14,6 +14,7 @@ import { UILayoutEditor } from '../editors/ui/UILayoutEditor';
 import { MapEditor } from '../editors/maps/MapEditor';
 import { BalanceDashboard } from '../editors/balance/BalanceDashboard';
 import { ValidationPanel } from '../editors/validation/ValidationPanel';
+import { AdminDashboard } from '../editors/admin/AdminDashboard';
 
 const editorComponents: Record<string, React.FC> = {
   items: ItemEditor,
@@ -26,10 +27,11 @@ const editorComponents: Record<string, React.FC> = {
   maps: MapEditor,
   balance: BalanceDashboard,
   validation: ValidationPanel,
+  admin: AdminDashboard,
 };
 
 // Sections that manage their own layout — no outer padding needed
-const FULL_BLEED_SECTIONS = new Set(['maps', 'balance', 'validation']);
+const FULL_BLEED_SECTIONS = new Set(['maps', 'balance', 'validation', 'admin']);
 
 export const EditorLayout: React.FC = () => {
   const activeSection = useEditorStore(s => s.activeSection);

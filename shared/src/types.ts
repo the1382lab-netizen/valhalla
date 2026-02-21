@@ -122,11 +122,32 @@ export enum MessageType {
   // ── Chat ──
   CHAT_MESSAGE = 'chatMessage',
 
+  // ── Leveling ──
+  LEVEL_UP = 'levelUp',
+
   // ── Loot ──
   LOOT_ITEM = 'lootItem',
   LOOT_ALL = 'lootAll',
   // Server → client confirmation: refresh loot panel + inventory immediately
   LOOT_SUCCESS = 'lootSuccess',
+
+  // ── Party ──
+  PARTY_INVITE = 'partyInvite',
+  PARTY_ACCEPT = 'partyAccept',
+  PARTY_DECLINE = 'partyDecline',
+  PARTY_LEAVE = 'partyLeave',
+  PARTY_UPDATE = 'partyUpdate',
+  PARTY_KICKED = 'partyKicked',
+}
+
+// ── Party ────────────────────────────────────────────────────
+export interface PartyMemberInfo {
+  sessionId: string;
+  characterName: string;
+}
+
+export interface PartyUpdatePayload {
+  members: PartyMemberInfo[];
 }
 
 // ── Chat ─────────────────────────────────────────────────────

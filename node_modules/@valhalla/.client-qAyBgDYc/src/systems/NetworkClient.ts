@@ -1,5 +1,5 @@
 import { Client, Room, Callbacks } from '@colyseus/sdk';
-import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload, ChatMessagePayload, SpellImpactPayload } from '@valhalla/shared';
+import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload, ChatMessagePayload, SpellImpactPayload, PartyMemberInfo, PartyUpdatePayload } from '@valhalla/shared';
 
 /** @deprecated Use MapDataPayload instead */
 export interface CollisionGridData {
@@ -109,6 +109,12 @@ export class NetworkClient {
 
   // Chat callback
   onChatMessage: ((data: ChatMessagePayload) => void) | null = null;
+
+  // Level-up callback
+  onLevelUp: ((newLevel: number) => void) | null = null;
+
+  // Party callbacks
+  onPartyUpdate: ((members: PartyMemberInfo[]) => void) | null = null;
 
   constructor() {
     this.client = new Client(SERVER_URL);
@@ -230,6 +236,15 @@ export class NetworkClient {
       // the live schema in refreshInventory() gives the correct updated state.
       this.room.onMessage(MessageType.LOOT_SUCCESS, (data: { bagId: string }) => {
         this.onLootSuccess?.(data.bagId);
+      });
+
+      this.room.onMessage(MessageType.LEVEL_UP, (data: { level: number }) => {
+        this.onLevelUp?.(data.level);
+      });
+
+      // Party update
+      this.room.onMessage(MessageType.PARTY_UPDATE, (data: PartyUpdatePayload) => {
+        this.onPartyUpdate?.(data.members);
       });
 
       // Use Colyseus 0.17 Callbacks API for state change listeners
@@ -441,6 +456,11 @@ export class NetworkClient {
   sendChatMessage(channel: 'general' | 'world' | 'whisper', message: string, targetName?: string): void {
     this.room?.send(MessageType.CHAT_MESSAGE, { channel, message, targetName });
   }
+
+  sendPartyInvite(targetName: string): void { this.room?.send(MessageType.PARTY_INVITE, { targetName }); }
+  sendPartyAccept(): void { this.room?.send(MessageType.PARTY_ACCEPT, {}); }
+  sendPartyDecline(): void { this.room?.send(MessageType.PARTY_DECLINE, {}); }
+  sendPartyLeave(): void { this.room?.send(MessageType.PARTY_LEAVE, {}); }
 
   disconnect(): void {
     this.room?.leave();

@@ -175,7 +175,7 @@ export function computeMeleeCooldown(baseCooldownMs: number, dexterity: number):
 
 export const BASE_XP_PER_LEVEL = 100;
 export const XP_SCALING = 2;
-export const MAX_LEVEL = 20;
+export const MAX_LEVEL = 25;
 
 /**
  * XP required to reach the next level.

@@ -19,31 +19,41 @@
     {
       "id": "spawn_1771469442451",
       "type": "portal",
-      "x": 3858,
-      "y": 1192,
+      "x": 3710,
+      "y": 1013,
       "label": "Scorched Desert",
       "templateId": "desert",
-      "width": 395,
-      "height": 350
+      "width": 860,
+      "height": 578
     },
     {
       "id": "spawn_1771471435262",
       "type": "zone_entry",
-      "x": 3963,
-      "y": 3103,
+      "x": 3908,
+      "y": 2516,
       "label": "From Scorched Desert",
       "templateId": "desert",
-      "fromZone": "desert"
+      "fromZone": "desert",
+      "width": 130,
+      "height": 94
     },
     {
       "id": "spawn_1771525146488",
       "type": "portal",
-      "x": 3812,
-      "y": 3114,
+      "x": 3672,
+      "y": 3021,
       "label": "Scorched Desert",
       "templateId": "desert",
       "width": 862,
-      "height": 343
+      "height": 389
+    },
+    {
+      "id": "spawn_1771709836780",
+      "type": "enemy_spawn",
+      "x": 1131,
+      "y": 2480,
+      "label": "Tough Guy",
+      "templateId": "npc_1771709765831"
     }
   ]
 }

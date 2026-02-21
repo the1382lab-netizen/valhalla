@@ -1,5 +1,5 @@
 import { MapSchema } from '@colyseus/schema';
-import { PlayerState } from '../schema/PlayerState.js';
+import { PlayerState, applyShieldAbsorption } from '../schema/PlayerState.js';
 import { ProjectileState } from '../schema/ProjectileState.js';
 import { NPCState } from '../schema/NPCState.js';
 import { CollisionSystem } from './CollisionSystem.js';
@@ -201,8 +201,7 @@ export class CombatSystem {
           type: 'npcDied',
           data: { targetId: npcId, killerId: attacker.id, xpReward },
         });
-        // Award XP to the attacker
-        attacker.xp = (attacker.xp ?? 0) + xpReward;
+        // XP is now awarded centrally by GameRoom.awardKillXP via broadcastCombatEvents
       }
     });
 
@@ -314,11 +313,7 @@ export class CombatSystem {
                 type: 'npcDied',
                 data: { targetId: npcId, killerId: proj.ownerId, xpReward },
               });
-              // Award XP to the projectile owner
-              const killer = players.get(proj.ownerId);
-              if (killer) {
-                killer.xp = (killer.xp ?? 0) + xpReward;
-              }
+              // XP is now awarded centrally by GameRoom.awardKillXP via broadcastCombatEvents
             }
           }
         });
@@ -387,6 +382,9 @@ export class CombatSystem {
 
     // Floor the final damage (minimum 1)
     damage = Math.max(1, Math.floor(damage));
+
+    // Apply shield absorption (Shield of Faith) before HP damage
+    damage = applyShieldAbsorption(target, damage);
 
     // Apply
     target.hp -= damage;

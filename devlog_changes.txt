@@ -1,0 +1,60 @@
+
+--- Party System ---
+Date: 2026-02-20
+
+Added a full party system supporting groups of up to 4 players with shared XP
+and a real-time party panel UI.
+
+SHARED (shared/src/types.ts):
+- Added PARTY_INVITE, PARTY_ACCEPT, PARTY_DECLINE, PARTY_LEAVE, PARTY_UPDATE,
+  PARTY_KICKED message types.
+- Added PartyMemberInfo and PartyUpdatePayload interfaces.
+
+SERVER (server/src/rooms/GameRoom.ts):
+- Party state: in-memory parties (partyId → member set), playerParty
+  (sessionId → partyId), and pendingInvites maps.
+- Message handlers for PARTY_INVITE, PARTY_ACCEPT, PARTY_DECLINE, PARTY_LEAVE.
+- Centralized awardKillXP() method: party members in the same zone split XP
+  with a +10% bonus. Solo kills get full base XP.
+- XP distribution hooked into broadcastCombatEvents and broadcastSpellProjectileEvents
+  for melee, ranged projectile, and spell projectile kills.
+- awardXP delegate wired through SkillSystem/SkillEffectHandler for skill-based kills.
+- Disconnect cleanup removes player from party and clears pending invites.
+
+SERVER (CombatSystem.ts, SpellProjectileSystem.ts, SkillEffectHandler.ts):
+- Removed all inline XP awards (5 locations across 3 files).
+- SkillEffectHandler now uses ctx.awardXP delegate for party-aware distribution.
+
+CLIENT (client/src/systems/NetworkClient.ts):
+- Added onPartyUpdate callback and PARTY_UPDATE message listener.
+- Added sendPartyInvite, sendPartyAccept, sendPartyDecline, sendPartyLeave methods.
+
+CLIENT (client/src/scenes/GameScene.ts):
+- Chat commands: /invite PlayerName, /accept, /decline, /leave.
+- Party panel UI: shows each party member's name, HP bar, and mana bar in real-time.
+- Party member data cached from onPlayerChange callbacks (works across zones).
+- Panel is draggable with position persisted in HUD layout (localStorage).
+
+--- Skill targeting: singleAlly/singleEnemy target-class enforcement ---
+Date: 2026-02-20
+
+Three connected bugs caused Minor Heal (singleAlly) to silently heal the
+caster when cast on an enemy NPC target, or when the original target died
+during the 1500ms cast window:
+
+CLIENT (client/src/scenes/GameScene.ts):
+- Action bar handler now checks currentTargetType in addition to currentTargetId.
+  singleAlly skills show "Invalid target" and abort if the current target is an NPC.
+  singleEnemy skills show "Invalid target" and abort if the current target is a player.
+
+SERVER (server/src/systems/SkillSystem.ts):
+- validateCast: singleAlly now requires targetId to resolve in allPlayers (player,
+  not NPC). singleEnemy now requires targetId to NOT be in allPlayers (NPC only).
+- Timed cast completion: added re-validation at fire time for singleAlly/singleEnemy
+  skills. If the target died, disconnected, or is wrong type by the time the cast
+  finishes, the cast emits castFailed instead of applying the effect.
+
+SERVER (server/src/systems/SkillEffectHandler.ts):
+- executeSkillEffect healing block: singleAlly heals now return early (fizzle) when
+  target is null or an NPC. Previously the code fell back to healing the caster —
+  a silent incorrect heal. Self/aoeSelf heals retain the existing caster fallback.

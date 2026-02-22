@@ -108,6 +108,7 @@ export class CombatSystem {
     npcs: MapSchema<NPCState>,
     npcSystem: NPCSystem,
     now: number,
+    isPartyMember?: (playerIdA: string, playerIdB: string) => boolean,
   ): CombatEvent[] {
     const events: CombatEvent[] = [];
     if (!attacker.alive) return events;
@@ -132,6 +133,7 @@ export class CombatSystem {
       if (targetId === attacker.id) return;
       if (!target.alive) return;
       if (now < target.invulnerableUntil) return;
+      if (isPartyMember?.(attacker.id, targetId)) return; // no friendly fire
 
       const dx = target.x - attacker.x;
       const dy = target.y - attacker.y;
@@ -218,6 +220,7 @@ export class CombatSystem {
     npcSystem: NPCSystem,
     dt: number,
     now: number,
+    isPartyMember?: (playerIdA: string, playerIdB: string) => boolean,
   ): { toRemove: string[]; events: CombatEvent[] } {
     const toRemove: string[] = [];
     const events: CombatEvent[] = [];
@@ -249,6 +252,7 @@ export class CombatSystem {
         if (playerId === proj.ownerId) return; // can't hit yourself
         if (!player.alive) return;
         if (now < player.invulnerableUntil) return;
+        if (isPartyMember?.(proj.ownerId, playerId)) return; // no friendly fire
 
         const dx = player.x - proj.x;
         const dy = player.y - proj.y;

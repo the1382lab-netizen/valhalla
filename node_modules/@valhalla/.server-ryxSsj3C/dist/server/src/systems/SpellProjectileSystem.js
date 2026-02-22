@@ -8,6 +8,7 @@
  *   - Applies AoE damage with linear distance-based falloff to all
  *     entities within the blast radius at the detonation point
  */
+import { applyShieldAbsorption } from '../schema/PlayerState.js';
 import { FIREBALL_PROJECTILE_RADIUS, FIREBALL_DAMAGE_FALLOFF_MIN, PLAYER_COLLISION_RADIUS, INVULNERABILITY_MS, RESPAWN_TIME_MS, applyDefenseReduction, rollHit, rollCrit, rollDodge, rollBlock, } from '@valhalla/shared';
 /** Maximum distance a spell projectile can travel before force-detonating. */
 const SPELL_PROJECTILE_MAX_RANGE = 1600;
@@ -21,7 +22,7 @@ export class SpellProjectileSystem {
      *
      * @returns IDs to remove from the state map + any combat/VFX events
      */
-    update(spellProjectiles, players, npcs, npcSystem, dt, now) {
+    update(spellProjectiles, players, npcs, npcSystem, dt, now, isPartyMember) {
         const toRemove = [];
         const events = [];
         spellProjectiles.forEach((proj, projId) => {
@@ -36,7 +37,7 @@ export class SpellProjectileSystem {
                 proj.x = proj.targetX;
                 proj.y = proj.targetY;
                 toRemove.push(projId);
-                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
                 events.push(...detonationEvents);
                 return;
             }
@@ -49,14 +50,14 @@ export class SpellProjectileSystem {
             // ── Safety max-range check ────────────────────────────
             if (proj._distanceTravelled >= SPELL_PROJECTILE_MAX_RANGE) {
                 toRemove.push(projId);
-                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
                 events.push(...detonationEvents);
                 return;
             }
             // ── Wall collision ────────────────────────────────────
             if (this.collision.isCircleBlocked(proj.x, proj.y, FIREBALL_PROJECTILE_RADIUS)) {
                 toRemove.push(projId);
-                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+                const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
                 events.push(...detonationEvents);
                 return;
             }
@@ -71,13 +72,15 @@ export class SpellProjectileSystem {
                     return;
                 if (player.zoneId !== proj._zoneId)
                     return;
+                if (isPartyMember?.(proj.ownerId, player.id))
+                    return; // no friendly fire
                 const edx = player.x - proj.x;
                 const edy = player.y - proj.y;
                 const hitDist = PLAYER_COLLISION_RADIUS + FIREBALL_PROJECTILE_RADIUS;
                 if (edx * edx + edy * edy < hitDist * hitDist) {
                     hitEntity = true;
                     toRemove.push(projId);
-                    const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+                    const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
                     events.push(...detonationEvents);
                 }
             });
@@ -96,7 +99,7 @@ export class SpellProjectileSystem {
                     if (edx * edx + edy * edy < hitDist * hitDist) {
                         hitEntity = true;
                         toRemove.push(projId);
-                        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+                        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
                         events.push(...detonationEvents);
                     }
                 });
@@ -111,7 +114,7 @@ export class SpellProjectileSystem {
      * Finds all entities within aoeRadius, applies distance-based damage
      * falloff, and emits a SPELL_IMPACT VFX event.
      */
-    detonate(proj, detonateX, detonateY, players, npcs, npcSystem, now) {
+    detonate(proj, detonateX, detonateY, players, npcs, npcSystem, now, isPartyMember) {
         const events = [];
         const radius = proj._aoeRadius;
         // ── Damage players in radius ──────────────────────────
@@ -124,6 +127,8 @@ export class SpellProjectileSystem {
                 return;
             if (now < player.invulnerableUntil)
                 return;
+            if (isPartyMember?.(proj.ownerId, player.id))
+                return; // no friendly fire
             const dx = player.x - detonateX;
             const dy = player.y - detonateY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -162,11 +167,7 @@ export class SpellProjectileSystem {
                     type: 'npcDied',
                     data: { targetId: npcId, killerId: proj.ownerId, xpReward },
                 });
-                // Award XP to the caster
-                const caster = players.get(proj.ownerId);
-                if (caster) {
-                    caster.xp = (caster.xp ?? 0) + xpReward;
-                }
+                // XP is now awarded centrally by GameRoom.awardKillXP via broadcastSpellProjectileEvents
             }
         });
         // ── VFX event ─────────────────────────────────────────
@@ -214,6 +215,8 @@ export class SpellProjectileSystem {
         damage *= falloff;
         // 7. Floor, minimum 1
         damage = Math.max(1, Math.floor(damage));
+        // Apply shield absorption (Shield of Faith) before HP damage
+        damage = applyShieldAbsorption(target, damage);
         // Apply
         target.hp -= damage;
         target.invulnerableUntil = now + INVULNERABILITY_MS;

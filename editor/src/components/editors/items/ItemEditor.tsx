@@ -3,8 +3,23 @@ import { useEditorStore } from '../../../store/editorStore';
 
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const CATEGORIES = ['weapon', 'armor', 'accessory', 'consumable', 'misc', 'quest'];
-const EQUIP_SLOTS = ['head', 'neck', 'shoulders', 'chest', 'hands', 'waist', 'legs', 'feet', 'main_hand', 'off_hand', 'two_hand', 'ring', 'trinket'];
-const STAT_TYPES = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+const EQUIP_SLOTS = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+const STAT_TYPES: { key: string; label: string; step: string }[] = [
+  { key: 'hp',              label: 'HP',               step: '1'    },
+  { key: 'mana',            label: 'Mana',             step: '1'    },
+  { key: 'strength',        label: 'Strength',         step: '1'    },
+  { key: 'stamina',         label: 'Stamina',          step: '1'    },
+  { key: 'dexterity',       label: 'Dexterity',        step: '1'    },
+  { key: 'intelligence',    label: 'Intelligence',     step: '1'    },
+  { key: 'wisdom',          label: 'Wisdom',           step: '1'    },
+  { key: 'physicalResist',  label: 'Physical Resist',  step: '1'    },
+  { key: 'spellResist',     label: 'Spell Resist',     step: '1'    },
+  { key: 'critChance',      label: 'Crit Chance',      step: '0.01' },
+  { key: 'critDamage',      label: 'Crit Damage',      step: '0.01' },
+  { key: 'physicalDefense', label: 'Physical Defense', step: '1'    },
+  { key: 'blockRating',     label: 'Block Rating',     step: '0.01' },
+  { key: 'dodgeRating',     label: 'Dodge Rating',     step: '0.01' },
+];
 
 interface EquipSpriteConfig {
   frameWidth: number;
@@ -395,14 +410,15 @@ export const ItemEditor: React.FC = () => {
               <div className="form-group">
                 <label className="form-label">Stat Bonuses</label>
                 <div className="stat-grid">
-                  {STAT_TYPES.map(stat => (
-                    <div key={stat} className="stat-row">
-                      <div className="stat-label">{stat}</div>
+                  {STAT_TYPES.map(({ key, label, step }) => (
+                    <div key={key} className="stat-row">
+                      <div className="stat-label">{label}</div>
                       <div className="stat-value">
                         <input
                           type="number"
-                          value={selectedItem.statBonuses[stat] || 0}
-                          onChange={(e) => handleUpdateStatBonus(stat, parseInt(e.target.value, 10) || 0)}
+                          step={step}
+                          value={selectedItem.statBonuses[key] ?? 0}
+                          onChange={(e) => handleUpdateStatBonus(key, parseFloat(e.target.value) || 0)}
                         />
                       </div>
                     </div>

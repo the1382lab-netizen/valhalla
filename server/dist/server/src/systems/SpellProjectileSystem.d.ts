@@ -27,7 +27,7 @@ export declare class SpellProjectileSystem {
      *
      * @returns IDs to remove from the state map + any combat/VFX events
      */
-    update(spellProjectiles: MapSchema<SpellProjectileState>, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, dt: number, now: number): {
+    update(spellProjectiles: MapSchema<SpellProjectileState>, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, dt: number, now: number, isPartyMember?: (playerIdA: string, playerIdB: string) => boolean): {
         toRemove: string[];
         events: SpellProjectileEvent[];
     };

@@ -2,7 +2,7 @@
  * Skill & Spell Definitions — shared between client and server.
  * This is the single source of truth for all skill data.
  *
- * 37 skills across 6 classes, populated from the design spreadsheet.
+ * 38 skills across 6 classes, populated from the design spreadsheet.
  * Individual skill effect handlers live server-side; this file
  * contains only the data model and catalog.
  */
@@ -40,6 +40,7 @@ export declare enum SkillId {
     SHAMAN_FLAME_SHOCK = "shaman_flame_shock",
     SHAMAN_BLOODLUST = "shaman_bloodlust",
     WIZARD_FIREBALL = "wizard_fireball",
+    WIZARD_MAGIC_MISSILE = "wizard_magic_missile",
     WIZARD_FROST_NOVA = "wizard_frost_nova",
     WIZARD_BLINK = "wizard_blink",
     WIZARD_ARCANE_MISSILES = "wizard_arcane_missiles",
@@ -89,6 +90,19 @@ export interface SkillTemplate {
     buffDurationMs?: number;
     dotDamagePerSec?: number;
     hotHealPerSec?: number;
+    /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
+    aoeRadius?: number;
+    /** Projectile metadata — if present, the skill spawns a projectile rather than applying damage instantly. */
+    projectile?: {
+        speed: number;
+        radius: number;
+    };
+    /** Cooldown group ID — all skills sharing the same group share a cooldown. */
+    cooldownGroup?: string;
+    /** Buff stacking mode: 'replace' (default), 'stack', or 'extend'. */
+    stackingMode?: 'replace' | 'stack' | 'extend';
+    /** Max stacks for stackable buffs (only used when stackingMode === 'stack'). Default 1. */
+    maxStacks?: number;
     effectNotes: string;
 }
 export declare const SKILL_CATALOG: Record<SkillId, SkillTemplate>;

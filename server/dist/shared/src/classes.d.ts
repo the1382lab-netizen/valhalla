@@ -28,6 +28,17 @@ export interface StatBlock {
     blockRating: number;
     dodgeRating: number;
 }
+/**
+ * Represents a single item given to a character on creation.
+ * `equipped: true` means it will be placed into the character_equipment table
+ * at the slot derived from the item's equipSlot property.
+ * `equipped: false` means it will be placed into the inventory_items table.
+ */
+export interface StartingItem {
+    itemId: string;
+    quantity: number;
+    equipped: boolean;
+}
 export interface ClassTemplate {
     id: ClassId;
     name: string;
@@ -37,6 +48,7 @@ export interface ClassTemplate {
     allowedArmor: ArmorType;
     baseSpeed: number;
     canUseMana: boolean;
+    startingItems?: StartingItem[];
 }
 export declare const CLASS_TEMPLATES: Record<ClassId, ClassTemplate>;
 /** All valid class IDs for validation */

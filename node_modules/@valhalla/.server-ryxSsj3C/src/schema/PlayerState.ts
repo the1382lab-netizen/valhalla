@@ -10,6 +10,8 @@ export interface ActiveBuff {
   expiresAt: number;     // timestamp
   dotDamagePerSec?: number;
   hotHealPerSec?: number;
+  /** Current stack count (default 1). Used with stackingMode === 'stack'. */
+  stacks: number;
   /** Generic effect data — specific handlers interpret this */
   effectData?: Record<string, any>;
 }

@@ -37,15 +37,21 @@ export declare function equipItem(player: PlayerState, inventorySlotIndex: numbe
  */
 export declare function swapInventorySlots(player: PlayerState, fromIndex: number, toIndex: number): boolean;
 /**
- * Drop an item from inventory (destroy it).
- * @returns true if the item was dropped.
+ * Drop an item from inventory, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity } or null if the slot was invalid.
  */
-export declare function dropInventoryItem(player: PlayerState, slotIndex: number): boolean;
+export declare function dropInventoryItem(player: PlayerState, slotIndex: number): {
+    itemId: string;
+    quantity: number;
+} | null;
 /**
- * Drop an equipped item (unequip and destroy it).
- * @returns true if the item was dropped.
+ * Drop an equipped item, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity: 1 } or null if the slot was empty.
  */
-export declare function dropEquippedItem(player: PlayerState, slotType: EquipSlotType): boolean;
+export declare function dropEquippedItem(player: PlayerState, slotType: EquipSlotType): {
+    itemId: string;
+    quantity: number;
+} | null;
 /**
  * Unequip an item and return it to inventory (appended at end).
  * @returns true if the item was unequipped successfully, false if inventory full or slot empty.

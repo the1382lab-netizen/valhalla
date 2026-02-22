@@ -24,6 +24,14 @@ interface SkillTemplate {
   hotHealPerSec?: number;
   /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
   aoeRadius?: number;
+  /** Projectile metadata for projectile-based skills. */
+  projectile?: { speed: number; radius: number };
+  /** Cooldown group ID — skills sharing a group share a cooldown. */
+  cooldownGroup?: string;
+  /** Buff stacking mode. */
+  stackingMode?: 'replace' | 'stack' | 'extend';
+  /** Max stacks (when stackingMode is 'stack'). */
+  maxStacks?: number;
   effectNotes: string;
 }
 
@@ -57,6 +65,15 @@ export const SkillEditor: React.FC = () => {
   const skillsData = skills.data.skills;
   const classesData = classes.data.classes;
   const classList = useMemo(() => Object.keys(classesData).sort(), [classesData]);
+
+  /** All unique cooldown group IDs currently defined across all skills — used for datalist suggestions. */
+  const cooldownGroups = useMemo(() => {
+    const groups = new Set<string>();
+    for (const skill of Object.values(skillsData)) {
+      if (skill?.cooldownGroup) groups.add(skill.cooldownGroup);
+    }
+    return Array.from(groups).sort();
+  }, [skillsData]);
 
   const filteredSkills = useMemo(() => {
     const ids = Object.keys(skillsData);
@@ -552,6 +569,97 @@ export const SkillEditor: React.FC = () => {
                   onChange={(e) => handleUpdateSkill({ hotHealPerSec: parseFloat(e.target.value) || 0 })}
                 />
               </div>
+
+              {/* Projectile (only for aoeGround) */}
+              {selectedSkill.targetType === 'aoeGround' && (
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Projectile Speed</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={0}
+                      value={selectedSkill.projectile?.speed || 0}
+                      onChange={(e) => {
+                        const speed = parseInt(e.target.value, 10) || 0;
+                        const radius = selectedSkill.projectile?.radius || 10;
+                        handleUpdateSkill({ projectile: speed > 0 ? { speed, radius } : undefined });
+                      }}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Projectile Radius</label>
+                    <input
+                      type="number"
+                      className="form-input"
+                      min={1}
+                      value={selectedSkill.projectile?.radius || 10}
+                      onChange={(e) => {
+                        const radius = parseInt(e.target.value, 10) || 10;
+                        const speed = selectedSkill.projectile?.speed || 0;
+                        handleUpdateSkill({ projectile: speed > 0 ? { speed, radius } : undefined });
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Cooldown Group — combobox: suggest existing groups, allow new ones */}
+              <div className="form-group">
+                <label className="form-label">Cooldown Group</label>
+                <input
+                  type="text"
+                  className="form-input"
+                  list="cooldown-group-list"
+                  value={selectedSkill.cooldownGroup || ''}
+                  onChange={(e) => handleUpdateSkill({ cooldownGroup: e.target.value || undefined })}
+                  placeholder="e.g., warrior_shouts (leave empty for none)"
+                />
+                <datalist id="cooldown-group-list">
+                  {cooldownGroups.map((g) => (
+                    <option key={g} value={g} />
+                  ))}
+                </datalist>
+                {selectedSkill.cooldownGroup && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-muted)' }}>
+                    Shares cooldown with:{' '}
+                    {Object.values(skillsData)
+                      .filter((s) => s?.cooldownGroup === selectedSkill.cooldownGroup && s.id !== selectedSkill.id)
+                      .map((s) => s!.name)
+                      .join(', ') || 'no other skills yet'}
+                  </div>
+                )}
+              </div>
+
+              {/* Buff Stacking */}
+              {selectedSkill.buffDurationMs && selectedSkill.buffDurationMs > 0 ? (
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">Stacking Mode</label>
+                    <select
+                      className="form-select"
+                      value={selectedSkill.stackingMode || 'replace'}
+                      onChange={(e) => handleUpdateSkill({ stackingMode: e.target.value as any })}
+                    >
+                      <option value="replace">Replace</option>
+                      <option value="stack">Stack</option>
+                      <option value="extend">Extend</option>
+                    </select>
+                  </div>
+                  {selectedSkill.stackingMode === 'stack' && (
+                    <div className="form-group">
+                      <label className="form-label">Max Stacks</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={1}
+                        value={selectedSkill.maxStacks || 1}
+                        onChange={(e) => handleUpdateSkill({ maxStacks: parseInt(e.target.value, 10) || 1 })}
+                      />
+                    </div>
+                  )}
+                </div>
+              ) : null}
 
               {/* Effect Notes */}
               <div className="form-group">

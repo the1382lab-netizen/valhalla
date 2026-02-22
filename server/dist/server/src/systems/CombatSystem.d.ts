@@ -25,11 +25,11 @@ export declare class CombatSystem {
      * Try to perform a melee attack. Returns a list of combat events.
      * Melee is always physical damage.
      */
-    tryMelee(attacker: PlayerState, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, now: number): CombatEvent[];
+    tryMelee(attacker: PlayerState, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, now: number, isPartyMember?: (playerIdA: string, playerIdB: string) => boolean): CombatEvent[];
     /**
      * Update all projectiles: move, check wall collision, check player collision.
      */
-    updateProjectiles(projectiles: MapSchema<ProjectileState>, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, dt: number, now: number): {
+    updateProjectiles(projectiles: MapSchema<ProjectileState>, players: MapSchema<PlayerState>, npcs: MapSchema<NPCState>, npcSystem: NPCSystem, dt: number, now: number, isPartyMember?: (playerIdA: string, playerIdB: string) => boolean): {
         toRemove: string[];
         events: CombatEvent[];
     };

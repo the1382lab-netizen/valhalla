@@ -1,5 +1,3 @@
-import { TILE_SIZE, MAP_WIDTH_TILES, MAP_HEIGHT_TILES, } from '@valhalla/shared';
-// These constants aren't in shared yet — define locally until the FoW system is fully integrated
 const VISION_RADIUS = 400;
 const VISION_CONE_ANGLE = Math.PI;
 /**
@@ -33,8 +31,11 @@ function isAngleInCone(a, aimAngle, halfCone) {
  * 7. Insert the player origin at cone edges, sort by angle, return polygon
  */
 export class VisibilitySystem {
-    constructor(collisionGrid) {
+    constructor(collisionGrid, mapWidth, mapHeight, tileSize) {
         this.segments = [];
+        this.mapW = mapWidth;
+        this.mapH = mapHeight;
+        this.tileSize = tileSize;
         this.segments = this.extractWallSegments(collisionGrid);
     }
     /**
@@ -42,9 +43,9 @@ export class VisibilitySystem {
      */
     extractWallSegments(grid) {
         const segs = [];
-        const w = MAP_WIDTH_TILES;
-        const h = MAP_HEIGHT_TILES;
-        const ts = TILE_SIZE;
+        const w = this.mapW;
+        const h = this.mapH;
+        const ts = this.tileSize;
         const isWall = (tx, ty) => {
             if (tx < 0 || tx >= w || ty < 0 || ty >= h)
                 return false;

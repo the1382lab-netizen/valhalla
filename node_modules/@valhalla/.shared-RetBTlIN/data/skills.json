@@ -420,7 +420,7 @@
     "rogue_poison_blade": {
       "id": "rogue_poison_blade",
       "name": "Poison Blade",
-      "description": "Coat your weapon in poison, adding DoT to attacks.",
+      "description": "Apply poison",
       "classId": "rogue",
       "levelRequired": 2,
       "resourceType": "energy",
@@ -428,14 +428,14 @@
       "castTimeMs": 0,
       "cooldownMs": 20000,
       "range": 0,
-      "targetType": "self",
-      "category": "buff",
+      "targetType": "singleEnemy",
+      "category": "debuff",
       "iconColor": 6736998,
       "iconAbbrev": "PB",
       "scalingStat": "dexterity",
       "buffDurationMs": 30000,
-      "dotDamagePerSec": 4,
-      "effectNotes": "Next 5 attacks apply poison (4 dps for 6s)"
+      "dotDamagePerSec": 6,
+      "effectNotes": "Apply poison, a DoT"
     },
     "rogue_stealth": {
       "id": "rogue_stealth",

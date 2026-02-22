@@ -23,7 +23,12 @@ export class MovementSystem {
             mx -= 1;
         if (input.right)
             mx += 1;
-        const dir = normalise(mx, my);
+        // Rotate 45° CW so screen-relative WASD maps to orthogonal world directions.
+        // In isometric view, "screen up" (W) is actually NW in world space.
+        // Must match client's applyInputLocally exactly.
+        const isoMx = mx + my;
+        const isoMy = -mx + my;
+        const dir = normalise(isoMx, isoMy);
         const dx = dir.x * player.speed * dt;
         const dy = dir.y * player.speed * dt;
         if (dx !== 0 || dy !== 0) {

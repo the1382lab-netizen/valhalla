@@ -97,7 +97,24 @@ export declare enum MessageType {
     SPELL_IMPACT = "spellImpact",
     NPC_HIT = "npcHit",
     NPC_DIED = "npcDied",
-    CHAT_MESSAGE = "chatMessage"
+    CHAT_MESSAGE = "chatMessage",
+    LEVEL_UP = "levelUp",
+    LOOT_ITEM = "lootItem",
+    LOOT_ALL = "lootAll",
+    LOOT_SUCCESS = "lootSuccess",
+    PARTY_INVITE = "partyInvite",
+    PARTY_ACCEPT = "partyAccept",
+    PARTY_DECLINE = "partyDecline",
+    PARTY_LEAVE = "partyLeave",
+    PARTY_UPDATE = "partyUpdate",
+    PARTY_KICKED = "partyKicked"
+}
+export interface PartyMemberInfo {
+    sessionId: string;
+    characterName: string;
+}
+export interface PartyUpdatePayload {
+    members: PartyMemberInfo[];
 }
 export interface ChatMessagePayload {
     /** Channel the message was sent on. 'system' is server-generated. */

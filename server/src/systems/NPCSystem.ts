@@ -19,6 +19,7 @@ import { PlayerState, applyShieldAbsorption } from '../schema/PlayerState.js';
 import { DataManager } from './DataManager.js';
 import { MapManager } from './MapManager.js';
 import { CollisionSystem } from './CollisionSystem.js';
+import { syncNpcBuffsToSchema } from './SkillEffectHandler.js';
 import type { NPCTemplate, SpawnPointData } from '@valhalla/shared';
 import { INVULNERABILITY_MS, RESPAWN_TIME_MS } from '@valhalla/shared';
 import type { CombatEvent } from './CombatSystem.js';
@@ -46,6 +47,11 @@ interface SpawnedNPCData {
 export class NPCSystem {
   private npcs: Map<string, SpawnedNPCData> = new Map();
   private nextNpcId: number = 0;
+  /**
+   * Tracks the last DoT tick timestamp for each active buff on an NPC.
+   * Key format: "npcId:skillId:casterId"
+   */
+  private npcDotTickTracker: Map<string, number> = new Map();
 
   /**
    * Spawn all NPCs for a zone based on map spawn points and NPC templates.
@@ -125,6 +131,12 @@ export class NPCSystem {
           data.respawnAt = 0;
           data.aggroTarget = null;
           data.threatTable.clear();
+          // Clear any leftover DoT buffs from previous life
+          npc.activeBuffs = [];
+          npc.syncedBuffs.clear();
+          for (const k of [...this.npcDotTickTracker.keys()]) {
+            if (k.startsWith(`${npc.id}:`)) this.npcDotTickTracker.delete(k);
+          }
 
           // Re-add to synced state if it was removed
           if (!gameNpcs.has(id)) {
@@ -247,6 +259,14 @@ export class NPCSystem {
           npc.x = spawnX;
           npc.y = spawnY;
         }
+      }
+    }
+
+    // ── Buff ticking for all alive NPCs ──
+    for (const [, data] of this.npcs) {
+      if (data.npc.alive && data.npc.activeBuffs.length > 0) {
+        const buffEvents = this.tickNpcBuffs(data, now);
+        for (const e of buffEvents) events.push(e);
       }
     }
 
@@ -375,6 +395,82 @@ export class NPCSystem {
   }
 
   // ── Private ──
+
+  /**
+   * Tick active buffs (DoTs) on an NPC.
+   * - Removes expired buffs.
+   * - Applies 1 second of DoT damage once per second.
+   * - Handles NPC death from DoT (fires npcDied event).
+   * - Keeps syncedBuffs in sync with activeBuffs.
+   */
+  private tickNpcBuffs(data: SpawnedNPCData, now: number): CombatEvent[] {
+    const events: CombatEvent[] = [];
+    const { npc, template } = data;
+
+    // Remove expired buffs
+    const prevLen = npc.activeBuffs.length;
+    npc.activeBuffs = npc.activeBuffs.filter(b => b.expiresAt > now);
+    const changed = npc.activeBuffs.length !== prevLen;
+
+    // Apply DoT damage (1 tick per second per buff)
+    for (const buff of npc.activeBuffs) {
+      if (!buff.dotDamagePerSec) continue;
+
+      const key = `${npc.id}:${buff.skillId}:${buff.casterId}`;
+      const trackedTick = this.npcDotTickTracker.get(key);
+      // If the tracker has a stale entry from a previous buff application, reset
+      // to the current buff's appliedAt to prevent rapid catch-up ticks.
+      const lastTick = (trackedTick !== undefined && trackedTick >= buff.appliedAt)
+        ? trackedTick
+        : buff.appliedAt;
+
+      if (now - lastTick >= 1000) {
+        this.npcDotTickTracker.set(key, lastTick + 1000);
+
+        const dmg = buff.dotDamagePerSec;
+        npc.hp = Math.max(0, npc.hp - dmg);
+
+        events.push({
+          type: 'npcHit',
+          data: {
+            targetId: npc.id,
+            attackerId: buff.casterId,
+            damage: dmg,
+            remainingHp: npc.hp,
+            isCrit: false,
+            blocked: false,
+          },
+        });
+
+        if (npc.hp <= 0) {
+          npc.alive = false;
+          data.respawnAt = now + template.respawnMs;
+          data.aggroTarget = null;
+          data.threatTable.clear();
+          // Clear all DoT trackers for this NPC
+          for (const k of [...this.npcDotTickTracker.keys()]) {
+            if (k.startsWith(`${npc.id}:`)) this.npcDotTickTracker.delete(k);
+          }
+          // Clear synced buffs — NPC is dead
+          npc.activeBuffs = [];
+          npc.syncedBuffs.clear();
+
+          events.push({
+            type: 'npcDied',
+            data: { targetId: npc.id, killerId: buff.casterId, xpReward: template.xpReward },
+          });
+          return events; // Stop processing further buffs
+        }
+      }
+    }
+
+    // Keep syncedBuffs in sync with activeBuffs if anything changed
+    if (changed) {
+      syncNpcBuffsToSchema(npc);
+    }
+
+    return events;
+  }
 
   private createNPC(zoneId: string, spawnPoint: SpawnPointData, template: NPCTemplate): NPCState {
     const npc = new NPCState();

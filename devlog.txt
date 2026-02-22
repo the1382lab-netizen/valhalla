@@ -1,4 +1,47 @@
 
+=== Refactor: Skill System Scalability Overhaul ===
+
+Major refactor of the skill/spell system to support scaling to 50+ skills:
+
+Phase 1 — Extended SkillTemplate with new optional fields: projectile (speed/radius
+metadata), cooldownGroup (shared cooldowns between skills), stackingMode
+(replace/stack/extend), and maxStacks. Added stacks field to ActiveBuff for
+tracking stackable buff counts.
+
+Phase 2 — Modularized SkillEffectHandler into individual handler files under
+server/src/systems/handlers/. Created a centralized registry (registry.ts) with
+registerEffectHandler() and registerBuffCleanup() functions. Moved Fireball,
+Magic Missile, Taunt, and Shield of Faith handlers into their own files.
+SkillEffectHandler.ts is now a thin dispatcher + defaultEffect(). Adding a new
+skill handler is now a 3-step process: create file, register, import in index.ts.
+
+Phase 3 — Generalized projectile spawning. Fireball handler now reads projectile
+speed/radius from SkillTemplate metadata instead of hardcoded constants. Added
+projectile metadata to WIZARD_FIREBALL and WIZARD_METEOR in SKILL_CATALOG. New
+projectile-based spells can be added purely through data.
+
+Phase 4 — Implemented cooldown groups. When a skill with a cooldownGroup fires,
+all other skills sharing that group go on cooldown too. Validation also checks
+group members. Cooldown groups are configurable from the game editor — added
+Cooldown Group field to the Skill Editor.
+
+Phase 5 — Implemented buff stacking modes. applyBuff() now respects stackingMode:
+'replace' (default, existing behavior), 'stack' (increment stacks up to maxStacks,
+refresh duration), 'extend' (add remaining + new duration). DoT/HoT ticking
+multiplies damage/heal by stack count. Buff cleanup uses registered handlers
+instead of hardcoded if-else per skill. Editor gains Stacking Mode dropdown and
+Max Stacks field for buff skills.
+
+Files changed:
+- shared/src/skills.ts (SkillTemplate fields + projectile data on Fireball/Meteor)
+- server/src/schema/PlayerState.ts (ActiveBuff.stacks)
+- server/src/systems/SkillEffectHandler.ts (thin dispatcher, applyBuff with stacking)
+- server/src/systems/SkillSystem.ts (buff cleanup registry, cooldown groups, stack-scaled ticks)
+- server/src/systems/handlers/ (new directory):
+  - registry.ts, index.ts, utils.ts
+  - fireballHandler.ts, magicMissileHandler.ts, tauntHandler.ts, shieldOfFaithHandler.ts
+- editor/src/components/editors/skills/SkillEditor.tsx (cooldownGroup, stacking, projectile fields)
+
 === Feature: Equipment Sprite Sheets & Inventory Icons on Items ===
 
 Added support for visual equipment overlays in the game editor's Item Editor:

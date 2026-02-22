@@ -4,6 +4,11 @@
  */
 // ── Constants ────────────────────────────────────────────────
 export const INVENTORY_MAX_SLOTS = 32;
+// ── Loot Bag Constants ──────────────────────────────────────
+export const LOOT_BAG_MERGE_RANGE = 80; // pixels: nearby bags merge within this radius
+export const LOOT_BAG_PICKUP_RANGE = 200; // pixels: max distance to loot from a bag
+export const LOOT_BAG_DESPAWN_MS = 300_000; // 5 minutes
+export const LOOT_BAG_MAX_SLOTS = 18; // max items per bag
 // ── Enums ────────────────────────────────────────────────────
 export var ItemId;
 (function (ItemId) {
@@ -71,6 +76,13 @@ export const RARITY_COLORS = {
     [ItemRarity.RARE]: '#3399ff',
     [ItemRarity.EPIC]: '#aa44ff',
     [ItemRarity.LEGENDARY]: '#ff8800',
+};
+/** Default sprite config matching the character body sheet (4×9, 64×64). */
+export const DEFAULT_EQUIP_SPRITE_CONFIG = {
+    frameWidth: 64,
+    frameHeight: 64,
+    framesPerRow: 9,
+    rows: 4,
 };
 // ── Item Catalog ─────────────────────────────────────────────
 export const ITEM_CATALOG = {

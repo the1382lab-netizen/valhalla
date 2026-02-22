@@ -16,6 +16,7 @@ import {
 import { PlayerState } from '../schema/PlayerState.js';
 import { NPCState } from '../schema/NPCState.js';
 import { executeSkillEffect, SkillEvent, SkillEffectContext } from './SkillEffectHandler.js';
+import { getBuffCleanup } from './handlers/index.js';
 import { DataManager } from './DataManager.js';
 import { SpellProjectileState } from '../schema/SpellProjectileState.js';
 import { MapSchema } from '@colyseus/schema';
@@ -140,6 +141,7 @@ export class SkillSystem {
     allNPCs?: NPCMap,
     npcDelegate?: NPCCombatDelegate,
     awardXPDelegate?: (playerId: string, amount: number) => void,
+    isPartyMemberDelegate?: (a: string, b: string) => boolean,
   ): SkillSystemEvent[] {
     const skill = DataManager.instance.getSkill(skillId);
     if (!skill) {
@@ -163,6 +165,7 @@ export class SkillSystem {
       damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
       tauntNpc: npcDelegate ? (id, pId, bonus) => npcDelegate.tauntNpc(id, pId, bonus) : undefined,
       awardXP: awardXPDelegate ?? undefined,
+      isPartyMember: isPartyMemberDelegate,
     };
 
     if (skill.castTimeMs === 0) {
@@ -208,6 +211,7 @@ export class SkillSystem {
     allNPCs?: NPCMap,
     npcDelegate?: NPCCombatDelegate,
     awardXPDelegate?: (playerId: string, amount: number) => void,
+    isPartyMemberDelegate?: (a: string, b: string) => boolean,
   ): SkillSystemEvent[] {
     const events: SkillSystemEvent[] = [];
 
@@ -264,6 +268,7 @@ export class SkillSystem {
             damageNpc: npcDelegate ? (id, dmg, attId, t) => npcDelegate.damageNPC(id, dmg, attId, t) : undefined,
             tauntNpc: npcDelegate ? (id, pId, bonus) => npcDelegate.tauntNpc(id, pId, bonus) : undefined,
             awardXP: awardXPDelegate ?? undefined,
+            isPartyMember: isPartyMemberDelegate,
           };
           const castEvents = this.completeCast(player, target, skill, allPlayers, now, ctx);
           events.push(...castEvents);
@@ -326,11 +331,26 @@ export class SkillSystem {
       return 'Already casting';
     }
 
-    // Cooldown check
+    // Cooldown check (includes cooldown group check)
     const cdExpiry = caster.skillCooldowns.get(skill.id);
     if (cdExpiry && now < cdExpiry) {
       const remaining = Math.ceil((cdExpiry - now) / 1000);
       return `On cooldown (${remaining}s)`;
+    }
+    // Also check if any skill in the same cooldown group is on cooldown
+    if (skill.cooldownGroup) {
+      const classSkills = DataManager.instance.getClassSkills(caster.classId);
+      for (const otherSkillId of classSkills) {
+        if (otherSkillId === skill.id) continue;
+        const otherSkill = DataManager.instance.getSkill(otherSkillId);
+        if (otherSkill?.cooldownGroup === skill.cooldownGroup) {
+          const otherCd = caster.skillCooldowns.get(otherSkillId);
+          if (otherCd && now < otherCd) {
+            const remaining = Math.ceil((otherCd - now) / 1000);
+            return `On cooldown (${remaining}s) — shared with ${otherSkill.name}`;
+          }
+        }
+      }
     }
 
     // Resource check
@@ -416,10 +436,8 @@ export class SkillSystem {
     // Deduct resource
     this.deductResource(caster, skill);
 
-    // Start cooldown
-    if (skill.cooldownMs > 0) {
-      caster.skillCooldowns.set(skill.id, now + skill.cooldownMs);
-    }
+    // Start cooldown (+ cooldown group)
+    this.applyCooldown(caster, skill, now);
 
     // Execute effect
     const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now, ctx);
@@ -472,10 +490,8 @@ export class SkillSystem {
     // Deduct resource
     this.deductResource(caster, skill);
 
-    // Start cooldown
-    if (skill.cooldownMs > 0) {
-      caster.skillCooldowns.set(skill.id, now + skill.cooldownMs);
-    }
+    // Start cooldown (+ cooldown group)
+    this.applyCooldown(caster, skill, now);
 
     // Execute effect
     const skillEvents = executeSkillEffect(caster, target, skill, allPlayers, now, ctx);
@@ -483,6 +499,30 @@ export class SkillSystem {
     return [
       { type: 'castComplete', casterId: caster.id, skillId: skill.id, events: skillEvents },
     ];
+  }
+
+  /**
+   * Apply cooldown for a skill. If the skill belongs to a cooldown group,
+   * all other skills in that group also go on cooldown.
+   */
+  private applyCooldown(caster: PlayerState, skill: SkillTemplate, now: number): void {
+    if (skill.cooldownMs <= 0) return;
+
+    const cdExpiry = now + skill.cooldownMs;
+    caster.skillCooldowns.set(skill.id, cdExpiry);
+
+    // If this skill is in a cooldown group, put all group members on cooldown too
+    if (skill.cooldownGroup) {
+      const classSkills = DataManager.instance.getClassSkills(caster.classId);
+      for (const otherSkillId of classSkills) {
+        if (otherSkillId === skill.id) continue;
+        const otherSkill = DataManager.instance.getSkill(otherSkillId);
+        if (otherSkill?.cooldownGroup === skill.cooldownGroup) {
+          // Use this skill's cooldown expiry for all group members
+          caster.skillCooldowns.set(otherSkillId, cdExpiry);
+        }
+      }
+    }
   }
 
   private deductResource(caster: PlayerState, skill: SkillTemplate): void {
@@ -506,20 +546,20 @@ export class SkillSystem {
     for (const buff of player.activeBuffs) {
       // Check expiration
       if (now >= buff.expiresAt) {
-        // Clear shield when Shield of Faith expires naturally
-        if (buff.skillId === SkillId.CLERIC_SHIELD_OF_FAITH) {
-          player.shieldHp = 0;
-        }
+        // Run registered cleanup handler (if any) — replaces hardcoded per-skill if-else
+        const cleanup = getBuffCleanup(buff.skillId);
+        if (cleanup) cleanup(player, buff);
         events.push({ type: 'buffExpired', targetId: player.id, skillId: buff.skillId });
         continue;
       }
 
-      // Tick DoT
+      // Tick DoT (scaled by stacks)
       if (buff.dotDamagePerSec && buff.dotDamagePerSec > 0) {
         const tickKey = `${player.id}:${buff.skillId}:${buff.casterId}`;
         const lastTick = this.dotTickTracker.get(tickKey) ?? buff.appliedAt;
-        if (now - lastTick >= 1000) { // Tick once per second
-          const damage = Math.round(buff.dotDamagePerSec);
+        if (now - lastTick >= 1000) {
+          const stacks = buff.stacks ?? 1;
+          const damage = Math.round(buff.dotDamagePerSec * stacks);
           player.hp = Math.max(0, player.hp - damage);
           if (player.hp <= 0) player.alive = false;
           this.dotTickTracker.set(tickKey, now);
@@ -527,12 +567,13 @@ export class SkillSystem {
         }
       }
 
-      // Tick HoT
+      // Tick HoT (scaled by stacks)
       if (buff.hotHealPerSec && buff.hotHealPerSec > 0) {
         const tickKey = `${player.id}:hot:${buff.skillId}:${buff.casterId}`;
         const lastTick = this.dotTickTracker.get(tickKey) ?? buff.appliedAt;
         if (now - lastTick >= 1000) {
-          const heal = Math.round(buff.hotHealPerSec);
+          const stacks = buff.stacks ?? 1;
+          const heal = Math.round(buff.hotHealPerSec * stacks);
           player.hp = Math.min(player.maxHp, player.hp + heal);
           this.dotTickTracker.set(tickKey, now);
           events.push({ type: 'hotTick', targetId: player.id, skillId: buff.skillId, heal });

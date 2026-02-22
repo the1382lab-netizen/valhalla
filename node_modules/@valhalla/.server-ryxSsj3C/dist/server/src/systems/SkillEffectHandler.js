@@ -1,76 +1,87 @@
 /**
- * Extensible skill effect system.
+ * Extensible skill effect system — thin dispatcher.
  *
- * Each skill can register a custom EffectHandler. If none is registered,
- * the defaultEffect() handles standard damage/healing/buff patterns.
- * This gives us hook points to add unique per-skill mechanics later
- * without refactoring the core casting engine.
+ * Custom per-skill handlers live in ./handlers/ and self-register via
+ * registerEffectHandler(). If no custom handler is found for a skill,
+ * the defaultEffect() in this file handles standard damage/healing/buff
+ * patterns based on SkillTemplate data.
+ *
+ * To add a new skill handler:
+ *   1. Create a file in ./handlers/  (e.g. mySkillHandler.ts)
+ *   2. Import registerEffectHandler from ./handlers/registry.js
+ *   3. Call registerEffectHandler(SkillId.MY_SKILL, myHandler)
+ *   4. Import the file from ./handlers/index.ts for side-effect registration
  */
-import { SkillId, SkillCategory, FIREBALL_PROJECTILE_SPEED, FIREBALL_AOE_RADIUS, FIREBALL_PROJECTILE_RADIUS, PLAYER_COLLISION_RADIUS, } from '@valhalla/shared';
-import { SpellProjectileState } from '../schema/SpellProjectileState.js';
-// ── Handler Registry ───────────────────────────────────────
-/**
- * Custom per-skill handlers. Register specific skill logic here.
- * If a skill has no registered handler, defaultEffect() is used.
- */
-const EFFECT_HANDLERS = {};
-/**
- * Register a custom effect handler for a skill.
- */
-export function registerEffectHandler(skillId, handler) {
-    EFFECT_HANDLERS[skillId] = handler;
-}
+import { SkillCategory, } from '@valhalla/shared';
+import { NpcBuffInfo } from '../schema/NPCState.js';
+import { DataManager } from './DataManager.js';
+// Import handlers barrel — triggers all handler registrations
+import './handlers/index.js';
+// Import from handlers — used locally and re-exported for backward compat
+import { getEffectHandler, isNpcTarget, registerEffectHandler, getStatValue, } from './handlers/index.js';
+// Re-export so existing consumers of SkillEffectHandler don't break
+export { isNpcTarget, registerEffectHandler, };
 // ── Execute Effect ─────────────────────────────────────────
 /**
  * Execute the effect of a completed skill cast.
  * Looks up a custom handler first, then falls back to default.
  */
 export function executeSkillEffect(caster, target, skill, allPlayers, now, ctx) {
-    const handler = EFFECT_HANDLERS[skill.id];
+    const handler = getEffectHandler(skill.id);
     if (handler) {
         return handler(caster, target, skill, allPlayers, now, ctx);
     }
     return defaultEffect(caster, target, skill, allPlayers, now, ctx);
 }
 // ── Default Effect Handler ─────────────────────────────────
-function defaultEffect(caster, target, skill, allPlayers, now, _ctx) {
+function defaultEffect(caster, target, skill, allPlayers, now, ctx) {
     const events = [];
     // ── Damage skills ──
     if (skill.baseDamage) {
-        const targets = getAffectedTargets(caster, target, skill, allPlayers);
+        const targets = getAffectedTargets(caster, target, skill, allPlayers, ctx?.isPartyMember);
         for (const t of targets) {
             if (!t.alive)
                 continue;
             const [min, max] = skill.baseDamage;
             const rawDamage = min + Math.random() * (max - min);
-            // Scale with primary stat
             const statValue = getStatValue(caster, skill.scalingStat);
             const scaledDamage = rawDamage + statValue * 0.8;
-            // Simple crit check
             const isCrit = Math.random() < (caster.stats?.critChance ?? 0.05);
             const critMult = isCrit ? 1 + (caster.stats?.critDamage ?? 0.5) : 1;
             const finalDamage = Math.round(scaledDamage * critMult);
-            t.hp = Math.max(0, t.hp - finalDamage);
-            if (t.hp <= 0) {
-                t.alive = false;
+            if (isNpcTarget(t) && ctx?.damageNpc) {
+                const { xpReward } = ctx.damageNpc(t.id, finalDamage, caster.id, now);
+                if (xpReward > 0) {
+                    ctx?.awardXP ? ctx.awardXP(caster.id, xpReward) : (caster.xp = (caster.xp ?? 0) + xpReward);
+                }
+            }
+            else {
+                t.hp = Math.max(0, t.hp - finalDamage);
+                if (t.hp <= 0) {
+                    t.alive = false;
+                }
             }
             events.push({ type: 'damage', targetId: t.id, damage: finalDamage, isCrit });
-            // Apply DoT if present
-            if (skill.dotDamagePerSec && skill.buffDurationMs) {
+            // Apply DoT — only player targets have activeBuffs
+            if (!isNpcTarget(t) && skill.dotDamagePerSec && skill.buffDurationMs) {
                 applyBuff(t, {
                     skillId: skill.id,
                     casterId: caster.id,
                     appliedAt: now,
                     expiresAt: now + skill.buffDurationMs,
                     dotDamagePerSec: skill.dotDamagePerSec,
+                    stacks: 1,
                 });
                 events.push({ type: 'debuff', targetId: t.id, skillId: skill.id, durationMs: skill.buffDurationMs });
             }
         }
     }
-    // ── Healing skills ──
+    // ── Healing skills (player targets only) ──
     if (skill.baseHealing) {
-        const healTarget = target ?? caster;
+        if (skill.targetType === 'singleAlly' && (!target || isNpcTarget(target))) {
+            return events;
+        }
+        const healTarget = (target && !isNpcTarget(target)) ? target : caster;
         if (healTarget.alive) {
             const [min, max] = skill.baseHealing;
             const rawHeal = min + Math.random() * (max - min);
@@ -80,58 +91,114 @@ function defaultEffect(caster, target, skill, allPlayers, now, _ctx) {
             healTarget.hp = Math.min(healTarget.maxHp, healTarget.hp + finalHeal);
             events.push({ type: 'heal', targetId: healTarget.id, amount: finalHeal });
         }
-        // Apply HoT if present
         if (skill.hotHealPerSec && skill.buffDurationMs) {
-            applyBuff(healTarget, {
+            const healTarget2 = (target && !isNpcTarget(target)) ? target : caster;
+            applyBuff(healTarget2, {
                 skillId: skill.id,
                 casterId: caster.id,
                 appliedAt: now,
                 expiresAt: now + skill.buffDurationMs,
                 hotHealPerSec: skill.hotHealPerSec,
+                stacks: 1,
             });
-            events.push({ type: 'buff', targetId: healTarget.id, skillId: skill.id, durationMs: skill.buffDurationMs });
+            events.push({ type: 'buff', targetId: healTarget2.id, skillId: skill.id, durationMs: skill.buffDurationMs });
         }
     }
-    // ── Buff/debuff-only skills (no damage or healing) ──
+    // ── Buff/debuff-only skills (player targets only) ──
     if (!skill.baseDamage && !skill.baseHealing && skill.buffDurationMs) {
-        const buffTarget = skill.category === SkillCategory.DEBUFF
+        const rawTarget = skill.category === SkillCategory.DEBUFF
             ? (target ?? caster)
             : (skill.targetType === 'self' ? caster : (target ?? caster));
-        applyBuff(buffTarget, {
-            skillId: skill.id,
-            casterId: caster.id,
-            appliedAt: now,
-            expiresAt: now + skill.buffDurationMs,
-        });
-        const eventType = skill.category === SkillCategory.DEBUFF ? 'debuff' : 'buff';
-        events.push({ type: eventType, targetId: buffTarget.id, skillId: skill.id, durationMs: skill.buffDurationMs });
+        if (!isNpcTarget(rawTarget)) {
+            applyBuff(rawTarget, {
+                skillId: skill.id,
+                casterId: caster.id,
+                appliedAt: now,
+                expiresAt: now + skill.buffDurationMs,
+                stacks: 1,
+            });
+            const eventType = skill.category === SkillCategory.DEBUFF ? 'debuff' : 'buff';
+            events.push({ type: eventType, targetId: rawTarget.id, skillId: skill.id, durationMs: skill.buffDurationMs });
+        }
     }
     return events;
 }
 // ── Helpers ────────────────────────────────────────────────
-function getStatValue(player, statName) {
-    if (!player.stats)
-        return 0;
-    return player.stats[statName] ?? 0;
-}
-function applyBuff(player, buff) {
-    // Remove existing buff of same skill from same caster (refresh)
-    player.activeBuffs = player.activeBuffs.filter(b => !(b.skillId === buff.skillId && b.casterId === buff.casterId));
-    player.activeBuffs.push(buff);
+/**
+ * Sync server-side activeBuffs → the Colyseus-synced syncedBuffs ArraySchema
+ * on an NPC. Call this any time activeBuffs changes.
+ */
+export function syncNpcBuffsToSchema(npc) {
+    npc.syncedBuffs.clear();
+    for (const b of npc.activeBuffs) {
+        const info = new NpcBuffInfo();
+        info.skillId = b.skillId;
+        info.expiresAt = b.expiresAt;
+        info.dotDamagePerSec = b.dotDamagePerSec ?? 0;
+        npc.syncedBuffs.push(info);
+    }
 }
 /**
- * Determine which players are affected by a skill based on target type.
+ * Apply a buff/debuff to an NPC (mirrors applyBuff for players).
+ * Uses "replace" stacking semantics by default — re-applying the same
+ * skillId from the same caster refreshes the duration.
+ * Updates syncedBuffs so clients see the change immediately.
  */
-function getAffectedTargets(caster, target, skill, allPlayers) {
+export function applyNpcBuff(npc, buff) {
+    if (buff.stacks == null)
+        buff.stacks = 1;
+    // Remove any existing entry from the same caster+skill (replace semantics)
+    npc.activeBuffs = npc.activeBuffs.filter(b => !(b.skillId === buff.skillId && b.casterId === buff.casterId));
+    npc.activeBuffs.push(buff);
+    // Keep the synced schema in sync
+    syncNpcBuffsToSchema(npc);
+}
+export function applyBuff(player, buff) {
+    if (buff.stacks == null)
+        buff.stacks = 1;
+    const skillTemplate = DataManager.instance.getSkill(buff.skillId);
+    const mode = skillTemplate?.stackingMode ?? 'replace';
+    const existing = player.activeBuffs.find(b => b.skillId === buff.skillId && b.casterId === buff.casterId);
+    if (existing) {
+        switch (mode) {
+            case 'stack': {
+                const maxStacks = skillTemplate?.maxStacks ?? 1;
+                existing.stacks = Math.min(existing.stacks + 1, maxStacks);
+                existing.appliedAt = buff.appliedAt;
+                existing.expiresAt = buff.expiresAt;
+                if (buff.dotDamagePerSec != null)
+                    existing.dotDamagePerSec = buff.dotDamagePerSec;
+                if (buff.hotHealPerSec != null)
+                    existing.hotHealPerSec = buff.hotHealPerSec;
+                return;
+            }
+            case 'extend': {
+                const remainingMs = Math.max(0, existing.expiresAt - buff.appliedAt);
+                const extensionMs = buff.expiresAt - buff.appliedAt;
+                existing.expiresAt = buff.appliedAt + remainingMs + extensionMs;
+                return;
+            }
+            case 'replace':
+            default:
+                player.activeBuffs = player.activeBuffs.filter(b => !(b.skillId === buff.skillId && b.casterId === buff.casterId));
+                break;
+        }
+    }
+    player.activeBuffs.push(buff);
+}
+function getAffectedTargets(caster, target, skill, allPlayers, isPartyMember) {
     switch (skill.targetType) {
         case 'singleEnemy':
             return target && target.id !== caster.id ? [target] : [];
+        case 'singleAlly':
+            return (target && !isNpcTarget(target) && target.id !== caster.id) ? [target] : [];
         case 'aoeSelf': {
-            // All enemies within skill.range of caster
             const targets = [];
             allPlayers.forEach(p => {
                 if (p.id === caster.id || !p.alive || p.zoneId !== caster.zoneId)
                     return;
+                if (isPartyMember?.(caster.id, p.id))
+                    return; // no friendly fire
                 const dx = p.x - caster.x;
                 const dy = p.y - caster.y;
                 if (dx * dx + dy * dy <= skill.range * skill.range) {
@@ -141,12 +208,13 @@ function getAffectedTargets(caster, target, skill, allPlayers) {
             return targets;
         }
         case 'cone': {
-            // Enemies in a cone in front of caster
             const targets = [];
-            const coneHalfAngle = Math.PI / 4; // 45° half-cone
+            const coneHalfAngle = Math.PI / 4;
             allPlayers.forEach(p => {
                 if (p.id === caster.id || !p.alive || p.zoneId !== caster.zoneId)
                     return;
+                if (isPartyMember?.(caster.id, p.id))
+                    return; // no friendly fire
                 const dx = p.x - caster.x;
                 const dy = p.y - caster.y;
                 const distSq = dx * dx + dy * dy;
@@ -163,56 +231,10 @@ function getAffectedTargets(caster, target, skill, allPlayers) {
             return targets;
         }
         case 'aoeGround':
-            // Ground-targeted AoE — handled by custom per-skill handlers that spawn spell projectiles.
-            // The default effect handler doesn't apply damage here; see e.g. fireballHandler below.
+            // Handled by projectile handlers or spawnProjectileFromSkill
             return [];
         default:
             return target ? [target] : [];
     }
 }
-// ── Fireball Handler ───────────────────────────────────────
-let _nextSpellProjId = 0;
-/**
- * Fireball effect handler.
- *
- * Instead of dealing damage immediately, this spawns a SpellProjectileState
- * that travels toward the ground target. The SpellProjectileSystem handles
- * movement, collision, and AoE detonation each tick.
- */
-function fireballHandler(caster, _target, skill, _allPlayers, _now, ctx) {
-    if (!ctx?.spellProjectiles || ctx.groundX == null || ctx.groundY == null) {
-        // Fallback: no projectile map or no target position — skip silently
-        return [];
-    }
-    // Roll damage (will be applied at detonation)
-    const [min, max] = skill.baseDamage;
-    const rawDamage = min + Math.random() * (max - min);
-    const intel = getStatValue(caster, skill.scalingStat);
-    const scaledDamage = rawDamage + intel * 0.8;
-    // Spawn offset: start the fireball just ahead of the caster
-    const spawnOffset = PLAYER_COLLISION_RADIUS + FIREBALL_PROJECTILE_RADIUS + 2;
-    const angle = Math.atan2(ctx.groundY - caster.y, ctx.groundX - caster.x);
-    const proj = new SpellProjectileState();
-    proj.id = `spell_${_nextSpellProjId++}`;
-    proj.ownerId = caster.id;
-    proj.skillId = skill.id;
-    proj.x = caster.x + Math.cos(angle) * spawnOffset;
-    proj.y = caster.y + Math.sin(angle) * spawnOffset;
-    proj.targetX = ctx.groundX;
-    proj.targetY = ctx.groundY;
-    proj.speed = FIREBALL_PROJECTILE_SPEED;
-    // Server-only payload for detonation
-    proj._damage = scaledDamage;
-    proj._aoeRadius = FIREBALL_AOE_RADIUS;
-    proj._critChance = caster.stats?.critChance ?? 0.05;
-    proj._critDamage = caster.stats?.critDamage ?? 0.5;
-    proj._attackerDex = caster.stats?.dexterity ?? 10;
-    proj._distanceTravelled = 0;
-    proj._zoneId = caster.zoneId ?? '';
-    ctx.spellProjectiles.set(proj.id, proj);
-    // Return no immediate skill events — damage fires on detonation
-    return [];
-}
-// Register the Fireball handler
-registerEffectHandler(SkillId.WIZARD_FIREBALL, fireballHandler);
 //# sourceMappingURL=SkillEffectHandler.js.map

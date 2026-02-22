@@ -53,6 +53,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'plate',
         baseSpeed: 144,
         canUseMana: false,
+        startingItems: [
+            { itemId: 'iron_sword', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
     [ClassId.CLERIC]: {
         id: ClassId.CLERIC,
@@ -93,6 +98,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'mail',
         baseSpeed: 152,
         canUseMana: true,
+        startingItems: [
+            { itemId: 'iron_mace', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
     [ClassId.RANGER]: {
         id: ClassId.RANGER,
@@ -133,6 +143,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'leather',
         baseSpeed: 184,
         canUseMana: false,
+        startingItems: [
+            { itemId: 'short_bow', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
     [ClassId.ROGUE]: {
         id: ClassId.ROGUE,
@@ -173,6 +188,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'leather',
         baseSpeed: 168,
         canUseMana: false,
+        startingItems: [
+            { itemId: 'iron_dagger', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
     [ClassId.SHAMAN]: {
         id: ClassId.SHAMAN,
@@ -213,6 +233,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'mail',
         baseSpeed: 152,
         canUseMana: true,
+        startingItems: [
+            { itemId: 'bone_totem', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
     [ClassId.WIZARD]: {
         id: ClassId.WIZARD,
@@ -253,6 +278,11 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'cloth',
         baseSpeed: 152,
         canUseMana: true,
+        startingItems: [
+            { itemId: 'oak_staff', quantity: 1, equipped: true },
+            { itemId: 'health_potion', quantity: 5, equipped: false },
+            { itemId: 'mana_potion', quantity: 3, equipped: false },
+        ],
     },
 };
 /** All valid class IDs for validation */

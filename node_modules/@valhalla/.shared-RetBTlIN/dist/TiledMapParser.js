@@ -15,7 +15,10 @@ export function parseTiledMap(json) {
     const map = json;
     const width = map.width;
     const height = map.height;
-    const tileSize = map.tilewidth;
+    const orientation = map.orientation === 'isometric' ? 'isometric' : 'orthogonal';
+    // For ISO maps the Tiled tilewidth is the diamond width (128), but game logic
+    // uses the orthogonal grid cell size which equals tileheight (64).
+    const tileSize = orientation === 'isometric' ? map.tileheight : map.tilewidth;
     // Parse tilesets
     const tilesets = parseTilesets(map.tilesets ?? []);
     // Separate tile layers from object layers
@@ -77,6 +80,7 @@ export function parseTiledMap(json) {
         width,
         height,
         tileSize,
+        orientation,
         collisionGrid,
         spawnPoints,
         zoneConnections,

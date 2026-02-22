@@ -185,25 +185,27 @@ export function swapInventorySlots(player, fromIndex, toIndex) {
     return true;
 }
 /**
- * Drop an item from inventory (destroy it).
- * @returns true if the item was dropped.
+ * Drop an item from inventory, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity } or null if the slot was invalid.
  */
 export function dropInventoryItem(player, slotIndex) {
     if (slotIndex < 0 || slotIndex >= player.inventory.length)
-        return false;
+        return null;
+    const slot = player.inventory[slotIndex];
+    const itemData = { itemId: slot.itemId, quantity: slot.quantity };
     player.inventory.splice(slotIndex, 1);
-    return true;
+    return itemData;
 }
 /**
- * Drop an equipped item (unequip and destroy it).
- * @returns true if the item was dropped.
+ * Drop an equipped item, returning the item data for loot bag spawn.
+ * @returns { itemId, quantity: 1 } or null if the slot was empty.
  */
 export function dropEquippedItem(player, slotType) {
     const currentlyEquipped = getEquipField(player, slotType);
     if (!currentlyEquipped)
-        return false;
+        return null;
     setEquipField(player, slotType, '');
-    return true;
+    return { itemId: currentlyEquipped, quantity: 1 };
 }
 /**
  * Unequip an item and return it to inventory (appended at end).

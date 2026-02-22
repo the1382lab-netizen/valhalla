@@ -1,3 +1,4 @@
+import { applyShieldAbsorption } from '../schema/PlayerState.js';
 import { ProjectileState } from '../schema/ProjectileState.js';
 import { PROJECTILE_SPEED, PROJECTILE_RADIUS, PROJECTILE_MAX_RANGE, FIRE_COOLDOWN_MS, INVULNERABILITY_MS, RESPAWN_TIME_MS, PLAYER_COLLISION_RADIUS, MELEE_RANGE, MELEE_ARC, MELEE_COOLDOWN_MS, isRangedMagic, computePhysicalDamage, computeSpellDamage, applyDefenseReduction, rollHit, rollCrit, rollDodge, rollBlock, computeFireCooldown, computeMeleeCooldown, BASE_MELEE_DAMAGE, BASE_RANGED_DAMAGE, BASE_SPELL_DAMAGE, } from '@valhalla/shared';
 let nextProjectileId = 0;
@@ -57,7 +58,7 @@ export class CombatSystem {
      * Try to perform a melee attack. Returns a list of combat events.
      * Melee is always physical damage.
      */
-    tryMelee(attacker, players, npcs, npcSystem, now) {
+    tryMelee(attacker, players, npcs, npcSystem, now, isPartyMember) {
         const events = [];
         if (!attacker.alive)
             return events;
@@ -81,6 +82,8 @@ export class CombatSystem {
                 return;
             if (now < target.invulnerableUntil)
                 return;
+            if (isPartyMember?.(attacker.id, targetId))
+                return; // no friendly fire
             const dx = target.x - attacker.x;
             const dy = target.y - attacker.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -138,8 +141,7 @@ export class CombatSystem {
                     type: 'npcDied',
                     data: { targetId: npcId, killerId: attacker.id, xpReward },
                 });
-                // Award XP to the attacker
-                attacker.xp = (attacker.xp ?? 0) + xpReward;
+                // XP is now awarded centrally by GameRoom.awardKillXP via broadcastCombatEvents
             }
         });
         return events;
@@ -147,7 +149,7 @@ export class CombatSystem {
     /**
      * Update all projectiles: move, check wall collision, check player collision.
      */
-    updateProjectiles(projectiles, players, npcs, npcSystem, dt, now) {
+    updateProjectiles(projectiles, players, npcs, npcSystem, dt, now, isPartyMember) {
         const toRemove = [];
         const events = [];
         projectiles.forEach((proj, projId) => {
@@ -177,6 +179,8 @@ export class CombatSystem {
                     return;
                 if (now < player.invulnerableUntil)
                     return;
+                if (isPartyMember?.(proj.ownerId, playerId))
+                    return; // no friendly fire
                 const dx = player.x - proj.x;
                 const dy = player.y - proj.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
@@ -224,11 +228,7 @@ export class CombatSystem {
                                 type: 'npcDied',
                                 data: { targetId: npcId, killerId: proj.ownerId, xpReward },
                             });
-                            // Award XP to the projectile owner
-                            const killer = players.get(proj.ownerId);
-                            if (killer) {
-                                killer.xp = (killer.xp ?? 0) + xpReward;
-                            }
+                            // XP is now awarded centrally by GameRoom.awardKillXP via broadcastCombatEvents
                         }
                     }
                 });
@@ -280,6 +280,8 @@ export class CombatSystem {
         damage = applyDefenseReduction(damage, defense);
         // Floor the final damage (minimum 1)
         damage = Math.max(1, Math.floor(damage));
+        // Apply shield absorption (Shield of Faith) before HP damage
+        damage = applyShieldAbsorption(target, damage);
         // Apply
         target.hp -= damage;
         target.invulnerableUntil = now + INVULNERABILITY_MS;

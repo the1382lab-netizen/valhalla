@@ -13,12 +13,19 @@
  * - Combat integration: NPCs take damage from players, award XP on death
  */
 import { NPCState } from '../schema/NPCState.js';
+import { applyShieldAbsorption } from '../schema/PlayerState.js';
 import { DataManager } from './DataManager.js';
+import { syncNpcBuffsToSchema } from './SkillEffectHandler.js';
 import { INVULNERABILITY_MS, RESPAWN_TIME_MS } from '@valhalla/shared';
 export class NPCSystem {
     constructor() {
         this.npcs = new Map();
         this.nextNpcId = 0;
+        /**
+         * Tracks the last DoT tick timestamp for each active buff on an NPC.
+         * Key format: "npcId:skillId:casterId"
+         */
+        this.npcDotTickTracker = new Map();
     }
     /**
      * Spawn all NPCs for a zone based on map spawn points and NPC templates.
@@ -52,6 +59,7 @@ export class NPCSystem {
                 aggroTarget: null,
                 leashRange: template.leashRange ?? (template.aggroRange ?? 200) * 3,
                 lastAttackTime: 0,
+                threatTable: new Map(),
             });
             spawned++;
         }
@@ -77,6 +85,14 @@ export class NPCSystem {
                     npc.y = spawnY;
                     data.respawnAt = 0;
                     data.aggroTarget = null;
+                    data.threatTable.clear();
+                    // Clear any leftover DoT buffs from previous life
+                    npc.activeBuffs = [];
+                    npc.syncedBuffs.clear();
+                    for (const k of [...this.npcDotTickTracker.keys()]) {
+                        if (k.startsWith(`${npc.id}:`))
+                            this.npcDotTickTracker.delete(k);
+                    }
                     // Re-add to synced state if it was removed
                     if (!gameNpcs.has(id)) {
                         gameNpcs.set(id, npc);
@@ -102,6 +118,7 @@ export class NPCSystem {
                     if (dxSpawn * dxSpawn + dySpawn * dySpawn > data.leashRange * data.leashRange) {
                         // Too far from spawn, reset
                         data.aggroTarget = null;
+                        data.threatTable.clear();
                         npc.x = spawnX;
                         npc.y = spawnY;
                         npc.hp = template.hp; // Full heal on reset
@@ -111,8 +128,17 @@ export class NPCSystem {
                     if (dist > 30) {
                         const moveX = (dx / dist) * chaseSpeed * dt;
                         const moveY = (dy / dist) * chaseSpeed * dt;
-                        npc.x += moveX;
-                        npc.y += moveY;
+                        const col = getCollision(npc.zoneId);
+                        if (col) {
+                            const resolved = col.resolveMovement(npc.x, npc.y, moveX, moveY);
+                            const clamped = col.clampToMap(resolved.x, resolved.y);
+                            npc.x = clamped.x;
+                            npc.y = clamped.y;
+                        }
+                        else {
+                            npc.x += moveX;
+                            npc.y += moveY;
+                        }
                     }
                     // Face the target
                     npc.aimAngle = Math.atan2(dy, dx);
@@ -123,7 +149,9 @@ export class NPCSystem {
                     if (dist <= attackRange && now >= data.lastAttackTime + attackSpeed) {
                         data.lastAttackTime = now;
                         if (target.alive && now >= target.invulnerableUntil) {
-                            const damage = Math.max(1, baseDamage);
+                            let damage = Math.max(1, baseDamage);
+                            // Apply shield absorption (Shield of Faith) before HP damage
+                            damage = applyShieldAbsorption(target, damage);
                             target.hp -= damage;
                             target.invulnerableUntil = now + INVULNERABILITY_MS;
                             events.push({
@@ -162,13 +190,32 @@ export class NPCSystem {
                 const dy = spawnY - npc.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 if (dist > 2) {
-                    npc.x += (dx / dist) * returnSpeed * dt;
-                    npc.y += (dy / dist) * returnSpeed * dt;
+                    const moveX = (dx / dist) * returnSpeed * dt;
+                    const moveY = (dy / dist) * returnSpeed * dt;
+                    const col = getCollision(npc.zoneId);
+                    if (col) {
+                        const resolved = col.resolveMovement(npc.x, npc.y, moveX, moveY);
+                        const clamped = col.clampToMap(resolved.x, resolved.y);
+                        npc.x = clamped.x;
+                        npc.y = clamped.y;
+                    }
+                    else {
+                        npc.x += moveX;
+                        npc.y += moveY;
+                    }
                 }
                 else {
                     npc.x = spawnX;
                     npc.y = spawnY;
                 }
+            }
+        }
+        // ── Buff ticking for all alive NPCs ──
+        for (const [, data] of this.npcs) {
+            if (data.npc.alive && data.npc.activeBuffs.length > 0) {
+                const buffEvents = this.tickNpcBuffs(data, now);
+                for (const e of buffEvents)
+                    events.push(e);
             }
         }
         return events;
@@ -181,18 +228,31 @@ export class NPCSystem {
         if (!data || !data.npc.alive)
             return { died: false, xpReward: 0 };
         data.npc.hp = Math.max(0, data.npc.hp - damage);
-        // Aggro toward attacker (only if canAggro allows it)
+        // Accumulate threat — damage dealt = threat generated
         const canAggro = data.template.canAggro ?? (data.template.type === 'enemy');
-        if (!data.aggroTarget && canAggro) {
-            data.aggroTarget = attackerId;
+        if (canAggro) {
+            data.threatTable.set(attackerId, (data.threatTable.get(attackerId) ?? 0) + damage);
         }
         if (data.npc.hp <= 0) {
             data.npc.alive = false;
             data.respawnAt = now + data.template.respawnMs;
             data.aggroTarget = null;
+            data.threatTable.clear();
             return { died: true, xpReward: data.template.xpReward };
         }
         return { died: false, xpReward: 0 };
+    }
+    /**
+     * Taunt an NPC — add bonus threat to the player's current threat and
+     * immediately force the NPC to target them.
+     */
+    tauntNpc(npcId, playerId, bonusThreat) {
+        const data = this.npcs.get(npcId);
+        if (!data || !data.npc.alive)
+            return;
+        const current = data.threatTable.get(playerId) ?? 0;
+        data.threatTable.set(playerId, current + bonusThreat);
+        data.aggroTarget = playerId;
     }
     /**
      * Get an NPC by ID.
@@ -212,7 +272,133 @@ export class NPCSystem {
         }
         return result;
     }
+    // ── Admin API (called from admin REST routes) ──
+    /**
+     * Register an externally-created NPC (e.g. from admin spawn) so the
+     * AI system tracks it like any other NPC.
+     */
+    registerAdminNPC(npcId, npc, spawnX, spawnY, template) {
+        this.npcs.set(npcId, {
+            npc,
+            spawnX,
+            spawnY,
+            template,
+            respawnAt: 0,
+            aggroTarget: null,
+            leashRange: template.leashRange ?? (template.aggroRange ?? 200) * 3,
+            lastAttackTime: 0,
+            threatTable: new Map(),
+        });
+    }
+    /**
+     * Force-kill an NPC from admin. Sets it dead and starts respawn timer.
+     */
+    adminKill(npcId) {
+        const data = this.npcs.get(npcId);
+        if (!data)
+            return;
+        data.npc.alive = false;
+        data.npc.hp = 0;
+        data.respawnAt = Date.now() + data.template.respawnMs;
+        data.aggroTarget = null;
+        data.threatTable.clear();
+    }
+    /**
+     * Force-respawn a dead NPC immediately from admin.
+     */
+    adminRespawn(npcId, gameNpcs) {
+        const data = this.npcs.get(npcId);
+        if (!data)
+            return;
+        data.npc.alive = true;
+        data.npc.hp = data.template.hp;
+        data.npc.x = data.spawnX;
+        data.npc.y = data.spawnY;
+        data.respawnAt = 0;
+        data.aggroTarget = null;
+        data.threatTable.clear();
+        if (!gameNpcs.has(npcId)) {
+            gameNpcs.set(npcId, data.npc);
+        }
+    }
+    /**
+     * Permanently delete an NPC from admin — removes it from the game state
+     * and from the AI tracking map so it will never respawn.
+     */
+    adminDelete(npcId, gameNpcs) {
+        // Remove from AI tracker first (cancels any pending respawn timer)
+        this.npcs.delete(npcId);
+        // Remove from Colyseus state so clients stop seeing it
+        gameNpcs.delete(npcId);
+    }
     // ── Private ──
+    /**
+     * Tick active buffs (DoTs) on an NPC.
+     * - Removes expired buffs.
+     * - Applies 1 second of DoT damage once per second.
+     * - Handles NPC death from DoT (fires npcDied event).
+     * - Keeps syncedBuffs in sync with activeBuffs.
+     */
+    tickNpcBuffs(data, now) {
+        const events = [];
+        const { npc, template } = data;
+        // Remove expired buffs
+        const prevLen = npc.activeBuffs.length;
+        npc.activeBuffs = npc.activeBuffs.filter(b => b.expiresAt > now);
+        const changed = npc.activeBuffs.length !== prevLen;
+        // Apply DoT damage (1 tick per second per buff)
+        for (const buff of npc.activeBuffs) {
+            if (!buff.dotDamagePerSec)
+                continue;
+            const key = `${npc.id}:${buff.skillId}:${buff.casterId}`;
+            const trackedTick = this.npcDotTickTracker.get(key);
+            // If the tracker has a stale entry from a previous buff application, reset
+            // to the current buff's appliedAt to prevent rapid catch-up ticks.
+            const lastTick = (trackedTick !== undefined && trackedTick >= buff.appliedAt)
+                ? trackedTick
+                : buff.appliedAt;
+            if (now - lastTick >= 1000) {
+                this.npcDotTickTracker.set(key, lastTick + 1000);
+                const dmg = buff.dotDamagePerSec;
+                npc.hp = Math.max(0, npc.hp - dmg);
+                events.push({
+                    type: 'npcHit',
+                    data: {
+                        targetId: npc.id,
+                        attackerId: buff.casterId,
+                        damage: dmg,
+                        remainingHp: npc.hp,
+                        isCrit: false,
+                        blocked: false,
+                    },
+                });
+                if (npc.hp <= 0) {
+                    npc.alive = false;
+                    data.respawnAt = now + template.respawnMs;
+                    data.aggroTarget = null;
+                    data.threatTable.clear();
+                    // Clear all DoT trackers for this NPC
+                    for (const k of [...this.npcDotTickTracker.keys()]) {
+                        if (k.startsWith(`${npc.id}:`))
+                            this.npcDotTickTracker.delete(k);
+                    }
+                    // Clear synced buffs — NPC is dead
+                    npc.activeBuffs = [];
+                    npc.syncedBuffs.clear();
+                    events.push({
+                        type: 'npcDied',
+                        data: { targetId: npc.id, killerId: buff.casterId, xpReward: template.xpReward },
+                    });
+                    return events; // Stop processing further buffs
+                }
+            }
+        }
+        // Keep syncedBuffs in sync with activeBuffs if anything changed
+        if (changed) {
+            syncNpcBuffsToSchema(npc);
+        }
+        return events;
+    }
     createNPC(zoneId, spawnPoint, template) {
         const npc = new NPCState();
         npc.id = `npc_${zoneId}_${this.nextNpcId++}`;
@@ -237,17 +423,27 @@ export class NPCSystem {
         if (!canAggro)
             return;
         const aggroRange = template.aggroRange ?? 200;
-        // If already aggroed, verify target still valid
-        if (data.aggroTarget) {
-            const target = players.get(data.aggroTarget);
-            if (!target || !target.alive || target.zoneId !== npc.zoneId) {
-                data.aggroTarget = null;
-            }
-            else {
-                return; // Keep current target
+        // ── Phase 1: Prune threat table — remove dead / disconnected / wrong-zone entries ──
+        for (const [sessionId] of data.threatTable) {
+            const p = players.get(sessionId);
+            if (!p || !p.alive || p.zoneId !== npc.zoneId) {
+                data.threatTable.delete(sessionId);
             }
         }
-        // Scan for nearest player in aggro range
+        // ── Phase 2: Threat-based targeting — pick highest-threat valid player ──
+        if (data.threatTable.size > 0) {
+            let bestId = null;
+            let bestThreat = -1;
+            for (const [sessionId, threat] of data.threatTable) {
+                if (threat > bestThreat) {
+                    bestThreat = threat;
+                    bestId = sessionId;
+                }
+            }
+            data.aggroTarget = bestId;
+            return;
+        }
+        // ── Phase 3: Proximity fallback — no one has dealt damage yet ──
         let nearest = null;
         let nearestDist = aggroRange * aggroRange;
         players.forEach((player, sessionId) => {
@@ -261,6 +457,10 @@ export class NPCSystem {
                 nearest = sessionId;
             }
         });
+        if (nearest) {
+            // Seed a small initial threat so proximity-aggroed players appear in the table
+            data.threatTable.set(nearest, 1);
+        }
         data.aggroTarget = nearest;
     }
 }

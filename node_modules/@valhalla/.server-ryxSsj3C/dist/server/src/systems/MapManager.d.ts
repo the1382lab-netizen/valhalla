@@ -5,16 +5,34 @@
  */
 import { ParsedMapData, MapDataPayload, SpawnPointData, ZoneConnection } from '@valhalla/shared';
 export declare class MapManager {
+    /** Tiled-JSON-only parsed data (static tiles, collision, Tiled-defined portals). */
+    private baseMaps;
+    /** Last-known mtime of each zone's overlay file (0 = no overlay on last check). */
+    private overlayMtimes;
+    /** Final merged zone data (base + overlay). */
     private zones;
     /**
-     * Load a zone's map data. Reads from disk on first call, caches after that.
-     * Merges in editor overlay data (spawn points, zone connections) if available.
+     * Load a zone's map data.
+     *
+     * The Tiled JSON is parsed once and cached permanently (it never changes at
+     * runtime).  The editor overlay (spawn points, portals placed via the Map
+     * Editor) is re-merged whenever its file modification time changes, so
+     * portal/spawn changes saved from the editor take effect immediately without
+     * a server restart.
      */
     loadZone(zoneId: string): ParsedMapData;
+    /** Parse a zone's Tiled JSON from disk (or generate a fallback). */
+    private loadTiledData;
     /**
      * Load and merge an editor overlay file into the parsed map data.
-     * Overlay data takes precedence — its spawn points and zone connections
-     * replace any that came from the Tiled JSON.
+     *
+     * Portals are managed exclusively by the Map Editor overlay.  When an
+     * overlay file exists for a zone, its portal list completely replaces any
+     * zone connections that came from the Tiled JSON — even if the overlay has
+     * zero portals.  This makes the editor the single source of truth for all
+     * portals.  Zones without an overlay file fall back to Tiled-defined portals.
+     *
+     * Non-portal spawn points (player, enemy, NPC) are merged by ID as before.
      */
     private mergeOverlay;
     /**

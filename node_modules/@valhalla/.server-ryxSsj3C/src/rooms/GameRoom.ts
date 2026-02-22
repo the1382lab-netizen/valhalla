@@ -228,6 +228,7 @@ export class GameRoom extends Room<{ state: GameState }> {
         this.state.npcs,
         this.npcSystem,
         (pid, xp) => this.awardKillXP(pid, xp),
+        (a, b) => this.isPartyMember(a, b),
       );
       this.broadcastSkillEvents(events, client);
     });
@@ -570,7 +571,9 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.stats = stats;
     player.maxHp = stats.maxHp;
     player.maxMana = stats.maxMana;
-    player.speed = stats.speed;
+    // Use DataManager class data for speed so that editor changes are reflected.
+    // DataManager already falls back to CLASS_TEMPLATES when no classes.json exists.
+    player.speed = DataManager.instance.classes[charData.classId]?.baseSpeed ?? stats.speed;
 
     // Restore vitals (clamped to max)
     player.hp = Math.min(charData.hp, stats.maxHp);
@@ -682,7 +685,8 @@ export class GameRoom extends Room<{ state: GameState }> {
     player.mana = stats.maxMana;
     player.maxEnergy = stats.maxEnergy;
     player.energy = stats.maxEnergy;
-    player.speed = stats.speed;
+    // Use DataManager class data for speed so that editor changes are reflected.
+    player.speed = DataManager.instance.classes[player.classId]?.baseSpeed ?? stats.speed;
   }
 
   /**
@@ -716,7 +720,7 @@ export class GameRoom extends Room<{ state: GameState }> {
 
         // Handle melee input
         if (input.melee && player.alive) {
-          const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now);
+          const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now, (a, b) => this.isPartyMember(a, b));
           this.broadcastCombatEvents(events);
         }
       }
@@ -733,6 +737,7 @@ export class GameRoom extends Room<{ state: GameState }> {
       this.npcSystem,
       dtSec,
       now,
+      (a, b) => this.isPartyMember(a, b),
     );
 
     // Remove destroyed projectiles
@@ -751,6 +756,7 @@ export class GameRoom extends Room<{ state: GameState }> {
       this.npcSystem,
       dtSec,
       now,
+      (a, b) => this.isPartyMember(a, b),
     );
     for (const id of spellToRemove) {
       this.state.spellProjectiles.delete(id);
@@ -758,7 +764,7 @@ export class GameRoom extends Room<{ state: GameState }> {
     this.broadcastSpellProjectileEvents(spellEvents);
 
     // 4. Skill system update (cast progression, energy regen, buff ticking)
-    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp));
+    const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp), (a, b) => this.isPartyMember(a, b));
     this.broadcastSkillEvents(skillEvents);
 
     // 5. Check respawns — handle per-player zone respawn points
@@ -1114,6 +1120,17 @@ export class GameRoom extends Room<{ state: GameState }> {
   }
 
   // ── XP Distribution ─────────────────────────────────────────
+
+  /**
+   * Returns true when two players (by sessionId) are in the same party.
+   * Used to prevent friendly-fire from AoE skills and spell projectiles.
+   */
+  private isPartyMember(playerIdA: string, playerIdB: string): boolean {
+    if (playerIdA === playerIdB) return false;
+    const partyId = this.playerParty.get(playerIdA);
+    if (!partyId) return false;
+    return this.parties.get(partyId)?.has(playerIdB) ?? false;
+  }
 
   /**
    * Award kill XP to a player (or their party if applicable).

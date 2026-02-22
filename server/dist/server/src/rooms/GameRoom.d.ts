@@ -1,7 +1,19 @@
 import { Room, Client } from '@colyseus/core';
 import { GameState } from '../schema/GameState.js';
 import { PlayerState } from '../schema/PlayerState.js';
+import { CollisionSystem } from '../systems/CollisionSystem.js';
+import { ZoneConnection } from '@valhalla/shared';
 import { JwtPayload } from '../services/AuthService.js';
+/** Cached per-zone data for multi-zone support within a single room. */
+interface ZoneCacheEntry {
+    collision: CollisionSystem;
+    connections: ZoneConnection[];
+    respawnPoint: {
+        x: number;
+        y: number;
+    };
+}
+export declare function getActiveGameRoom(): GameRoom | null;
 export declare class GameRoom extends Room<{
     state: GameState;
 }> {
@@ -11,9 +23,17 @@ export declare class GameRoom extends Room<{
     private mapManager;
     private skillSystem;
     private npcSystem;
+    private lootBagSystem;
     private inputQueues;
     /** Maps sessionId → persistent character data for save/load. */
     private sessionData;
+    /** partyId → Set of member sessionIds */
+    private parties;
+    /** sessionId → partyId */
+    private playerParty;
+    /** invitee sessionId → inviter sessionId */
+    private pendingInvites;
+    private nextPartyId;
     /** Interval handle for periodic saves. */
     private saveInterval;
     /** Default zone for new players. */
@@ -23,8 +43,9 @@ export declare class GameRoom extends Room<{
     onCreate(): void;
     /**
      * Lazily load and cache a zone's collision, connections, and respawn point.
+     * Public so admin routes can trigger zone loading for teleports.
      */
-    private loadZoneCache;
+    loadZoneCache(zoneId: string): ZoneCacheEntry;
     /**
      * Get the cached zone entry for a player's current zone.
      */
@@ -77,10 +98,33 @@ export declare class GameRoom extends Room<{
      */
     private broadcastSpellProjectileEvents;
     /**
+     * Look up an NPC's loot table and spawn a loot bag at its position.
+     */
+    private spawnNpcLoot;
+    /**
      * Send skill system events to relevant clients.
      * Some events go only to the caster, others are broadcast.
      */
     private broadcastSkillEvents;
+    /** Send a system chat message to a single client. */
+    private sendSystemChat;
+    /** Send PARTY_UPDATE to all members of a party. */
+    private sendPartyUpdate;
+    /**
+     * Remove a player from their party. If the party has <2 members, disband.
+     * @param silent  If true, skip "X left the party" notifications (used for party-switch on accept)
+     */
+    private removeFromParty;
+    /**
+     * Returns true when two players (by sessionId) are in the same party.
+     * Used to prevent friendly-fire from AoE skills and spell projectiles.
+     */
+    private isPartyMember;
+    /**
+     * Award kill XP to a player (or their party if applicable).
+     * Party members in the same zone split a +10% bonus equally.
+     */
+    private awardKillXP;
     /**
      * Extract current player state and save to database.
      */
@@ -91,4 +135,5 @@ export declare class GameRoom extends Room<{
     private saveAllPlayers;
     onDispose(): void;
 }
+export {};
 //# sourceMappingURL=GameRoom.d.ts.map

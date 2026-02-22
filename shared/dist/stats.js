@@ -32,8 +32,8 @@ export function computeDerivedStats(classId, level) {
     // Energy for non-casters, 0 for casters
     const maxEnergy = template.canUseMana ? 0 : 100 + stats.stamina * 2;
     const energyRegenRate = template.canUseMana ? 0 : 10 + stats.stamina * 0.5;
-    // Mana regen for casters, 0 for non-casters
-    const manaRegenRate = template.canUseMana ? 5 + stats.intelligence * 0.4 : 0;
+    // Mana regen for casters, 0 for non-casters (base reduced 5 → 2.5 → 1.25; intel scaling 0.4 → 0.2 → 0.1)
+    const manaRegenRate = template.canUseMana ? 1.25 + stats.intelligence * 0.1 : 0;
     return {
         ...stats,
         maxHp: stats.hp,
@@ -142,7 +142,7 @@ export function computeMeleeCooldown(baseCooldownMs, dexterity) {
 // ── XP & Leveling ──────────────────────────────────────────
 export const BASE_XP_PER_LEVEL = 100;
 export const XP_SCALING = 2;
-export const MAX_LEVEL = 20;
+export const MAX_LEVEL = 25;
 /**
  * XP required to reach the next level.
  * Level 1→2: 100 XP, Level 2→3: 200 XP, etc.

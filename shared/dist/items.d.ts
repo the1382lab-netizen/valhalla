@@ -4,6 +4,10 @@
  */
 import type { StatBlock } from './classes.js';
 export declare const INVENTORY_MAX_SLOTS = 32;
+export declare const LOOT_BAG_MERGE_RANGE = 80;
+export declare const LOOT_BAG_PICKUP_RANGE = 200;
+export declare const LOOT_BAG_DESPAWN_MS = 300000;
+export declare const LOOT_BAG_MAX_SLOTS = 18;
 export declare enum ItemId {
     IRON_SWORD = "iron_sword",
     OAK_STAFF = "oak_staff",
@@ -52,6 +56,15 @@ export declare enum ItemRarity {
     LEGENDARY = "legendary"
 }
 export declare const RARITY_COLORS: Record<ItemRarity, string>;
+/** Configuration for how an equipment sprite sheet is structured. */
+export interface EquipSpriteConfig {
+    frameWidth: number;
+    frameHeight: number;
+    framesPerRow: number;
+    rows: number;
+}
+/** Default sprite config matching the character body sheet (4×9, 64×64). */
+export declare const DEFAULT_EQUIP_SPRITE_CONFIG: EquipSpriteConfig;
 export interface ItemTemplate {
     id: ItemId;
     name: string;
@@ -63,6 +76,12 @@ export interface ItemTemplate {
     maxStack: number;
     /** Stat bonuses when equipped (equipment only) */
     statBonuses?: Partial<StatBlock>;
+    /** Filename of equipment sprite sheet overlay (in assets/sprites/equipment/) */
+    equipSpriteSheet?: string;
+    /** Sprite sheet layout config — defaults to matching the character body sheet */
+    equipSpriteConfig?: EquipSpriteConfig;
+    /** Filename of inventory icon image (in assets/sprites/icons/) */
+    inventoryIcon?: string;
 }
 /** A single inventory slot (shared interface, not Colyseus schema). */
 export interface InventorySlot {

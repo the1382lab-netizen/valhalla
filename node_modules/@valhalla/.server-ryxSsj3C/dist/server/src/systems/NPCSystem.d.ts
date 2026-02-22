@@ -35,10 +35,17 @@ interface SpawnedNPCData {
     leashRange: number;
     /** Last time this NPC attacked (ms timestamp) */
     lastAttackTime: number;
+    /** Threat table — tracks cumulative threat per player (sessionId → threat) */
+    threatTable: Map<string, number>;
 }
 export declare class NPCSystem {
     private npcs;
     private nextNpcId;
+    /**
+     * Tracks the last DoT tick timestamp for each active buff on an NPC.
+     * Key format: "npcId:skillId:casterId"
+     */
+    private npcDotTickTracker;
     /**
      * Spawn all NPCs for a zone based on map spawn points and NPC templates.
      * Call this once per zone when the zone is loaded.
@@ -57,6 +64,11 @@ export declare class NPCSystem {
         xpReward: number;
     };
     /**
+     * Taunt an NPC — add bonus threat to the player's current threat and
+     * immediately force the NPC to target them.
+     */
+    tauntNpc(npcId: string, playerId: string, bonusThreat: number): void;
+    /**
      * Get an NPC by ID.
      */
     getNPC(npcId: string): SpawnedNPCData | undefined;
@@ -64,6 +76,32 @@ export declare class NPCSystem {
      * Get all alive NPCs in a zone.
      */
     getAliveNPCsInZone(zoneId: string): NPCState[];
+    /**
+     * Register an externally-created NPC (e.g. from admin spawn) so the
+     * AI system tracks it like any other NPC.
+     */
+    registerAdminNPC(npcId: string, npc: NPCState, spawnX: number, spawnY: number, template: NPCTemplate): void;
+    /**
+     * Force-kill an NPC from admin. Sets it dead and starts respawn timer.
+     */
+    adminKill(npcId: string): void;
+    /**
+     * Force-respawn a dead NPC immediately from admin.
+     */
+    adminRespawn(npcId: string, gameNpcs: MapSchema<NPCState>): void;
+    /**
+     * Permanently delete an NPC from admin — removes it from the game state
+     * and from the AI tracking map so it will never respawn.
+     */
+    adminDelete(npcId: string, gameNpcs: MapSchema<NPCState>): void;
+    /**
+     * Tick active buffs (DoTs) on an NPC.
+     * - Removes expired buffs.
+     * - Applies 1 second of DoT damage once per second.
+     * - Handles NPC death from DoT (fires npcDied event).
+     * - Keeps syncedBuffs in sync with activeBuffs.
+     */
+    private tickNpcBuffs;
     private createNPC;
     private updateAggro;
 }

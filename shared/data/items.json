@@ -52,7 +52,8 @@
       "statBonuses": {
         "dexterity": 2,
         "strength": 1
-      }
+      },
+      "equipSpriteSheet": "WEAPON_shield_cutout_body.png"
     },
     "bone_totem": {
       "id": "bone_totem",
@@ -138,8 +139,10 @@
       "statBonuses": {
         "stamina": 2,
         "physicalDefense": 2,
-        "dodgeRating": 0.01
-      }
+        "dodgeRating": 0.01,
+        "strength": 1
+      },
+      "equipSpriteSheet": "TORSO_leather_armor_torso.png"
     },
     "chainmail": {
       "id": "chainmail",
@@ -184,7 +187,8 @@
       "statBonuses": {
         "stamina": 1,
         "physicalDefense": 1
-      }
+      },
+      "equipSpriteSheet": "LEGS_robe_skirt.png"
     },
     "iron_greaves": {
       "id": "iron_greaves",
@@ -326,7 +330,6 @@
       "description": "Sturdy iron boots.",
       "category": "armor",
       "rarity": "common",
-      "equipSlot": "hands",
       "stackable": false,
       "maxStack": 1,
       "statBonuses": {

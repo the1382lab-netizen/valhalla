@@ -38,7 +38,7 @@
         "dodgeRating": 0.002
       },
       "allowedArmor": "plate",
-      "baseSpeed": 144,
+      "baseSpeed": 110,
       "canUseMana": false
     },
     "cleric": {
@@ -78,7 +78,7 @@
         "dodgeRating": 0.002
       },
       "allowedArmor": "mail",
-      "baseSpeed": 152,
+      "baseSpeed": 122,
       "canUseMana": true
     },
     "ranger": {
@@ -118,7 +118,7 @@
         "dodgeRating": 0.008
       },
       "allowedArmor": "leather",
-      "baseSpeed": 184,
+      "baseSpeed": 147,
       "canUseMana": false
     },
     "rogue": {
@@ -158,8 +158,25 @@
         "dodgeRating": 0.01
       },
       "allowedArmor": "leather",
-      "baseSpeed": 168,
-      "canUseMana": false
+      "baseSpeed": 134,
+      "canUseMana": false,
+      "startingItems": [
+        {
+          "itemId": "iron_dagger",
+          "quantity": 1,
+          "equipped": true
+        },
+        {
+          "itemId": "leather_tunic",
+          "quantity": 1,
+          "equipped": true
+        },
+        {
+          "itemId": "leather_leggings",
+          "quantity": 1,
+          "equipped": true
+        }
+      ]
     },
     "shaman": {
       "id": "shaman",
@@ -198,7 +215,7 @@
         "dodgeRating": 0.003
       },
       "allowedArmor": "mail",
-      "baseSpeed": 152,
+      "baseSpeed": 122,
       "canUseMana": true
     },
     "wizard": {
@@ -238,7 +255,7 @@
         "dodgeRating": 0.003
       },
       "allowedArmor": "cloth",
-      "baseSpeed": 152,
+      "baseSpeed": 122,
       "canUseMana": true,
       "startingItems": [
         {

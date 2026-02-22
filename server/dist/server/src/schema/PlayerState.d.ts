@@ -7,6 +7,8 @@ export interface ActiveBuff {
     expiresAt: number;
     dotDamagePerSec?: number;
     hotHealPerSec?: number;
+    /** Current stack count (default 1). Used with stackingMode === 'stack'. */
+    stacks: number;
     /** Generic effect data — specific handlers interpret this */
     effectData?: Record<string, any>;
 }
@@ -32,6 +34,7 @@ export declare class PlayerState extends Schema {
     energy: number;
     maxEnergy: number;
     alive: boolean;
+    shieldHp: number;
     castingSkillId: string;
     castingStartedAt: number;
     castingDurationMs: number;
@@ -60,4 +63,11 @@ export declare class PlayerState extends Schema {
      */
     stats: ResolvedStats | null;
 }
+/**
+ * Apply incoming damage against the player's shield (shieldHp) first.
+ * Returns the remaining damage that should be applied to the player's HP.
+ * When the shield is fully depleted, removes the Shield of Faith buff and
+ * resets shieldHp to 0.
+ */
+export declare function applyShieldAbsorption(player: PlayerState, incomingDamage: number): number;
 //# sourceMappingURL=PlayerState.d.ts.map

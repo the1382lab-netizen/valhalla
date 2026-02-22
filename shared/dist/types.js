@@ -34,5 +34,19 @@ export var MessageType;
     MessageType["NPC_DIED"] = "npcDied";
     // ── Chat ──
     MessageType["CHAT_MESSAGE"] = "chatMessage";
+    // ── Leveling ──
+    MessageType["LEVEL_UP"] = "levelUp";
+    // ── Loot ──
+    MessageType["LOOT_ITEM"] = "lootItem";
+    MessageType["LOOT_ALL"] = "lootAll";
+    // Server → client confirmation: refresh loot panel + inventory immediately
+    MessageType["LOOT_SUCCESS"] = "lootSuccess";
+    // ── Party ──
+    MessageType["PARTY_INVITE"] = "partyInvite";
+    MessageType["PARTY_ACCEPT"] = "partyAccept";
+    MessageType["PARTY_DECLINE"] = "partyDecline";
+    MessageType["PARTY_LEAVE"] = "partyLeave";
+    MessageType["PARTY_UPDATE"] = "partyUpdate";
+    MessageType["PARTY_KICKED"] = "partyKicked";
 })(MessageType || (MessageType = {}));
 //# sourceMappingURL=types.js.map

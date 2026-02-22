@@ -42,6 +42,13 @@ interface RemotePlayerData {
   lastDir: string;
 }
 
+/** Lightweight buff descriptor received from the server's NpcBuffInfo schema. */
+export interface NpcBuffData {
+  skillId: string;
+  expiresAt: number;
+  dotDamagePerSec: number;
+}
+
 interface NPCData {
   sprite: Phaser.GameObjects.Sprite;
   nameText: Phaser.GameObjects.Text;
@@ -59,6 +66,8 @@ interface NPCData {
   npcType: string;
   name: string;
   level: number;
+  /** Active debuffs/buffs synced from the server. */
+  buffs: NpcBuffData[];
 }
 
 // ── Public Target Info Types ──────────────────────────────
@@ -79,6 +88,8 @@ export interface NpcTargetInfo {
   maxHp: number;
   alive: boolean;
   npcType: string;
+  /** Active debuffs visible in the target pane. */
+  buffs: NpcBuffData[];
 }
 
 interface LootBagData {
@@ -401,6 +412,7 @@ export class EntityRenderer {
       npcType,
       name,
       level,
+      buffs: [],
     });
   }
 
@@ -439,6 +451,13 @@ export class EntityRenderer {
     data.sprite.setVisible(alive);
     data.nameText.setVisible(alive);
     data.nameBg.setVisible(alive);
+  }
+
+  /** Update the cached active buff list for an NPC (from syncedBuffs schema changes). */
+  updateNPCBuffs(id: string, buffs: NpcBuffData[]): void {
+    const data = this.npcs.get(id);
+    if (!data) return;
+    data.buffs = buffs;
   }
 
   hasNPC(id: string): boolean {
@@ -942,6 +961,7 @@ export class EntityRenderer {
       maxHp: data.maxHp,
       alive: data.alive,
       npcType: data.npcType,
+      buffs: data.buffs,
     };
   }
 

@@ -20,7 +20,10 @@ interface Point {
  */
 export declare class VisibilitySystem {
     private segments;
-    constructor(collisionGrid: number[]);
+    private mapW;
+    private mapH;
+    private tileSize;
+    constructor(collisionGrid: number[], mapWidth: number, mapHeight: number, tileSize: number);
     /**
      * Extract wall edge segments from the collision grid.
      */

@@ -113,6 +113,17 @@ export interface SkillTemplate {
   hotHealPerSec?: number;
   /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
   aoeRadius?: number;
+  /** Projectile metadata — if present, the skill spawns a projectile rather than applying damage instantly. */
+  projectile?: {
+    speed: number;
+    radius: number;
+  };
+  /** Cooldown group ID — all skills sharing the same group share a cooldown. */
+  cooldownGroup?: string;
+  /** Buff stacking mode: 'replace' (default), 'stack', or 'extend'. */
+  stackingMode?: 'replace' | 'stack' | 'extend';
+  /** Max stacks for stackable buffs (only used when stackingMode === 'stack'). Default 1. */
+  maxStacks?: number;
   effectNotes: string;        // human-readable summary
 }
 
@@ -538,7 +549,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
   [SkillId.ROGUE_POISON_BLADE]: {
     id: SkillId.ROGUE_POISON_BLADE,
     name: 'Poison Blade',
-    description: 'Coat your weapon in poison, adding DoT to attacks.',
+    description: 'Stab the target with a poisoned blade, applying a poison that deals damage every second.',
     classId: ClassId.ROGUE,
     levelRequired: 2,
     resourceType: ResourceType.ENERGY,
@@ -546,14 +557,14 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
     castTimeMs: 0,
     cooldownMs: 20000,
     range: 0,
-    targetType: SkillTargetType.SELF,
-    category: SkillCategory.BUFF,
+    targetType: SkillTargetType.SINGLE_ENEMY,
+    category: SkillCategory.DEBUFF,
     iconColor: 0x66cc66,
     iconAbbrev: 'PB',
     scalingStat: 'dexterity',
-    buffDurationMs: 30000,
+    buffDurationMs: 6000,
     dotDamagePerSec: 4,
-    effectNotes: 'Next 5 attacks apply poison (4 dps for 6s)',
+    effectNotes: 'Poisons the target for 4+ dps (scales with DEX) for 6s',
   },
 
   [SkillId.ROGUE_STEALTH]: {
@@ -787,6 +798,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
     scalingStat: 'intelligence',
     baseDamage: [22, 34],
     aoeRadius: 96,
+    projectile: { speed: 350, radius: 10 },
     effectNotes: 'AoE fire damage at target location',
   },
 
@@ -908,6 +920,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
     scalingStat: 'intelligence',
     baseDamage: [60, 90],
     aoeRadius: 160,
+    projectile: { speed: 250, radius: 14 },
     effectNotes: 'Massive AoE fire damage at target location',
   },
 };

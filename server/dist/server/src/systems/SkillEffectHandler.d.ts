@@ -1,64 +1,40 @@
 /**
- * Extensible skill effect system.
+ * Extensible skill effect system — thin dispatcher.
  *
- * Each skill can register a custom EffectHandler. If none is registered,
- * the defaultEffect() handles standard damage/healing/buff patterns.
- * This gives us hook points to add unique per-skill mechanics later
- * without refactoring the core casting engine.
+ * Custom per-skill handlers live in ./handlers/ and self-register via
+ * registerEffectHandler(). If no custom handler is found for a skill,
+ * the defaultEffect() in this file handles standard damage/healing/buff
+ * patterns based on SkillTemplate data.
+ *
+ * To add a new skill handler:
+ *   1. Create a file in ./handlers/  (e.g. mySkillHandler.ts)
+ *   2. Import registerEffectHandler from ./handlers/registry.js
+ *   3. Call registerEffectHandler(SkillId.MY_SKILL, myHandler)
+ *   4. Import the file from ./handlers/index.ts for side-effect registration
  */
-import { SkillId, SkillTemplate } from '@valhalla/shared';
-import { PlayerState } from '../schema/PlayerState.js';
-import { SpellProjectileState } from '../schema/SpellProjectileState.js';
-import { MapSchema } from '@colyseus/schema';
+import { SkillTemplate } from '@valhalla/shared';
+import { PlayerState, ActiveBuff } from '../schema/PlayerState.js';
+import { NPCState } from '../schema/NPCState.js';
 import type { PlayerMap } from './SkillSystem.js';
-/**
- * Optional context passed from SkillSystem to effect handlers.
- * Allows handlers to spawn spell projectiles or access ground target.
- */
-export interface SkillEffectContext {
-    /** Room's spell projectile map — handlers can add new projectiles here */
-    spellProjectiles?: MapSchema<SpellProjectileState>;
-    /** Ground target X for AOE_GROUND skills */
-    groundX: number | null;
-    /** Ground target Y for AOE_GROUND skills */
-    groundY: number | null;
-}
-export interface SkillDamageEvent {
-    type: 'damage';
-    targetId: string;
-    damage: number;
-    isCrit: boolean;
-}
-export interface SkillHealEvent {
-    type: 'heal';
-    targetId: string;
-    amount: number;
-}
-export interface SkillBuffEvent {
-    type: 'buff';
-    targetId: string;
-    skillId: string;
-    durationMs: number;
-}
-export interface SkillDebuffEvent {
-    type: 'debuff';
-    targetId: string;
-    skillId: string;
-    durationMs: number;
-}
-export interface SkillMissEvent {
-    type: 'miss';
-    targetId: string;
-}
-export type SkillEvent = SkillDamageEvent | SkillHealEvent | SkillBuffEvent | SkillDebuffEvent | SkillMissEvent;
-export type EffectHandler = (caster: PlayerState, target: PlayerState | null, skill: SkillTemplate, allPlayers: PlayerMap, now: number, ctx?: SkillEffectContext) => SkillEvent[];
-/**
- * Register a custom effect handler for a skill.
- */
-export declare function registerEffectHandler(skillId: SkillId, handler: EffectHandler): void;
+import './handlers/index.js';
+import { isNpcTarget, registerEffectHandler, type CombatTarget, type SkillEffectContext, type SkillEvent, type SkillDamageEvent, type SkillHealEvent, type SkillBuffEvent, type SkillDebuffEvent, type SkillMissEvent, type EffectHandler } from './handlers/index.js';
+export { isNpcTarget, registerEffectHandler, type CombatTarget, type SkillEffectContext, type SkillEvent, type SkillDamageEvent, type SkillHealEvent, type SkillBuffEvent, type SkillDebuffEvent, type SkillMissEvent, type EffectHandler, };
 /**
  * Execute the effect of a completed skill cast.
  * Looks up a custom handler first, then falls back to default.
  */
-export declare function executeSkillEffect(caster: PlayerState, target: PlayerState | null, skill: SkillTemplate, allPlayers: PlayerMap, now: number, ctx?: SkillEffectContext): SkillEvent[];
+export declare function executeSkillEffect(caster: PlayerState, target: CombatTarget | null, skill: SkillTemplate, allPlayers: PlayerMap, now: number, ctx?: SkillEffectContext): SkillEvent[];
+/**
+ * Sync server-side activeBuffs → the Colyseus-synced syncedBuffs ArraySchema
+ * on an NPC. Call this any time activeBuffs changes.
+ */
+export declare function syncNpcBuffsToSchema(npc: NPCState): void;
+/**
+ * Apply a buff/debuff to an NPC (mirrors applyBuff for players).
+ * Uses "replace" stacking semantics by default — re-applying the same
+ * skillId from the same caster refreshes the duration.
+ * Updates syncedBuffs so clients see the change immediately.
+ */
+export declare function applyNpcBuff(npc: NPCState, buff: ActiveBuff): void;
+export declare function applyBuff(player: PlayerState, buff: ActiveBuff): void;
 //# sourceMappingURL=SkillEffectHandler.d.ts.map

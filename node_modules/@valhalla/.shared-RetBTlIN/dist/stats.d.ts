@@ -87,7 +87,7 @@ export declare function computeFireCooldown(baseCooldownMs: number, dexterity: n
 export declare function computeMeleeCooldown(baseCooldownMs: number, dexterity: number): number;
 export declare const BASE_XP_PER_LEVEL = 100;
 export declare const XP_SCALING = 2;
-export declare const MAX_LEVEL = 20;
+export declare const MAX_LEVEL = 25;
 /**
  * XP required to reach the next level.
  * Level 1→2: 100 XP, Level 2→3: 200 XP, etc.

@@ -61,6 +61,7 @@ export class SpellProjectileSystem {
     npcSystem: NPCSystem,
     dt: number,
     now: number,
+    isPartyMember?: (playerIdA: string, playerIdB: string) => boolean,
   ): { toRemove: string[]; events: SpellProjectileEvent[] } {
     const toRemove: string[] = [];
     const events: SpellProjectileEvent[] = [];
@@ -78,7 +79,7 @@ export class SpellProjectileSystem {
         proj.x = proj.targetX;
         proj.y = proj.targetY;
         toRemove.push(projId);
-        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
         events.push(...detonationEvents);
         return;
       }
@@ -93,7 +94,7 @@ export class SpellProjectileSystem {
       // ── Safety max-range check ────────────────────────────
       if (proj._distanceTravelled >= SPELL_PROJECTILE_MAX_RANGE) {
         toRemove.push(projId);
-        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
         events.push(...detonationEvents);
         return;
       }
@@ -101,7 +102,7 @@ export class SpellProjectileSystem {
       // ── Wall collision ────────────────────────────────────
       if (this.collision.isCircleBlocked(proj.x, proj.y, FIREBALL_PROJECTILE_RADIUS)) {
         toRemove.push(projId);
-        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+        const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
         events.push(...detonationEvents);
         return;
       }
@@ -113,6 +114,7 @@ export class SpellProjectileSystem {
         if (player.id === proj.ownerId) return; // can't hit yourself
         if (!player.alive) return;
         if (player.zoneId !== proj._zoneId) return;
+        if (isPartyMember?.(proj.ownerId, player.id)) return; // no friendly fire
 
         const edx = player.x - proj.x;
         const edy = player.y - proj.y;
@@ -120,7 +122,7 @@ export class SpellProjectileSystem {
         if (edx * edx + edy * edy < hitDist * hitDist) {
           hitEntity = true;
           toRemove.push(projId);
-          const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+          const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
           events.push(...detonationEvents);
         }
       });
@@ -138,7 +140,7 @@ export class SpellProjectileSystem {
           if (edx * edx + edy * edy < hitDist * hitDist) {
             hitEntity = true;
             toRemove.push(projId);
-            const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now);
+            const detonationEvents = this.detonate(proj, proj.x, proj.y, players, npcs, npcSystem, now, isPartyMember);
             events.push(...detonationEvents);
           }
         });
@@ -164,6 +166,7 @@ export class SpellProjectileSystem {
     npcs: MapSchema<NPCState>,
     npcSystem: NPCSystem,
     now: number,
+    isPartyMember?: (playerIdA: string, playerIdB: string) => boolean,
   ): SpellProjectileEvent[] {
     const events: SpellProjectileEvent[] = [];
     const radius = proj._aoeRadius;
@@ -174,6 +177,7 @@ export class SpellProjectileSystem {
       if (!player.alive) return;
       if (player.zoneId !== proj._zoneId) return;
       if (now < player.invulnerableUntil) return;
+      if (isPartyMember?.(proj.ownerId, player.id)) return; // no friendly fire
 
       const dx = player.x - detonateX;
       const dy = player.y - detonateY;

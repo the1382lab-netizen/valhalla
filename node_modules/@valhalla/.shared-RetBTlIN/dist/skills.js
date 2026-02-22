@@ -2,7 +2,7 @@
  * Skill & Spell Definitions — shared between client and server.
  * This is the single source of truth for all skill data.
  *
- * 37 skills across 6 classes, populated from the design spreadsheet.
+ * 38 skills across 6 classes, populated from the design spreadsheet.
  * Individual skill effect handlers live server-side; this file
  * contains only the data model and catalog.
  */
@@ -46,8 +46,9 @@ export var SkillId;
     SkillId["SHAMAN_ANCESTRAL_SPIRIT"] = "shaman_ancestral_spirit";
     SkillId["SHAMAN_FLAME_SHOCK"] = "shaman_flame_shock";
     SkillId["SHAMAN_BLOODLUST"] = "shaman_bloodlust";
-    // Wizard (6)
+    // Wizard (7)
     SkillId["WIZARD_FIREBALL"] = "wizard_fireball";
+    SkillId["WIZARD_MAGIC_MISSILE"] = "wizard_magic_missile";
     SkillId["WIZARD_FROST_NOVA"] = "wizard_frost_nova";
     SkillId["WIZARD_BLINK"] = "wizard_blink";
     SkillId["WIZARD_ARCANE_MISSILES"] = "wizard_arcane_missiles";
@@ -692,7 +693,7 @@ export const SKILL_CATALOG = {
         effectNotes: '+30% attack speed and +10% movement for all nearby allies for 20s',
     },
     // ═══════════════════════════════════════════════════════════
-    // WIZARD SKILLS (6) — Mana resource
+    // WIZARD SKILLS (7) — Mana resource
     // ═══════════════════════════════════════════════════════════
     [SkillId.WIZARD_FIREBALL]: {
         id: SkillId.WIZARD_FIREBALL,
@@ -711,7 +712,28 @@ export const SKILL_CATALOG = {
         iconAbbrev: 'FB',
         scalingStat: 'intelligence',
         baseDamage: [22, 34],
+        aoeRadius: 96,
+        projectile: { speed: 350, radius: 10 },
         effectNotes: 'AoE fire damage at target location',
+    },
+    [SkillId.WIZARD_MAGIC_MISSILE]: {
+        id: SkillId.WIZARD_MAGIC_MISSILE,
+        name: 'Magic Missile',
+        description: 'Fires an arcane bolt that always hits its target.',
+        classId: ClassId.WIZARD,
+        levelRequired: 2,
+        resourceType: ResourceType.MANA,
+        resourceCost: 8,
+        castTimeMs: 0,
+        cooldownMs: 2500,
+        range: 320,
+        targetType: SkillTargetType.SINGLE_ENEMY,
+        category: SkillCategory.OFFENSIVE,
+        iconColor: 0x88aaff,
+        iconAbbrev: 'MM',
+        scalingStat: 'intelligence',
+        baseDamage: [12, 20],
+        effectNotes: 'Guaranteed hit — no dodge or miss possible',
     },
     [SkillId.WIZARD_FROST_NOVA]: {
         id: SkillId.WIZARD_FROST_NOVA,
@@ -806,6 +828,8 @@ export const SKILL_CATALOG = {
         iconAbbrev: 'MT',
         scalingStat: 'intelligence',
         baseDamage: [60, 90],
+        aoeRadius: 160,
+        projectile: { speed: 250, radius: 14 },
         effectNotes: 'Massive AoE fire damage at target location',
     },
 };
@@ -855,6 +879,7 @@ export const CLASS_SKILLS = {
     ],
     [ClassId.WIZARD]: [
         SkillId.WIZARD_FIREBALL,
+        SkillId.WIZARD_MAGIC_MISSILE,
         SkillId.WIZARD_FROST_NOVA,
         SkillId.WIZARD_BLINK,
         SkillId.WIZARD_ARCANE_MISSILES,

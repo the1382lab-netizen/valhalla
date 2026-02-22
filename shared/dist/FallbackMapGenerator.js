@@ -237,6 +237,7 @@ export function generateFallbackMap(width = 64, height = 64, tileSize = 64) {
         width,
         height,
         tileSize,
+        orientation: 'orthogonal',
         collisionGrid,
         spawnPoints,
         zoneConnections,

@@ -9,16 +9,30 @@ import { SkillSystem } from '../systems/SkillSystem.js';
 import { DataManager } from '../systems/DataManager.js';
 import { NPCSystem } from '../systems/NPCSystem.js';
 import { SpellProjectileSystem } from '../systems/SpellProjectileSystem.js';
-import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, hasRangedAttack, } from '@valhalla/shared';
+import { LootBagSystem } from '../systems/LootBagSystem.js';
+import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, hasRangedAttack, xpRequiredForLevel, MAX_LEVEL, } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken } from '../services/AuthService.js';
 import { loadCharacter, saveCharacter, } from '../services/CharacterService.js';
+/** Module-level reference so admin routes can access the live room instance. */
+let _activeGameRoom = null;
+export function getActiveGameRoom() {
+    return _activeGameRoom;
+}
 export class GameRoom extends Room {
     constructor() {
         super(...arguments);
         this.inputQueues = new Map();
         /** Maps sessionId → persistent character data for save/load. */
         this.sessionData = new Map();
+        // ── Party state ──
+        /** partyId → Set of member sessionIds */
+        this.parties = new Map();
+        /** sessionId → partyId */
+        this.playerParty = new Map();
+        /** invitee sessionId → inviter sessionId */
+        this.pendingInvites = new Map();
+        this.nextPartyId = 0;
         /** Interval handle for periodic saves. */
         this.saveInterval = null;
         /** Default zone for new players. */
@@ -27,6 +41,11 @@ export class GameRoom extends Room {
         this.zoneCache = new Map();
     }
     onCreate() {
+        // Store reference for admin routes
+        _activeGameRoom = this;
+        // Keep the room alive when the last player leaves so that world state
+        // (loot bags, NPC spawns, etc.) is preserved between sessions.
+        this.autoDispose = false;
         this.setState(new GameState());
         // Initialize data manager — loads JSON data files from editor
         DataManager.initialize();
@@ -39,6 +58,7 @@ export class GameRoom extends Room {
         this.spellProjectileSystem = new SpellProjectileSystem(defaultEntry.collision);
         this.skillSystem = new SkillSystem();
         this.npcSystem = new NPCSystem();
+        this.lootBagSystem = new LootBagSystem();
         // Spawn NPCs for all known zones
         for (const zoneId of Object.keys(DataManager.instance.zones)) {
             this.loadZoneCache(zoneId); // ensure zone is loaded
@@ -76,16 +96,48 @@ export class GameRoom extends Room {
                 }
             }
         });
-        // Drop item (from inventory or equipment)
+        // Drop item (from inventory or equipment) → spawn loot bag on ground
         this.onMessage(MessageType.DROP_ITEM, (client, data) => {
             const player = this.state.players.get(client.sessionId);
             if (!player || !player.alive)
                 return;
+            let droppedItem = null;
             if (data.source === 'inventory' && data.slotIndex !== undefined) {
-                dropInventoryItem(player, data.slotIndex);
+                droppedItem = dropInventoryItem(player, data.slotIndex);
             }
             else if (data.source === 'equipment' && data.slotType) {
-                dropEquippedItem(player, data.slotType);
+                droppedItem = dropEquippedItem(player, data.slotType);
+            }
+            if (droppedItem) {
+                this.lootBagSystem.spawnBag(player.zoneId, player.x, player.y, [droppedItem], this.state.lootBags);
+            }
+        });
+        // Loot a single item from a ground bag
+        this.onMessage(MessageType.LOOT_ITEM, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || !player.alive)
+                return;
+            const bag = this.state.lootBags.get(data.bagId);
+            if (!bag)
+                return;
+            const ok = this.lootBagSystem.lootItem(player, bag, data.slotIndex, data.quantity);
+            if (ok) {
+                // Direct confirmation so the client can force-refresh both panels
+                // without depending on Colyseus nested-schema change callbacks.
+                client.send(MessageType.LOOT_SUCCESS, { bagId: data.bagId });
+            }
+        });
+        // Loot all items from a ground bag
+        this.onMessage(MessageType.LOOT_ALL, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || !player.alive)
+                return;
+            const bag = this.state.lootBags.get(data.bagId);
+            if (!bag)
+                return;
+            const looted = this.lootBagSystem.lootAll(player, bag);
+            if (looted > 0) {
+                client.send(MessageType.LOOT_SUCCESS, { bagId: data.bagId });
             }
         });
         // Swap inventory slots
@@ -102,7 +154,7 @@ export class GameRoom extends Room {
             if (!player)
                 return;
             const now = Date.now();
-            const events = this.skillSystem.tryStartCast(player, data.skillId, data.targetId ?? null, this.state.players, now, this.state.spellProjectiles, data.groundX ?? null, data.groundY ?? null);
+            const events = this.skillSystem.tryStartCast(player, data.skillId, data.targetId ?? null, this.state.players, now, this.state.spellProjectiles, data.groundX ?? null, data.groundY ?? null, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp), (a, b) => this.isPartyMember(a, b));
             this.broadcastSkillEvents(events, client);
         });
         // Cancel an active cast
@@ -170,7 +222,7 @@ export class GameRoom extends Room {
                 let targetClient = null;
                 for (const c of this.clients) {
                     const p = this.state.players.get(c.sessionId);
-                    if (p?.characterName === data.targetName) {
+                    if (p?.characterName.toLowerCase() === data.targetName.toLowerCase()) {
                         targetClient = c;
                         break;
                     }
@@ -192,10 +244,115 @@ export class GameRoom extends Room {
                 }
             }
         });
+        // ── Party System ─────────────────────────────────────────
+        this.onMessage(MessageType.PARTY_INVITE, (client, data) => {
+            const inviter = this.state.players.get(client.sessionId);
+            if (!inviter)
+                return;
+            if (!data.targetName || typeof data.targetName !== 'string')
+                return;
+            // Find target by character name
+            let targetSessionId = null;
+            let targetPlayer = null;
+            for (const c of this.clients) {
+                const p = this.state.players.get(c.sessionId);
+                if (p && p.characterName.toLowerCase() === data.targetName.toLowerCase()) {
+                    targetSessionId = c.sessionId;
+                    targetPlayer = p;
+                    break;
+                }
+            }
+            if (!targetSessionId || !targetPlayer) {
+                this.sendSystemChat(client, `Player "${data.targetName}" is not online.`);
+                return;
+            }
+            if (targetSessionId === client.sessionId) {
+                this.sendSystemChat(client, 'You cannot invite yourself.');
+                return;
+            }
+            // Check if target is already in a full party
+            const targetPartyId = this.playerParty.get(targetSessionId);
+            if (targetPartyId) {
+                const targetParty = this.parties.get(targetPartyId);
+                if (targetParty && targetParty.size >= 4) {
+                    this.sendSystemChat(client, `${targetPlayer.characterName}'s party is full.`);
+                    return;
+                }
+            }
+            // Check if inviter's party is full
+            const inviterPartyId = this.playerParty.get(client.sessionId);
+            if (inviterPartyId) {
+                const inviterParty = this.parties.get(inviterPartyId);
+                if (inviterParty && inviterParty.size >= 4) {
+                    this.sendSystemChat(client, 'Your party is full.');
+                    return;
+                }
+            }
+            // Store pending invite (overwrites any existing invite for the target)
+            this.pendingInvites.set(targetSessionId, client.sessionId);
+            // Notify both
+            const targetClient = this.clients.find(c => c.sessionId === targetSessionId);
+            if (targetClient) {
+                this.sendSystemChat(targetClient, `${inviter.characterName} has invited you to a party. Type /accept to join.`);
+            }
+            this.sendSystemChat(client, `Invite sent to ${targetPlayer.characterName}.`);
+        });
+        this.onMessage(MessageType.PARTY_ACCEPT, (client) => {
+            const inviterSessionId = this.pendingInvites.get(client.sessionId);
+            if (!inviterSessionId) {
+                this.sendSystemChat(client, 'You have no pending party invite.');
+                return;
+            }
+            this.pendingInvites.delete(client.sessionId);
+            const inviter = this.state.players.get(inviterSessionId);
+            const accepter = this.state.players.get(client.sessionId);
+            if (!inviter || !accepter)
+                return;
+            // Get or create inviter's party
+            let partyId = this.playerParty.get(inviterSessionId);
+            if (!partyId) {
+                partyId = `party_${this.nextPartyId++}`;
+                this.parties.set(partyId, new Set([inviterSessionId]));
+                this.playerParty.set(inviterSessionId, partyId);
+            }
+            const party = this.parties.get(partyId);
+            if (party.size >= 4) {
+                this.sendSystemChat(client, 'The party is full.');
+                return;
+            }
+            // If accepter is already in a different party, remove them first
+            this.removeFromParty(client.sessionId, true);
+            // Add to party
+            party.add(client.sessionId);
+            this.playerParty.set(client.sessionId, partyId);
+            // Notify all members
+            for (const sid of party) {
+                const c = this.clients.find(cl => cl.sessionId === sid);
+                if (c) {
+                    this.sendSystemChat(c, `${accepter.characterName} has joined the party.`);
+                }
+            }
+            this.sendPartyUpdate(partyId);
+        });
+        this.onMessage(MessageType.PARTY_DECLINE, (client) => {
+            const inviterSessionId = this.pendingInvites.get(client.sessionId);
+            if (!inviterSessionId)
+                return;
+            this.pendingInvites.delete(client.sessionId);
+            const decliner = this.state.players.get(client.sessionId);
+            const inviterClient = this.clients.find(c => c.sessionId === inviterSessionId);
+            if (inviterClient && decliner) {
+                this.sendSystemChat(inviterClient, `${decliner.characterName} declined your party invite.`);
+            }
+        });
+        this.onMessage(MessageType.PARTY_LEAVE, (client) => {
+            this.removeFromParty(client.sessionId);
+        });
         console.log(`[GameRoom] Room created. Default zone: ${this.defaultZoneId}, Tick: ${SERVER_TICK_RATE}Hz`);
     }
     /**
      * Lazily load and cache a zone's collision, connections, and respawn point.
+     * Public so admin routes can trigger zone loading for teleports.
      */
     loadZoneCache(zoneId) {
         const existing = this.zoneCache.get(zoneId);
@@ -304,7 +461,9 @@ export class GameRoom extends Room {
         player.stats = stats;
         player.maxHp = stats.maxHp;
         player.maxMana = stats.maxMana;
-        player.speed = stats.speed;
+        // Use DataManager class data for speed so that editor changes are reflected.
+        // DataManager already falls back to CLASS_TEMPLATES when no classes.json exists.
+        player.speed = DataManager.instance.classes[charData.classId]?.baseSpeed ?? stats.speed;
         // Restore vitals (clamped to max)
         player.hp = Math.min(charData.hp, stats.maxHp);
         player.mana = Math.min(charData.mana, stats.maxMana);
@@ -388,6 +547,14 @@ export class GameRoom extends Room {
                 console.log(`[GameRoom] Saved and disconnected: ${data.username} (char=${data.characterId})`);
             }
         }
+        // Clean up party membership and pending invites
+        this.removeFromParty(client.sessionId);
+        this.pendingInvites.delete(client.sessionId);
+        // Also clear any invite where this player was the inviter
+        for (const [invitee, inviter] of this.pendingInvites) {
+            if (inviter === client.sessionId)
+                this.pendingInvites.delete(invitee);
+        }
         this.state.players.delete(client.sessionId);
         this.inputQueues.delete(client.sessionId);
         this.sessionData.delete(client.sessionId);
@@ -405,7 +572,8 @@ export class GameRoom extends Room {
         player.mana = stats.maxMana;
         player.maxEnergy = stats.maxEnergy;
         player.energy = stats.maxEnergy;
-        player.speed = stats.speed;
+        // Use DataManager class data for speed so that editor changes are reflected.
+        player.speed = DataManager.instance.classes[player.classId]?.baseSpeed ?? stats.speed;
     }
     /**
      * Main server update loop — processes inputs, combat, projectiles, respawns, zone transitions.
@@ -434,7 +602,7 @@ export class GameRoom extends Room {
                 }
                 // Handle melee input
                 if (input.melee && player.alive) {
-                    const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now);
+                    const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now, (a, b) => this.isPartyMember(a, b));
                     this.broadcastCombatEvents(events);
                 }
             }
@@ -442,7 +610,7 @@ export class GameRoom extends Room {
             queue.length = 0;
         });
         // 2. Update projectiles (movement + collision)
-        const { toRemove, events } = this.combat.updateProjectiles(this.state.projectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now);
+        const { toRemove, events } = this.combat.updateProjectiles(this.state.projectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now, (a, b) => this.isPartyMember(a, b));
         // Remove destroyed projectiles
         for (const id of toRemove) {
             this.state.projectiles.delete(id);
@@ -450,13 +618,13 @@ export class GameRoom extends Room {
         // Broadcast combat events (hits, kills)
         this.broadcastCombatEvents(events);
         // 3. Spell projectile update (Fireball and other spell projectiles)
-        const { toRemove: spellToRemove, events: spellEvents } = this.spellProjectileSystem.update(this.state.spellProjectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now);
+        const { toRemove: spellToRemove, events: spellEvents } = this.spellProjectileSystem.update(this.state.spellProjectiles, this.state.players, this.state.npcs, this.npcSystem, dtSec, now, (a, b) => this.isPartyMember(a, b));
         for (const id of spellToRemove) {
             this.state.spellProjectiles.delete(id);
         }
         this.broadcastSpellProjectileEvents(spellEvents);
         // 4. Skill system update (cast progression, energy regen, buff ticking)
-        const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles);
+        const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp), (a, b) => this.isPartyMember(a, b));
         this.broadcastSkillEvents(skillEvents);
         // 5. Check respawns — handle per-player zone respawn points
         const respawnEvents = this.checkRespawnsMultiZone(now);
@@ -464,7 +632,30 @@ export class GameRoom extends Room {
         // 6. Update NPC system (aggro, movement, respawns, NPC attacks)
         const npcEvents = this.npcSystem.update(dtSec, now, this.state.players, this.state.npcs, (zoneId) => this.zoneCache.get(zoneId)?.collision ?? null);
         this.broadcastCombatEvents(npcEvents);
-        // 7. Check zone transitions (portal triggers)
+        // 7. Update loot bags (despawn empty / expired bags)
+        this.lootBagSystem.update(now, this.state.lootBags);
+        // 8. Level-up check — process pending XP thresholds
+        this.state.players.forEach((player, sessionId) => {
+            if (!player.alive || player.level >= MAX_LEVEL)
+                return;
+            let leveled = false;
+            while (player.level < MAX_LEVEL) {
+                const needed = xpRequiredForLevel(player.level);
+                if (player.xp < needed)
+                    break;
+                player.xp -= needed;
+                player.level++;
+                leveled = true;
+            }
+            if (leveled) {
+                this.applyStats(player); // recompute stats + full heal
+                const client = this.clients.find(c => c.sessionId === sessionId);
+                if (client) {
+                    client.send(MessageType.LEVEL_UP, { level: player.level });
+                }
+            }
+        });
+        // 9. Check zone transitions (portal triggers)
         this.checkZoneTransitions();
     }
     /**
@@ -542,6 +733,11 @@ export class GameRoom extends Room {
     broadcastCombatEvents(events) {
         for (const event of events) {
             this.broadcast(event.type, event.data);
+            // Spawn loot bag and award XP when NPC dies
+            if (event.type === 'npcDied') {
+                this.spawnNpcLoot(event.data.targetId);
+                this.awardKillXP(event.data.killerId, event.data.xpReward);
+            }
         }
     }
     /**
@@ -557,7 +753,27 @@ export class GameRoom extends Room {
             else {
                 // playerHit, playerDied, npcHit, npcDied — reuse existing message types
                 this.broadcast(event.type, event.data);
+                // Spawn loot bag and award XP when NPC dies from spell
+                if (event.type === 'npcDied') {
+                    this.spawnNpcLoot(event.data.targetId);
+                    this.awardKillXP(event.data.killerId, event.data.xpReward);
+                }
             }
+        }
+    }
+    /**
+     * Look up an NPC's loot table and spawn a loot bag at its position.
+     */
+    spawnNpcLoot(npcId) {
+        const npc = this.state.npcs.get(npcId);
+        if (!npc)
+            return;
+        const template = DataManager.instance.npcTemplates[npc.templateId];
+        if (!template?.lootTableId)
+            return;
+        const loot = this.lootBagSystem.rollLootTable(template.lootTableId);
+        if (loot.length > 0) {
+            this.lootBagSystem.spawnBag(npc.zoneId, npc.x, npc.y, loot, this.state.lootBags);
         }
     }
     /**
@@ -582,13 +798,35 @@ export class GameRoom extends Room {
                     });
                     break;
                 case 'castComplete':
-                    // Broadcast skill effects (damage numbers, heals, etc.)
+                    // Broadcast skill effects (damage numbers, heals, buffs, etc.)
                     for (const fx of event.events) {
-                        this.broadcast(MessageType.SKILL_EFFECT, {
-                            casterId: event.casterId,
-                            skillId: event.skillId,
-                            ...fx,
-                        });
+                        // If the target is an NPC, use the NPC_HIT message type so the client
+                        // can look up the NPC position and show the damage flash correctly.
+                        if (fx.type === 'damage' && this.state.npcs.has(fx.targetId)) {
+                            this.broadcast(MessageType.NPC_HIT, {
+                                targetId: fx.targetId,
+                                damage: fx.damage,
+                                isCrit: fx.isCrit,
+                                killerId: event.casterId,
+                                casterId: event.casterId,
+                                skillId: event.skillId,
+                            });
+                        }
+                        else if (fx.type === 'buff' || fx.type === 'debuff') {
+                            // Send a dedicated BUFF_APPLIED message so clients can track active effects
+                            this.broadcast(MessageType.BUFF_APPLIED, {
+                                targetId: fx.targetId,
+                                skillId: fx.skillId,
+                                durationMs: fx.durationMs,
+                            });
+                        }
+                        else {
+                            this.broadcast(MessageType.SKILL_EFFECT, {
+                                casterId: event.casterId,
+                                skillId: event.skillId,
+                                ...fx,
+                            });
+                        }
                     }
                     break;
                 case 'castInterrupted':
@@ -622,6 +860,127 @@ export class GameRoom extends Room {
                     break;
             }
         }
+    }
+    // ── Party Helpers ─────────────────────────────────────────
+    /** Send a system chat message to a single client. */
+    sendSystemChat(client, message) {
+        client.send(MessageType.CHAT_MESSAGE, {
+            channel: 'system',
+            senderName: '',
+            message,
+            timestamp: Date.now(),
+        });
+    }
+    /** Send PARTY_UPDATE to all members of a party. */
+    sendPartyUpdate(partyId) {
+        const party = this.parties.get(partyId);
+        if (!party)
+            return;
+        const members = [];
+        for (const sid of party) {
+            const p = this.state.players.get(sid);
+            if (p) {
+                members.push({ sessionId: sid, characterName: p.characterName });
+            }
+        }
+        const payload = { members };
+        for (const sid of party) {
+            const c = this.clients.find(cl => cl.sessionId === sid);
+            if (c) {
+                c.send(MessageType.PARTY_UPDATE, payload);
+            }
+        }
+    }
+    /**
+     * Remove a player from their party. If the party has <2 members, disband.
+     * @param silent  If true, skip "X left the party" notifications (used for party-switch on accept)
+     */
+    removeFromParty(sessionId, silent = false) {
+        const partyId = this.playerParty.get(sessionId);
+        if (!partyId)
+            return;
+        const party = this.parties.get(partyId);
+        if (!party) {
+            this.playerParty.delete(sessionId);
+            return;
+        }
+        party.delete(sessionId);
+        this.playerParty.delete(sessionId);
+        const leaver = this.state.players.get(sessionId);
+        if (party.size <= 1) {
+            // Disband — notify the remaining member
+            for (const sid of party) {
+                this.playerParty.delete(sid);
+                const c = this.clients.find(cl => cl.sessionId === sid);
+                if (c) {
+                    if (!silent)
+                        this.sendSystemChat(c, 'The party has been disbanded.');
+                    c.send(MessageType.PARTY_UPDATE, { members: [] });
+                }
+            }
+            this.parties.delete(partyId);
+        }
+        else {
+            // Notify remaining members
+            if (!silent) {
+                for (const sid of party) {
+                    const c = this.clients.find(cl => cl.sessionId === sid);
+                    if (c && leaver) {
+                        this.sendSystemChat(c, `${leaver.characterName} has left the party.`);
+                    }
+                }
+            }
+            this.sendPartyUpdate(partyId);
+        }
+        // Tell the leaver their party is now empty
+        const leaverClient = this.clients.find(c => c.sessionId === sessionId);
+        if (leaverClient && !silent) {
+            leaverClient.send(MessageType.PARTY_UPDATE, { members: [] });
+            this.sendSystemChat(leaverClient, 'You have left the party.');
+        }
+    }
+    // ── XP Distribution ─────────────────────────────────────────
+    /**
+     * Returns true when two players (by sessionId) are in the same party.
+     * Used to prevent friendly-fire from AoE skills and spell projectiles.
+     */
+    isPartyMember(playerIdA, playerIdB) {
+        if (playerIdA === playerIdB)
+            return false;
+        const partyId = this.playerParty.get(playerIdA);
+        if (!partyId)
+            return false;
+        return this.parties.get(partyId)?.has(playerIdB) ?? false;
+    }
+    /**
+     * Award kill XP to a player (or their party if applicable).
+     * Party members in the same zone split a +10% bonus equally.
+     */
+    awardKillXP(killerId, baseXP) {
+        const killer = this.state.players.get(killerId);
+        if (!killer || baseXP <= 0)
+            return;
+        const partyId = this.playerParty.get(killerId);
+        if (partyId) {
+            const members = this.parties.get(partyId);
+            if (members && members.size > 1) {
+                const bonusXP = Math.floor(baseXP * 1.10);
+                const zoneMembers = [];
+                for (const sid of members) {
+                    const p = this.state.players.get(sid);
+                    if (p && p.alive && p.zoneId === killer.zoneId)
+                        zoneMembers.push(p);
+                }
+                if (zoneMembers.length > 0) {
+                    const share = Math.max(1, Math.floor(bonusXP / zoneMembers.length));
+                    for (const p of zoneMembers)
+                        p.xp = (p.xp ?? 0) + share;
+                    return;
+                }
+            }
+        }
+        // Solo or no zone-mates: full XP to killer
+        killer.xp = (killer.xp ?? 0) + baseXP;
     }
     // ── Persistence Helpers ──────────────────────────────────
     /**
@@ -689,6 +1048,8 @@ export class GameRoom extends Room {
         }
     }
     onDispose() {
+        // Clear admin reference
+        _activeGameRoom = null;
         // Save all players on room dispose
         this.saveAllPlayers();
         // Clear the save interval

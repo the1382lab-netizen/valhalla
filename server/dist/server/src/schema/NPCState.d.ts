@@ -1,4 +1,16 @@
-import { Schema } from '@colyseus/schema';
+import { Schema, ArraySchema } from '@colyseus/schema';
+import type { ActiveBuff } from './PlayerState.js';
+/**
+ * Lightweight buff descriptor synced to clients so they can display active
+ * debuffs on the enemy target pane (e.g. Poison Blade DoT pill).
+ */
+export declare class NpcBuffInfo extends Schema {
+    skillId: string;
+    /** Server timestamp (ms) when this buff expires */
+    expiresAt: number;
+    /** DoT damage per second (0 = not a DoT) */
+    dotDamagePerSec: number;
+}
 /**
  * Synced NPC/Enemy state. Sent to all clients for rendering.
  */
@@ -29,5 +41,9 @@ export declare class NPCState extends Schema {
     spriteSize: number;
     /** Aim angle (for facing direction) */
     aimAngle: number;
+    /** Active debuffs/buffs visible to clients — kept in sync by applyNpcBuff / tickNpcBuffs */
+    syncedBuffs: ArraySchema<NpcBuffInfo>;
+    /** Full buff data for server-side ticking (mirrors PlayerState.activeBuffs pattern) */
+    activeBuffs: ActiveBuff[];
 }
 //# sourceMappingURL=NPCState.d.ts.map

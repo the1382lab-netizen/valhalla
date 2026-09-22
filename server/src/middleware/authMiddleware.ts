@@ -4,7 +4,7 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { verifyToken } from '../services/AuthService.js';
+import { verifyToken, getBanStatus, describeBan } from '../services/AuthService.js';
 
 // Extend Express Request with auth fields
 declare global {
@@ -28,6 +28,11 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
 
   try {
     const payload = verifyToken(token);
+    const ban = getBanStatus(payload.userId);
+    if (ban.banned) {
+      res.status(403).json({ error: describeBan(ban), banned: true });
+      return;
+    }
     req.userId = payload.userId;
     req.username = payload.username;
     next();

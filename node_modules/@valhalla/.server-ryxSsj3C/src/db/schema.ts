@@ -9,6 +9,9 @@
  * username TEXT NOT NULL UNIQUE
  * password_hash TEXT NOT NULL
  * created_at INTEGER NOT NULL (unix ms)
+ * banned_until INTEGER NULL (unix ms; NULL = not banned; 8.64e15 = permanent)
+ * ban_reason TEXT NOT NULL DEFAULT ''
+ * banned_by TEXT NOT NULL DEFAULT ''
  *
  * -- characters --
  * id INTEGER PRIMARY KEY AUTOINCREMENT

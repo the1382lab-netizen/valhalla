@@ -342,7 +342,7 @@ const ADMIN_ACTIONS = new Set([
   'kill-npc', 'respawn-npc', 'delete-npc',
   'reload-overlays', 'reload-data',
   // 2.0 MMO admin actions
-  'player-action', 'player-inspect', 'broadcast', 'spawn-point-action',
+  'player-action', 'player-inspect', 'broadcast', 'spawn-point-action', 'account-action',
 ]);
 
 app.all('/api/admin/:action', async (req, res) => {

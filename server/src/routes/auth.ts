@@ -3,7 +3,7 @@
  */
 
 import { Router } from 'express';
-import { register, login } from '../services/AuthService.js';
+import { register, login, AccountBannedError } from '../services/AuthService.js';
 import { getCharactersByUser } from '../services/CharacterService.js';
 
 export const authRouter = Router();
@@ -63,6 +63,16 @@ authRouter.post('/login', async (req, res) => {
       characters: chars,
     });
   } catch (err: any) {
+    if (err instanceof AccountBannedError) {
+      res.status(403).json({
+        error: err.message,
+        banned: true,
+        bannedUntil: err.status.until,
+        permanent: err.status.permanent,
+        reason: err.status.reason,
+      });
+      return;
+    }
     res.status(401).json({ error: err?.message || 'Login failed.' });
   }
 });

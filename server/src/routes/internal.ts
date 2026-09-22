@@ -14,11 +14,23 @@
  *   POST /api/auth/verify                { token } -> { userId, username, expiresAt }
  *   GET  /api/characters/:id/load?userId= -> { character: LoadedCharacter }
  *   PUT  /api/characters/:id/save        SaveCharacterData -> { ok, savedAt }
+ *   GET  /api/accounts/bans              -> { bans: BannedAccount[] }
+ *   POST /api/accounts/ban               { userId | username, minutes?, reason?, by? } -> { ok, userId, username, ban }
+ *   POST /api/accounts/unban             { userId | username } -> { ok, userId, username }
  */
 
 import { Router } from 'express';
 import { requireServerSecret } from '../middleware/serverSecret.js';
-import { verifyToken } from '../services/AuthService.js';
+import {
+  verifyToken,
+  getBanStatus,
+  describeBan,
+  setBan,
+  clearBan,
+  listBans,
+  findUserId,
+  findUsername,
+} from '../services/AuthService.js';
 import {
   loadCharacter,
   saveCharacter,
@@ -196,6 +208,19 @@ internalRouter.post('/auth/verify', requireServerSecret, (req, res) => {
 
   try {
     const payload = verifyToken(token);
+    // A valid token for a banned account is still refused: the ban has to
+    // hold for a session that was logged in before it was issued.
+    const ban = getBanStatus(payload.userId);
+    if (ban.banned) {
+      res.status(403).json({
+        error: describeBan(ban),
+        banned: true,
+        bannedUntil: ban.until,
+        permanent: ban.permanent,
+        reason: ban.reason,
+      });
+      return;
+    }
     res.json({
       userId: payload.userId,
       username: payload.username,
@@ -270,4 +295,64 @@ internalRouter.put('/characters/:id/save', requireServerSecret, (req, res) => {
     console.error(`[internal] Save failed for character ${characterId}:`, err?.message);
     res.status(500).json({ error: err?.message || 'Failed to save character.' });
   }
+});
+
+// ── Account bans (admin, via the Unreal admin API) ──────────
+
+/** Resolve `{ userId }` or `{ username }` to both, or null when no such account. */
+function resolveAccount(body: unknown): { userId: number; username: string } | null {
+  const b = (body ?? {}) as Record<string, unknown>;
+  if (typeof b.userId === 'number' && Number.isInteger(b.userId) && b.userId > 0) {
+    const username = findUsername(b.userId);
+    return username === null ? null : { userId: b.userId, username };
+  }
+  if (typeof b.username === 'string' && b.username.trim().length > 0) {
+    const userId = findUserId(b.username);
+    return userId === null ? null : { userId, username: b.username.trim().toLowerCase() };
+  }
+  return null;
+}
+
+/**
+ * GET /api/accounts/bans
+ * -> 200 { bans: [{ userId, username, until, permanent, reason, bannedBy }] }
+ */
+internalRouter.get('/accounts/bans', requireServerSecret, (_req, res) => {
+  res.json({ bans: listBans() });
+});
+
+/**
+ * POST /api/accounts/ban
+ * Body: { userId | username, minutes?: number (<=0 or absent = permanent), reason?: string, by?: string }
+ * -> 200 { ok, userId, username, ban }   404 when the account does not exist.
+ */
+internalRouter.post('/accounts/ban', requireServerSecret, (req, res) => {
+  const account = resolveAccount(req.body);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found (send userId or username).' });
+    return;
+  }
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const minutes = typeof b.minutes === 'number' && Number.isFinite(b.minutes) ? b.minutes : undefined;
+  const reason = typeof b.reason === 'string' ? b.reason.trim() : '';
+  const by = typeof b.by === 'string' ? b.by.trim() : 'admin';
+  const ban = setBan(account.userId, minutes, reason, by);
+  console.log(`[internal] ban ${account.username} (#${account.userId}) ${ban.permanent ? 'permanently' : `until ${new Date(ban.until ?? 0).toISOString()}`}${reason ? ` — ${reason}` : ''}`);
+  res.json({ ok: true, ...account, ban, message: describeBan(ban) });
+});
+
+/**
+ * POST /api/accounts/unban
+ * Body: { userId | username }
+ * -> 200 { ok, userId, username }   404 when the account does not exist.
+ */
+internalRouter.post('/accounts/unban', requireServerSecret, (req, res) => {
+  const account = resolveAccount(req.body);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found (send userId or username).' });
+    return;
+  }
+  clearBan(account.userId);
+  console.log(`[internal] unban ${account.username} (#${account.userId})`);
+  res.json({ ok: true, ...account });
 });

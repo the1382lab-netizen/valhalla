@@ -77,6 +77,116 @@ export async function register(username: string, password: string): Promise<Auth
   return { token, userId, username: trimmed };
 }
 
+// ── Account bans ────────────────────────────────────────────
+
+/** `users.banned_until` value meaning "no end date" (max JS Date, year 275760). */
+export const BAN_PERMANENT = 8.64e15;
+
+export interface BanStatus {
+  banned: boolean;
+  /** Unix ms the ban ends, or null when permanent (or not banned). */
+  until: number | null;
+  permanent: boolean;
+  reason: string;
+  bannedBy: string;
+}
+
+export interface BannedAccount extends BanStatus {
+  userId: number;
+  username: string;
+}
+
+/** Thrown by login() for a banned account; the auth route turns it into a 403. */
+export class AccountBannedError extends Error {
+  constructor(public readonly status: BanStatus) {
+    super(describeBan(status));
+    this.name = 'AccountBannedError';
+  }
+}
+
+/** The sentence a banned player sees on the login screen or join rejection. */
+export function describeBan(status: BanStatus): string {
+  const reason = status.reason ? ` Reason: ${status.reason}` : '';
+  if (status.permanent) return `This account has been banned.${reason}`;
+  const until = status.until ? new Date(status.until).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'later';
+  return `This account is suspended until ${until}.${reason}`;
+}
+
+function rowToBan(bannedUntil: unknown, reason: unknown, bannedBy: unknown): BanStatus {
+  const until = typeof bannedUntil === 'number' ? bannedUntil : null;
+  const active = until !== null && until > Date.now();
+  if (!active) return { banned: false, until: null, permanent: false, reason: '', bannedBy: '' };
+  const permanent = until >= BAN_PERMANENT;
+  return {
+    banned: true,
+    until: permanent ? null : until,
+    permanent,
+    reason: String(reason ?? ''),
+    bannedBy: String(bannedBy ?? ''),
+  };
+}
+
+/** Current ban for a user id. An expired ban reads as not banned. */
+export function getBanStatus(userId: number): BanStatus {
+  const result = getDb().exec(
+    'SELECT banned_until, ban_reason, banned_by FROM users WHERE id = ?',
+    [userId],
+  );
+  if (result.length === 0 || result[0].values.length === 0) {
+    return { banned: false, until: null, permanent: false, reason: '', bannedBy: '' };
+  }
+  const [until, reason, by] = result[0].values[0];
+  return rowToBan(until, reason, by);
+}
+
+/** `users.id` for a username (case-insensitive, as stored), or null. */
+export function findUserId(username: string): number | null {
+  const result = getDb().exec('SELECT id FROM users WHERE username = ?', [username.trim().toLowerCase()]);
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  return result[0].values[0][0] as number;
+}
+
+/** `users.username` for an id, or null. */
+export function findUsername(userId: number): string | null {
+  const result = getDb().exec('SELECT username FROM users WHERE id = ?', [userId]);
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  return String(result[0].values[0][0]);
+}
+
+/**
+ * Ban or suspend an account. `minutes` <= 0 (or omitted) means permanent.
+ * @returns the resulting status.
+ */
+export function setBan(userId: number, minutes: number | undefined, reason: string, bannedBy: string): BanStatus {
+  const until = minutes && minutes > 0 ? Date.now() + Math.round(minutes * 60_000) : BAN_PERMANENT;
+  getDb().run(
+    'UPDATE users SET banned_until = ?, ban_reason = ?, banned_by = ? WHERE id = ?',
+    [until, reason.slice(0, 200), bannedBy.slice(0, 64), userId],
+  );
+  saveToDisk();
+  return getBanStatus(userId);
+}
+
+/** Lift a ban. */
+export function clearBan(userId: number): void {
+  getDb().run("UPDATE users SET banned_until = NULL, ban_reason = '', banned_by = '' WHERE id = ?", [userId]);
+  saveToDisk();
+}
+
+/** Every account whose ban is still in force, soonest-ending first, permanent last. */
+export function listBans(): BannedAccount[] {
+  const result = getDb().exec(
+    'SELECT id, username, banned_until, ban_reason, banned_by FROM users WHERE banned_until IS NOT NULL AND banned_until > ? ORDER BY banned_until ASC',
+    [Date.now()],
+  );
+  if (result.length === 0) return [];
+  return result[0].values.map(([id, username, until, reason, by]) => ({
+    userId: id as number,
+    username: String(username),
+    ...rowToBan(until, reason, by),
+  }));
+}
+
 /**
  * Log in an existing user.
  * @throws Error if credentials are invalid.
@@ -102,6 +212,13 @@ export async function login(username: string, password: string): Promise<AuthRes
   const valid = await bcrypt.compare(password, storedHash);
   if (!valid) {
     throw new Error('Invalid username or password.');
+  }
+
+  // Checked after the password, so a ban never confirms an account exists to
+  // someone who does not know its password.
+  const ban = getBanStatus(userId);
+  if (ban.banned) {
+    throw new AccountBannedError(ban);
   }
 
   const token = generateToken({ userId, username: storedUsername });

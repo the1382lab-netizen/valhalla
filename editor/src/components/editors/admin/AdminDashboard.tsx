@@ -9,7 +9,7 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
 import { ADMIN_RESULT_EVENT, AdminResult, postAdmin } from './adminApi';
 import {
-  ActionDialog, ActionDialogSpec, AdminPlayer, InspectDialog, PlayersPanel, buildPlayerMenu,
+  ActionDialog, ActionDialogSpec, AdminPlayer, BansDialog, InspectDialog, PlayersPanel, buildPlayerMenu,
 } from './AdminPlayerTools';
 
 // ── Types ───────────────────────────────────────────────────
@@ -178,6 +178,7 @@ export const AdminDashboard: React.FC = () => {
   const [actionDialog, setActionDialog] = useState<ActionDialogSpec | null>(null);
   /** The player whose inspect window is open. */
   const [inspectPlayer, setInspectPlayer] = useState<AdminPlayer | null>(null);
+  const [bansOpen, setBansOpen] = useState(false);
   /** The player highlighted in the side list. */
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   /** Forces a re-render (and thus a fresh draw closure) when a capture finishes loading. */
@@ -1098,6 +1099,15 @@ export const AdminDashboard: React.FC = () => {
         >
           Broadcast…
         </button>
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '3px 10px', fontSize: 12 }}
+          title="List, add and lift account bans"
+          disabled={!state?.online}
+          onClick={() => setBansOpen(true)}
+        >
+          Bans…
+        </button>
 
         {/* Zone tabs */}
         <div style={{ display: 'flex', gap: 2 }}>
@@ -1270,6 +1280,9 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Player inspect window */}
       {inspectPlayer && <InspectDialog player={inspectPlayer} onClose={() => setInspectPlayer(null)} />}
+
+      {/* Account bans */}
+      {bansOpen && <BansDialog onClose={() => setBansOpen(false)} />}
 
       {/* Spawn NPC / Drop Item dialog */}
       {spawnDialog && (

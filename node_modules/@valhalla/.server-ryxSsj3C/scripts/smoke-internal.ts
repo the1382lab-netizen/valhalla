@@ -297,6 +297,36 @@ async function run(): Promise<void> {
     const load3 = await http('GET', `/api/characters/${characterId}/load?userId=${userId}`, { secret: SECRET });
     assertEq(load3.body.character.level, 5, 'state intact after rejected saves');
     assertEq(load3.body.character.inventory.length, 2, 'inventory intact after rejected saves');
+
+    // 11. account bans
+    console.log('\n[9b] Account bans');
+    const banNoSecret = await http('POST', '/api/accounts/ban', { body: { userId } });
+    assertEq(banNoSecret.status, 401, 'ban without secret -> 401');
+    const banMissing = await http('POST', '/api/accounts/ban', { body: { username: 'no_such_user_xyz' }, secret: SECRET });
+    assertEq(banMissing.status, 404, 'ban unknown account -> 404');
+    const ban = await http('POST', '/api/accounts/ban', {
+      body: { username, minutes: 30, reason: 'smoke test', by: 'smoke' }, secret: SECRET,
+    });
+    assertEq(ban.status, 200, 'suspend 30 min -> 200');
+    assertEq(ban.body.userId, userId, 'ban resolved username to userId');
+    assert(ban.body.ban.banned === true && ban.body.ban.permanent === false, 'ban is temporary');
+    const bans = await http('GET', '/api/accounts/bans', { secret: SECRET });
+    assert(bans.body.bans.some((b: any) => b.userId === userId && b.reason === 'smoke test'), 'ban listed');
+    const bannedVerify = await http('POST', '/api/auth/verify', { body: { token }, secret: SECRET });
+    assertEq(bannedVerify.status, 403, 'verify existing token of banned account -> 403');
+    assert(String(bannedVerify.body.error).includes('suspended'), 'verify says suspended', bannedVerify.body.error);
+    const bannedLogin = await http('POST', '/api/auth/login', { body: { username, password } });
+    assertEq(bannedLogin.status, 403, 'login while banned -> 403');
+    const bannedList = await http('GET', '/api/characters', { token });
+    assertEq(bannedList.status, 403, 'player API while banned -> 403');
+    const permaBan = await http('POST', '/api/accounts/ban', { body: { userId, reason: 'perma' }, secret: SECRET });
+    assert(permaBan.body.ban.permanent === true, 'ban with no minutes is permanent');
+    const unban = await http('POST', '/api/accounts/unban', { body: { userId }, secret: SECRET });
+    assertEq(unban.status, 200, 'unban -> 200');
+    const afterUnban = await http('POST', '/api/auth/verify', { body: { token }, secret: SECRET });
+    assertEq(afterUnban.status, 200, 'verify after unban -> 200');
+    const bansAfter = await http('GET', '/api/accounts/bans', { secret: SECRET });
+    assert(!bansAfter.body.bans.some((b: any) => b.userId === userId), 'unbanned account not listed');
   } finally {
     // 11. cleanup
     if (characterId) {

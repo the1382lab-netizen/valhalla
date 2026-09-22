@@ -108,6 +108,25 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
     console.log('[db] migrated: characters.body_id');
   }
 
+  // Account bans (Valhalla 2.0 admin tools). banned_until is unix ms;
+  // NULL = not banned, BAN_PERMANENT (see AuthService) = no end date.
+  const userCols = db.exec('PRAGMA table_info(users);');
+  const userColNames = userCols.length
+    ? userCols[0].values.map(row => String(row[1]))
+    : [];
+  if (!userColNames.includes('banned_until')) {
+    db.run('ALTER TABLE users ADD COLUMN banned_until INTEGER;');
+    console.log('[db] migrated: users.banned_until');
+  }
+  if (!userColNames.includes('ban_reason')) {
+    db.run("ALTER TABLE users ADD COLUMN ban_reason TEXT NOT NULL DEFAULT '';");
+    console.log('[db] migrated: users.ban_reason');
+  }
+  if (!userColNames.includes('banned_by')) {
+    db.run("ALTER TABLE users ADD COLUMN banned_by TEXT NOT NULL DEFAULT '';");
+    console.log('[db] migrated: users.banned_by');
+  }
+
   // Create indexes
   db.run('CREATE INDEX IF NOT EXISTS idx_characters_user_id ON characters(user_id);');
   db.run('CREATE INDEX IF NOT EXISTS idx_inventory_character_id ON inventory_items(character_id);');

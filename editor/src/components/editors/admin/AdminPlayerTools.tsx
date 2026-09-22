@@ -25,6 +25,9 @@ export interface AdminPlayer {
   godMode?: boolean;
   frozen?: boolean;
   mutedSeconds?: number;
+  /** Backend account name and users.id; empty / 0 for a dev join with no token. */
+  account?: string;
+  userId?: number;
 }
 
 export interface MenuItem {
@@ -161,8 +164,120 @@ export function buildPlayerMenu(p: AdminPlayer, ctx: PlayerMenuContext): MenuIte
     fields: [{ key: 'reason', label: 'Reason (shown to the player)', type: 'text' }],
     onSubmit: v => postAdmin('kick-player', { sessionId: id, reason: v.reason }, { label: `kick ${p.name}` }),
   }) });
+  if ((p.userId ?? 0) > 0) {
+    menu.push({ label: 'Ban / suspend account…', danger: true, action: () => ctx.openDialog({
+      title: `Ban ${p.account || p.name}`, submitLabel: 'Ban', danger: true,
+      description: `Bans the account "${p.account}" (every character on it) and kicks it. `
+        + 'The player sees the reason and end date when they try to log in. Lift it from "Bans…" in the toolbar.',
+      fields: [
+        { key: 'minutes', label: 'Duration', type: 'select', options: BAN_DURATIONS },
+        { key: 'reason', label: 'Reason (shown to the player)', type: 'text' },
+      ],
+      onSubmit: v => playerAction(id, 'ban', { minutes: Number(v.minutes), reason: v.reason }, `ban ${p.account || p.name}`),
+    }) });
+  }
   return menu;
 }
+
+/** Ban lengths offered by the dashboard, in minutes; 0 = permanent. */
+export const BAN_DURATIONS: { value: string; label: string }[] = [
+  { value: '60', label: '1 hour' },
+  { value: '1440', label: '1 day' },
+  { value: '10080', label: '7 days' },
+  { value: '43200', label: '30 days' },
+  { value: '0', label: 'Permanent' },
+];
+
+// ── Bans dialog ─────────────────────────────────────────────
+
+interface BanEntry {
+  userId: number;
+  username: string;
+  until: number | null;
+  permanent: boolean;
+  reason: string;
+  bannedBy: string;
+}
+
+/** Every ban in force, with Unban buttons, plus a form to ban any account by name (online or not). */
+export const BansDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+  const [bans, setBans] = useState<BanEntry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [username, setUsername] = useState('');
+  const [minutes, setMinutes] = useState(BAN_DURATIONS[1].value);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const res = await postAdmin('account-action', { action: 'list-bans' }, { quiet: true, label: 'list bans' });
+    if (res.ok) { setBans(res.bans ?? []); setError(null); } else { setError(res.error); }
+  }, []);
+  useEffect(() => { refresh(); }, [refresh]);
+
+  const ban = async () => {
+    if (!username.trim()) return;
+    setBusy(true);
+    const res = await postAdmin('account-action', { action: 'ban', username: username.trim(), minutes: Number(minutes), reason },
+      { label: `ban ${username.trim()}` });
+    setBusy(false);
+    if (res.ok) { setUsername(''); setReason(''); }
+    refresh();
+  };
+  const unban = async (b: BanEntry) => {
+    await postAdmin('account-action', { action: 'unban', userId: b.userId }, { label: `unban ${b.username}` });
+    refresh();
+  };
+
+  return (
+    <div style={overlayStyle} onClick={onClose}>
+      <div style={{ ...panelStyle, width: 540, maxHeight: '80vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}
+        onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 style={titleStyle}>Account bans</h3>
+          <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={refresh}>⟳</button>
+        </div>
+        {error && <div style={{ color: '#e66', fontSize: 12 }}>{error}</div>}
+        {bans === null && !error && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</div>}
+        {bans !== null && bans.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No accounts are banned.</div>}
+        {bans !== null && bans.length > 0 && (
+          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: 4 }}>Account</th><th style={{ padding: 4 }}>Until</th><th style={{ padding: 4 }}>Reason</th><th />
+              </tr>
+            </thead>
+            <tbody>
+              {bans.map(b => (
+                <tr key={b.userId} style={{ borderTop: '1px solid var(--border-color)' }}>
+                  <td style={{ padding: 4, color: 'var(--text-primary)' }}>{b.username}</td>
+                  <td style={{ padding: 4 }}>{b.permanent || !b.until ? 'Permanent' : new Date(b.until).toLocaleString()}</td>
+                  <td style={{ padding: 4, color: 'var(--text-secondary)' }}>{b.reason || '—'}</td>
+                  <td style={{ padding: 4, textAlign: 'right' }}>
+                    <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => unban(b)}>Unban</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Ban an account by name (works when they are offline)</div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input className="form-input" placeholder="account name" value={username} onChange={e => setUsername(e.target.value)} style={{ flex: 1 }} />
+            <select className="form-input" value={minutes} onChange={e => setMinutes(e.target.value)}>
+              {BAN_DURATIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          </div>
+          <input className="form-input" placeholder="reason (shown to the player)" value={reason} maxLength={200} onChange={e => setReason(e.target.value)} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button className="btn btn-ghost" onClick={onClose}>Close</button>
+            <button className="btn btn-danger" disabled={busy || !username.trim()} onClick={ban}>Ban</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ── Action dialog ───────────────────────────────────────────
 
@@ -260,6 +375,7 @@ export const PlayersPanel: React.FC<{
                   </span>
                   <span style={{ color: 'var(--text-muted)', fontSize: 10 }}>Lv {p.level} {p.classId}</span>
                 </div>
+                {p.account && <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>account: {p.account}</div>}
                 <div style={{ height: 4, background: '#331515', borderRadius: 2, marginTop: 4 }}>
                   <div style={{ width: `${hpPct * 100}%`, height: '100%', background: '#d33', borderRadius: 2 }} />
                 </div>

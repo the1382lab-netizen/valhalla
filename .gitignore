@@ -1,0 +1,25 @@
+# Unreal Engine
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Build/
+.vs/
+.vscode/
+*.VC.db
+*.opensdf
+*.opendb
+*.sdf
+*.sln
+*.suo
+*.xcodeproj
+*.xcworkspace
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+# Local agent config
+.mcp.json
+# OS
+Thumbs.db
+.DS_Store
+__pycache__/
+*.pyc

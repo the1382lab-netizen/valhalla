@@ -101,16 +101,19 @@ AValhallaCharacter::AValhallaCharacter()
 
 	GetCapsuleComponent()->InitCapsuleSize(CapsuleRadius, CapsuleHalfHeight);
 
-	// ── Rotation: aim, not motion ───────────────────────────────────────
-	// Both of Unreal's usual rotation sources are off. The yaw is written
-	// directly by UpdateAimYaw / ServerSetAimYaw, which is the 1.0 `aimAngle`.
+	// ── Rotation: motion, or the camera drag ────────────────────────────
+	// WASD faces the way the character walks (orient-to-movement, predicted
+	// and replicated by CharacterMovement). The controller rotation is not a
+	// source: the right-mouse drag writes the yaw directly through
+	// SetFacingYawFromCamera / ServerSetFacingYaw, and only while standing.
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationRoll = false;
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
-	Movement->bOrientRotationToMovement = false;
+	Movement->bOrientRotationToMovement = true;
 	Movement->bUseControllerDesiredRotation = false;
+	Movement->RotationRate = FRotator(0.f, FacingTurnRateDegrees, 0.f);
 
 	// ── No jumping, no crouching ────────────────────────────────────────
 	// 1.0 is a flat 2D plane; there is no vertical input anywhere in the game.
@@ -133,14 +136,15 @@ AValhallaCharacter::AValhallaCharacter()
 	// Placeholder until ApplyClassAppearance reads classes.json.
 	Movement->MaxWalkSpeed = 110.f;
 
-	// The simulated proxies' aim only looks right if the replicated yaw is
+	// The simulated proxies' facing only looks right if the replicated yaw is
 	// finer than the default byte quantisation (~1.4 degrees).
 	FRepMovement& RepMovementSettings = GetReplicatedMovement_Mutable();
 	RepMovementSettings.RotationQuantizationLevel = ERotatorQuantization::ShortComponents;
 
 	// ── Camera ──────────────────────────────────────────────────────────
-	// The boom uses an absolute rotation: the actor spins to face the cursor,
-	// and the camera must not spin with it or the world would swim around.
+	// The boom uses an absolute rotation: the actor turns as it walks, and the
+	// camera must not spin with it or the world would swim around. Only the
+	// right-mouse drag turns the camera (and the body with it).
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(RootComponent);
 	CameraBoom->TargetArmLength = 1500.f;
@@ -347,7 +351,7 @@ void AValhallaCharacter::AddCameraOrbit(float DeltaYawDegrees, float DeltaPitchD
 	}
 
 	// The boom uses an absolute rotation, so its relative rotation *is* its
-	// world rotation — the actor turning to face the cursor never drags it.
+	// world rotation — the actor turning as it walks never drags it.
 	FRotator Rotation = CameraBoom->GetRelativeRotation();
 	Rotation.Yaw = FRotator::NormalizeAxis(Rotation.Yaw + DeltaYawDegrees);
 	Rotation.Pitch = FMath::Clamp(Rotation.Pitch + DeltaPitchDegrees, CameraPitchMin, CameraPitchMax);
@@ -439,19 +443,53 @@ void AValhallaCharacter::ApplyClassAppearance()
 		*GetName(), *AppliedClassId.ToString(), ClassTemplate->BaseSpeed);
 }
 
-void AValhallaCharacter::UpdateAimYaw(float NewAimYaw)
+bool AValhallaCharacter::IsWalkingForFacing() const
 {
-	// Apply locally first, unconditionally: the local player's own aim must
-	// never wait on a round trip.
-	const FRotator Current = GetActorRotation();
-	if (!FMath::IsNearlyEqual(Current.Yaw, NewAimYaw, 0.01f))
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	if (!Movement)
 	{
-		SetActorRotation(FRotator(0.f, NewAimYaw, 0.f));
+		return false;
 	}
 
-	if (!IsLocallyControlled() || HasAuthority())
+	// Input first: acceleration is what orient-to-movement turns towards, so
+	// while there is any, CharacterMovement is (or is about to be) writing the
+	// yaw. Velocity second, for the frame or two of braking after a key lifts.
+	return !Movement->GetCurrentAcceleration().IsNearlyZero()
+		|| GetVelocity().SizeSquared2D() > FMath::Square(FacingStillSpeed);
+}
+
+void AValhallaCharacter::SetFacingYawFromCamera(float NewYaw)
+{
+	if (!IsLocallyControlled() || bDeathPresentation || IsWalkingForFacing())
+	{
+		// Walking: orient-to-movement wins. The drag still turns the camera,
+		// and with it the WASD basis, so the walk bends round with the view.
+		return;
+	}
+
+	NewYaw = FRotator::NormalizeAxis(NewYaw);
+
+	// Apply locally first: the local player's own turn must never wait on a
+	// round trip.
+	if (!FMath::IsNearlyEqual(FRotator::NormalizeAxis(GetActorRotation().Yaw - NewYaw), 0.f, 0.01f))
+	{
+		SetActorRotation(FRotator(0.f, NewYaw, 0.f));
+	}
+
+	if (HasAuthority())
 	{
 		// A listen-server host is already authoritative — nothing to send.
+		return;
+	}
+
+	bFacingSendPending = true;
+	FlushFacingYaw(false);
+}
+
+void AValhallaCharacter::FlushFacingYaw(bool bForce)
+{
+	if (!bFacingSendPending || !IsLocallyControlled() || HasAuthority())
+	{
 		return;
 	}
 
@@ -461,22 +499,42 @@ void AValhallaCharacter::UpdateAimYaw(float NewAimYaw)
 		return;
 	}
 
-	// Two gates, both from the 1.0 input cadence: don't send what the server
-	// cannot tell apart (2 degrees), and don't send faster than 20 Hz.
-	if (FMath::Abs(FRotator::NormalizeAxis(NewAimYaw - LastSentAimYaw)) < AimYawDeadzoneDegrees)
+	const float Yaw = FRotator::NormalizeAxis(GetActorRotation().Yaw);
+
+	// Two gates, from the 1.0 input cadence: don't send what the server cannot
+	// tell apart (2 degrees), and don't send faster than 20 Hz. The end of a
+	// drag (bForce) skips the deadzone but not the need to have turned at all.
+	const float Moved = FMath::Abs(FRotator::NormalizeAxis(Yaw - LastSentFacingYaw));
+	if (!bForce && Moved < FacingYawDeadzoneDegrees)
 	{
+		return;
+	}
+	if (Moved < 0.01f)
+	{
+		bFacingSendPending = false;
 		return;
 	}
 
 	const double Now = World->GetTimeSeconds();
-	if (Now - LastAimSendTime < (1.0 / AimSendRateHz))
+	if (!bForce && Now - LastFacingSendTime < (1.0 / FacingSendRateHz))
 	{
+		// Held back; the controller calls again next frame.
 		return;
 	}
 
-	LastAimSendTime = Now;
-	LastSentAimYaw = NewAimYaw;
-	ServerSetAimYaw(NewAimYaw);
+	// Moves still waiting to be sent go first, so the server has already
+	// stopped this character before it is told which way it now faces — a
+	// late move carrying the last of the walk's acceleration would otherwise
+	// turn it back towards the walk after the facing arrived.
+	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+	{
+		Movement->FlushServerMoves();
+	}
+
+	LastFacingSendTime = Now;
+	LastSentFacingYaw = Yaw;
+	bFacingSendPending = false;
+	ServerSetFacingYaw(Yaw);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -645,10 +703,18 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 	}
 }
 
-void AValhallaCharacter::ServerSetAimYaw_Implementation(float NewAimYaw)
+void AValhallaCharacter::ServerSetFacingYaw_Implementation(float NewYaw)
 {
-	// The server is the only writer of the replicated rotation. It is not
-	// validated against anything: facing has no gameplay effect on its own, and
-	// Phase 2b range-checks the cast, not the yaw it was cast at.
-	SetActorRotation(FRotator(0.f, FRotator::NormalizeAxis(NewAimYaw), 0.f));
+	// The server is the only writer of the replicated rotation. A client may
+	// turn on the spot as it likes — that is the right-mouse drag, and it costs
+	// nothing a player could not do by walking a step — so the yaw is not
+	// validated. What facing *gates* (IsFacing on swings and targeted casts) is
+	// always read here, from this value, never from anything the client claims.
+	//
+	// A dead body does not turn.
+	if (bDeathPresentation)
+	{
+		return;
+	}
+	SetActorRotation(FRotator(0.f, FRotator::NormalizeAxis(NewYaw), 0.f));
 }

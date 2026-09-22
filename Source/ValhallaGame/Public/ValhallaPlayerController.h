@@ -27,18 +27,22 @@ struct FInputActionInstance;
  * are part of the port and belong in source control as source, not as a binary
  * asset somebody has to open the editor to read.
  *
- * Two things here are the whole feel of the game:
+ * Three things here are the whole feel of the game (controls rework,
+ * 2026-09-22):
  *
- *   Screen-relative movement. 1.0 rotated the WASD vector 45 degrees before
- *   applying it (MovementSystem.ts:32), because the isometric camera makes
- *   "screen up" point north-west in world space. Here the input vector is
- *   rotated by the camera boom's world yaw instead of a hard-coded 45, so the
- *   two stay in step if the camera angle is ever retuned.
+ *   Camera-relative movement that turns the body. The WASD vector is rotated
+ *   by the camera boom's world yaw (W walks away from the camera; 1.0 did the
+ *   same with a hard-coded 45, MovementSystem.ts:32), and the character turns
+ *   to face the way it walks (orient-to-movement, see AValhallaCharacter).
  *
- *   Cursor aiming. The cursor is deprojected onto the ground plane at the
- *   character's feet every frame; the character faces that point. This is
- *   1.0's `aimAngle`, and Phase 2b's ground-targeted skills land on exactly
- *   the point GetAimWorldPoint returns.
+ *   The right-mouse drag. Hold and drag to orbit the camera; the body turns
+ *   with the camera's yaw while standing still (pitch is camera-only). While
+ *   walking, orient-to-movement wins and the drag only turns the view.
+ *
+ *   The cursor does not aim. It stays visible for click-to-target and loot,
+ *   and it is read exactly once per press of an `aoeGround` skill, to find
+ *   the ground point the skill lands on (SampleCursorGroundPoint). Moving the
+ *   mouse never turns the character.
  */
 UCLASS()
 class VALHALLAGAME_API AValhallaPlayerController : public APlayerController
@@ -72,19 +76,50 @@ public:
 	void ApplyOutlinePostProcess();
 
 	/**
-	 * Where on the ground the cursor is pointing, in world space, at the
-	 * character's foot height. Phase 2b uses this as the target point for
-	 * AoeGround skills and as the origin of the aim vector for projectiles.
+	 * The ground point the last `aoeGround` press was aimed at, in world space
+	 * at the character's foot height. Sampled from the cursor once, at the key
+	 * press (SampleCursorGroundPoint); nothing updates it continuously.
 	 *
-	 * Only meaningful on the owning client; on the server this is the last
-	 * value the client reported its aim yaw from, not a point.
+	 * Only meaningful on the owning client; on the server it is never set.
 	 */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Aim")
 	FVector GetAimWorldPoint() const { return AimWorldPoint; }
 
-	/** The yaw from the character to GetAimWorldPoint. */
-	UFUNCTION(BlueprintPure, Category = "Valhalla|Aim")
-	float GetAimYaw() const { return AimYaw; }
+	/**
+	 * Intersect the cursor ray with the ground plane at the character's feet.
+	 * Stores the point in AimWorldPoint and returns true on a hit; false (and
+	 * AimWorldPoint unchanged) with no pawn, no cursor, or the cursor above the
+	 * horizon. Owning client only.
+	 */
+	bool SampleCursorGroundPoint();
+
+	/** SampleCursorGroundPoint's plane maths for any viewport position (pixels). */
+	bool SampleGroundPointAtScreen(const FVector2D& ScreenPosition);
+
+	/**
+	 * Press a bar slot as if the cursor were at ScreenPosition (viewport
+	 * pixels): the key press, with the one cursor read an aoeGround skill makes
+	 * taken from there. For `valhalla.UI @class press <slot> <x> <y>` — typing
+	 * into the editor console takes the real cursor out of the PIE viewport.
+	 */
+	void PressActionBarAimedAt(int32 Slot, const FVector2D& ScreenPosition);
+
+	/**
+	 * HandleMove's body: one frame of camera-relative WASD (X = strafe,
+	 * Y = forward). Public for `valhalla.UI @class walk <w|a|s|d> <seconds>`,
+	 * which holds a key by calling it every frame on the owning client.
+	 */
+	void ApplyMoveInput(const FVector2D& Axis);
+
+	/**
+	 * One step of the right-mouse drag: orbit the boom, then turn the body to
+	 * the boom's yaw (a no-op while walking). HandleCameraLook's body; public
+	 * so `valhalla.UI @class orbit <deg>` can drive the same path in a gate.
+	 */
+	void OrbitCameraBy(float DeltaYawDegrees, float DeltaPitchDegrees);
+
+	/** The end of a drag: force out the final facing yaw. EndCameraOrbit's tail. */
+	void FinishCameraOrbitTurn();
 
 	// ── Phase 2b hooks ──────────────────────────────────────────────────
 	// Empty on purpose. The bindings, the slot numbering and the click routing
@@ -100,9 +135,10 @@ public:
 	void OnPrimaryClick();
 	virtual void OnPrimaryClick_Implementation();
 
-	// The right mouse button is the camera: hold and drag to orbit (see
-	// BeginCameraOrbit). It no longer targets, attacks or loots — attacking is
-	// the auto melee / auto ranged skills on the action bar.
+	// The right mouse button is the camera: hold and drag to orbit, turning the
+	// character with it while standing (see BeginCameraOrbit). It does not
+	// target, attack or loot — attacking is the auto melee / auto ranged skills
+	// on the action bar, and they need the character facing the target.
 
 	/** K — the 1.0 skill book toggle. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Valhalla|Input")
@@ -329,9 +365,13 @@ protected:
 
 	/** Right mouse pressed: start orbiting, hide and park the cursor. */
 	void BeginCameraOrbit();
-	/** Right mouse released: stop orbiting, put the cursor back where it was. */
+	/** Right mouse released: stop orbiting, send the final facing, put the cursor back. */
 	void EndCameraOrbit();
-	/** Mouse delta while orbiting. Ignored otherwise, so the cursor still aims. */
+	/**
+	 * Mouse delta while orbiting: turn the boom, then the body to the boom's
+	 * yaw (AValhallaCharacter::SetFacingYawFromCamera, a no-op while walking).
+	 * Ignored when not orbiting — a moving mouse turns nothing.
+	 */
 	void HandleCameraLook(const FInputActionValue& Value);
 	/** Mouse wheel. */
 	void HandleCameraZoom(const FInputActionValue& Value);
@@ -399,9 +439,6 @@ protected:
 	static constexpr int32 ActionBarSlots = 8;
 
 private:
-	/** Recompute AimWorldPoint / AimYaw from the cursor and push them to the pawn. */
-	void UpdateAimFromCursor();
-
 	/** True while the right mouse button is held. */
 	bool bCameraOrbiting = false;
 
@@ -423,9 +460,9 @@ private:
 	/** Client world time the invite arrived, for the prompt's expiry. */
 	double PendingPartyInviteAt = 0.0;
 
-	/** Ground-plane point under the cursor, at the character's foot height. */
+	/** See GetAimWorldPoint. Written only by SampleGroundPointAtScreen. */
 	FVector AimWorldPoint = FVector::ZeroVector;
 
-	/** Yaw from the character towards AimWorldPoint. */
-	float AimYaw = 0.f;
+	/** Set only for the duration of PressActionBarAimedAt. */
+	TOptional<FVector2D> AimScreenOverride;
 };

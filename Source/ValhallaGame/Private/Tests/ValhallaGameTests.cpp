@@ -320,4 +320,75 @@ bool FValhallaCombatFalloffTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Facing — controls rework (2026-09-22)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaCombatFacingTest,
+	"Valhalla.Game.Combat.Facing",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaCombatFacingTest::RunTest(const FString& Parameters)
+{
+	// A target 100 cm away at a given bearing (degrees) from an origin.
+	auto At = [](const FVector& Origin, double BearingDeg, double Distance = 100.0)
+	{
+		const double Rad = FMath::DegreesToRadians(BearingDeg);
+		return Origin + FVector(FMath::Cos(Rad) * Distance, FMath::Sin(Rad) * Distance, 0.0);
+	};
+
+	const FVector Origin(1000.0, -500.0, 90.0);
+
+	TestEqual(TEXT("The half-angle is 60 degrees"), Valhalla::FacingHalfAngleDegrees, 60.0);
+
+	// Facing +X (yaw 0).
+	TestTrue(TEXT("Dead ahead is facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 0.0)));
+	TestTrue(TEXT("59 degrees off to the left is facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 59.0)));
+	TestTrue(TEXT("59 degrees off to the right is facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, -59.0)));
+	TestFalse(TEXT("61 degrees off is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 61.0)));
+	TestFalse(TEXT("61 degrees off the other way is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, -61.0)));
+	TestFalse(TEXT("Directly behind is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 180.0)));
+	TestFalse(TEXT("Square to the side is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 90.0)));
+
+	// A target on top of the actor has no direction to be wrong about.
+	TestTrue(TEXT("A target on top of the actor counts as faced"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, Origin));
+	TestTrue(TEXT("A target a fraction of a centimetre away counts as faced"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 123.f, Origin + FVector(-0.4, 0.3, 0.0)));
+
+	// 2D only: height difference does not change the answer.
+	TestTrue(TEXT("A target far above, dead ahead, is facing (2D)"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 0.0) + FVector(0.0, 0.0, 5000.0)));
+
+	// The wrap at +-180: facing yaw 170, target at bearing -170 is 20 degrees off.
+	TestTrue(TEXT("Across the +-180 wrap, 20 degrees off is facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 170.f, At(Origin, -170.0)));
+	TestFalse(TEXT("Across the wrap, behind is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 170.f, At(Origin, -10.0)));
+
+	// Non-normalised yaws, as an actor rotation can carry.
+	TestTrue(TEXT("A yaw of 360+45 faces a target at 45"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 405.f, At(Origin, 45.0)));
+
+	// A custom half-angle is honoured.
+	TestFalse(TEXT("30 degrees off with a 20-degree half-angle is not facing"),
+		UValhallaCombatLibrary::IsFacingPoint(Origin, 0.f, At(Origin, 30.0), 20.f));
+
+	// Null actors are never facing.
+	TestFalse(TEXT("A null target is not faced"), UValhallaCombatLibrary::IsFacing(nullptr, nullptr));
+
+	TestEqual(TEXT("The message is Kevin's wording"),
+		FString(UValhallaCombatLibrary::NotFacingText()), FString(TEXT("You must be facing your target")));
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -202,6 +202,15 @@ struct VALHALLAGAME_API FValhallaCombatEvent
 	/** Free text. Only SkillFailed uses it, and only to name the reason. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Combat")
 	FString Text;
+
+	/**
+	 * SkillFailed only: a machine-readable reason, when the HUD presents one
+	 * differently from the rest. Today only `notFacing` (the combat log prints
+	 * Text as is and a "Not facing" floater rises over the player). None for
+	 * every other failure, which the log prints as "Can't do that: <Text>".
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Combat")
+	FName Reason;
 };
 
 /**

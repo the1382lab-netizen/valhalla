@@ -171,10 +171,19 @@ public:
 
 protected:
 	/**
-	 * SkillSystem.ts:684 `validateCast`.
-	 * @return An empty string when the cast may proceed, otherwise the 1.0 reason text.
+	 * SkillSystem.ts:684 `validateCast`, plus the 2.0 facing rule: a
+	 * `singleEnemy` skill, or a `singleAlly` one aimed at someone else, needs
+	 * the target in the caster's front arc (UValhallaCombatLibrary::IsFacing).
+	 * Self, aoeSelf, aoeGround and cone skills are exempt (a cone is measured
+	 * off the caster's yaw by definition).
+	 * @param OutReasonCode  Set to the event reason code (`notFacing`) when there is one.
+	 * @return An empty string when the cast may proceed, otherwise the reason text.
 	 */
-	FString ValidateCast(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now) const;
+	FString ValidateCast(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now,
+		FName* OutReasonCode = nullptr) const;
+
+	/** True when a skill of this kind, at this target, must pass the facing rule. */
+	bool RequiresFacing(const FValhallaSkillTemplate& Skill, const AActor* Target) const;
 
 	/** SkillSystem.ts:832 — begin a cast with a cast time. */
 	void StartTimedCast(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now);
@@ -200,8 +209,12 @@ protected:
 	 */
 	bool AccumulateMovementInterrupt(float FixedDeltaSeconds);
 
-	/** Tell the owning client why their cast did not happen. */
-	void SendSkillFailed(const FString& Reason) const;
+	/**
+	 * Tell the owning client why their cast did not happen.
+	 * @param ReasonCode  FValhallaCombatEvent::Reason — `notFacing`, or None.
+	 * @param SkillId     The skill that failed, when known.
+	 */
+	void SendSkillFailed(const FString& Reason, FName ReasonCode = NAME_None, FName SkillId = NAME_None) const;
 
 	/** Shared body of both start RPCs. SkillId must already be validated. */
 	void StartAutoAttackInternal(AActor* Target, FName SkillId);
@@ -265,4 +278,12 @@ private:
 
 	/** Server time of the next allowed swing. PlayerState.ts:98 `nextAutoAttackAt`. */
 	double NextAutoAttackAt = 0.0;
+
+	/**
+	 * Server time the auto-attack last told the player "You must be facing your
+	 * target", for the once-per-NotFacingMessageIntervalSeconds throttle.
+	 * Reset by a swing that lands, so the next time the condition starts the
+	 * player hears about it at once.
+	 */
+	double LastNotFacingMessageAt = -1.0e9;
 };

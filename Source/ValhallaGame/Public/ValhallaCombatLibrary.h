@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
+#include "ValhallaConstants.h"
 #include "ValhallaGameTypes.h"
 #include "ValhallaTypes.h"
 #include "ValhallaCombatLibrary.generated.h"
@@ -126,6 +127,30 @@ public:
 	/** The display name for a log line or a nameplate. */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Combat")
 	static FString GetDisplayName(const AActor* Actor);
+
+	// ── Facing (controls rework) ────────────────────────────────────────
+
+	/**
+	 * True when Target is inside Actor's front arc: the 2D angle between the
+	 * actor's yaw and the direction to the target is at most HalfAngleDeg
+	 * (inclusive). Server rule for a player's swings and targeted casts; the
+	 * server never turns a player to make it true.
+	 *
+	 * A target on top of the actor (under 1 cm apart in 2D) counts as faced —
+	 * there is no direction to be wrong about. Null actors are not facing.
+	 */
+	static bool IsFacing(const AActor* Actor, const AActor* Target,
+		float HalfAngleDeg = static_cast<float>(Valhalla::FacingHalfAngleDegrees));
+
+	/** The pure half of IsFacing: no actors, tested directly. */
+	static bool IsFacingPoint(const FVector& ActorLocation, float ActorYawDegrees, const FVector& TargetLocation,
+		float HalfAngleDeg = static_cast<float>(Valhalla::FacingHalfAngleDegrees));
+
+	/** The skillFailed text for a swing or cast at a target the player is not facing. */
+	static const TCHAR* NotFacingText() { return TEXT("You must be facing your target"); }
+
+	/** The skillFailed reason code carried on the event (FValhallaCombatEvent::Reason). */
+	static FName NotFacingReason() { return FName(TEXT("notFacing")); }
 
 	/** utils.ts:10 `getStatValue` — read a named StatBlock field off a resolved block. */
 	static double GetStatValue(const FValhallaResolvedStats& Stats, FName StatName);

@@ -33,7 +33,8 @@
 
 AValhallaPlayerController::AValhallaPlayerController()
 {
-	// 1.0 is a point-and-click RPG: the cursor is the aim reticle and never hides.
+	// The cursor stays visible for click-to-target, loot and aoeGround skills
+	// (hidden only during the right-mouse drag). It does not aim the character.
 	bShowMouseCursor = true;
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
@@ -267,11 +268,14 @@ void AValhallaPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
-	// While orbiting the cursor is hidden and parked, so it is not aiming at
-	// anything; keep the last aim rather than aiming at wherever it was parked.
-	if (IsLocalController() && !bCameraOrbiting)
+	// The mouse does not aim (controls rework): nothing here reads the cursor.
+	// A camera-drag turn the 20 Hz throttle held back goes out once it may.
+	if (IsLocalController())
 	{
-		UpdateAimFromCursor();
+		if (AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn()))
+		{
+			ValhallaPawn->FlushFacingYaw(false);
+		}
 	}
 
 	// The loot window follows the bag: it closes when the bag is emptied (and
@@ -293,19 +297,30 @@ void AValhallaPlayerController::PlayerTick(float DeltaTime)
 	}
 }
 
-void AValhallaPlayerController::UpdateAimFromCursor()
+bool AValhallaPlayerController::SampleCursorGroundPoint()
 {
-	AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn());
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	if (!GetMousePosition(MouseX, MouseY))
+	{
+		return false;
+	}
+	return SampleGroundPointAtScreen(FVector2D(MouseX, MouseY));
+}
+
+bool AValhallaPlayerController::SampleGroundPointAtScreen(const FVector2D& ScreenPosition)
+{
+	const AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn());
 	if (!ValhallaPawn)
 	{
-		return;
+		return false;
 	}
 
 	FVector RayOrigin;
 	FVector RayDirection;
-	if (!DeprojectMousePositionToWorld(RayOrigin, RayDirection))
+	if (!DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y, RayOrigin, RayDirection))
 	{
-		return;
+		return false;
 	}
 
 	// The whole game is played on one plane, so intersect the cursor ray with
@@ -317,26 +332,18 @@ void AValhallaPlayerController::UpdateAimFromCursor()
 
 	if (FMath::IsNearlyZero(RayDirection.Z))
 	{
-		return;
+		return false;
 	}
 
 	const double Distance = (GroundZ - RayOrigin.Z) / RayDirection.Z;
 	if (Distance <= 0.0)
 	{
-		// Cursor is above the horizon; keep the previous aim point.
-		return;
+		// Cursor is above the horizon; keep the previous point.
+		return false;
 	}
 
 	AimWorldPoint = RayOrigin + RayDirection * Distance;
-
-	const FVector ToAim(AimWorldPoint.X - PawnLocation.X, AimWorldPoint.Y - PawnLocation.Y, 0.0);
-	if (ToAim.SizeSquared2D() < 1.0)
-	{
-		return;
-	}
-
-	AimYaw = static_cast<float>(FMath::RadiansToDegrees(FMath::Atan2(ToAim.Y, ToAim.X)));
-	ValhallaPawn->UpdateAimYaw(AimYaw);
+	return true;
 }
 
 void AValhallaPlayerController::HandleMove(const FInputActionValue& Value)
@@ -348,14 +355,13 @@ void AValhallaPlayerController::HandleMove(const FInputActionValue& Value)
 		return;
 	}
 
-	APawn* ControlledPawn = GetPawn();
-	if (!ControlledPawn)
-	{
-		return;
-	}
+	ApplyMoveInput(Value.Get<FVector2D>());
+}
 
-	const FVector2D Axis = Value.Get<FVector2D>();
-	if (Axis.IsNearlyZero())
+void AValhallaPlayerController::ApplyMoveInput(const FVector2D& Axis)
+{
+	APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn || Axis.IsNearlyZero())
 	{
 		return;
 	}
@@ -442,6 +448,36 @@ void AValhallaPlayerController::EndCameraOrbit()
 	bCameraOrbiting = false;
 	bShowMouseCursor = true;
 	SetMouseLocation(FMath::RoundToInt(OrbitCursorRestore.X), FMath::RoundToInt(OrbitCursorRestore.Y));
+
+	FinishCameraOrbitTurn();
+}
+
+void AValhallaPlayerController::OrbitCameraBy(float DeltaYawDegrees, float DeltaPitchDegrees)
+{
+	AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn());
+	if (!ValhallaPawn)
+	{
+		return;
+	}
+
+	ValhallaPawn->AddCameraOrbit(DeltaYawDegrees, DeltaPitchDegrees);
+
+	// The body turns with the camera: it faces the way the camera looks. Yaw
+	// only — pitch is the camera's alone. A no-op while walking, when
+	// orient-to-movement owns the yaw (the walk bends with the new WASD basis).
+	ValhallaPawn->SetFacingYawFromCamera(ValhallaPawn->GetCameraWorldYaw());
+}
+
+void AValhallaPlayerController::FinishCameraOrbitTurn()
+{
+	// The drag's last few degrees may sit inside the deadzone or the throttle
+	// window; the server's yaw is what the facing check reads, so send it now.
+	if (AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn()))
+	{
+		ValhallaPawn->FlushFacingYaw(true);
+		UE_LOG(LogValhallaGame, Log, TEXT("cameraOrbit end: camera yaw %.1f, facing yaw %.1f"),
+			ValhallaPawn->GetCameraWorldYaw(), ValhallaPawn->GetFacingYaw());
+	}
 }
 
 void AValhallaPlayerController::HandleCameraLook(const FInputActionValue& Value)
@@ -451,16 +487,10 @@ void AValhallaPlayerController::HandleCameraLook(const FInputActionValue& Value)
 		return;
 	}
 
-	AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn());
-	if (!ValhallaPawn)
-	{
-		return;
-	}
-
 	// Mouse right turns the view right; mouse up raises the camera's gaze
 	// towards the horizon (MMO convention).
 	const FVector2D Delta = Value.Get<FVector2D>();
-	ValhallaPawn->AddCameraOrbit(Delta.X * CameraOrbitDegreesPerUnit, Delta.Y * CameraOrbitDegreesPerUnit);
+	OrbitCameraBy(Delta.X * CameraOrbitDegreesPerUnit, Delta.Y * CameraOrbitDegreesPerUnit);
 }
 
 void AValhallaPlayerController::HandleCameraZoom(const FInputActionValue& Value)
@@ -530,7 +560,7 @@ AActor* AValhallaPlayerController::TraceForTargetUnderCursor() const
 {
 	// Visibility, not a ground-plane intersection: this is asking "what is under
 	// the cursor", which is exactly what a visibility trace answers. The aim
-	// *point* still comes from the plane maths in UpdateAimFromCursor, because a
+	// *point* still comes from the plane maths in SampleCursorGroundPoint, because a
 	// skill aimed past a tree must land past the tree.
 	FHitResult Hit;
 	if (!GetHitResultUnderCursor(ECC_Visibility, /*bTraceComplex=*/false, Hit))
@@ -1304,10 +1334,49 @@ void AValhallaPlayerController::OnActionBarPressed_Implementation(int32 Slot)
 		return;
 	}
 
-	// The server casts what *it* has in the slot; the client only says which
-	// slot was pressed. The aim point goes along for ground-targeted skills,
-	// and the current selection for single-target ones.
-	Skills->CastFromActionBar(Slot, GetCurrentTarget(), AimWorldPoint);
+	// The client says which slot was pressed and what it has selected; the
+	// server validates the cast. The cursor is read here and only here — once,
+	// at the press, and only for a ground-targeted skill, which lands on the
+	// point under it. Every other skill is sent the character's own position
+	// (self and aoeSelf effects are drawn there when there is no target).
+	FVector AimPoint = GetPawn() ? GetPawn()->GetActorLocation() : FVector::ZeroVector;
+
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+	const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(Skills->GetSlotSkillId(Slot)) : nullptr;
+	if (Skill && Skill->TargetType == EValhallaSkillTargetType::AoeGround)
+	{
+		const bool bSampled = AimScreenOverride.IsSet()
+			? SampleGroundPointAtScreen(AimScreenOverride.GetValue())
+			: SampleCursorGroundPoint();
+		if (bSampled)
+		{
+			AimPoint = AimWorldPoint;
+			UE_LOG(LogValhallaGame, Log, TEXT("aoeGround '%s' aimed at cursor point %s"),
+				*Skill->Id.ToString(), *AimPoint.ToCompactString());
+		}
+		else
+		{
+			// No cursor over the world (it is outside the viewport, or above
+			// the horizon): the selected target, as a player would have aimed,
+			// else the caster's own position.
+			if (const AActor* Target = GetCurrentTarget())
+			{
+				AimPoint = Target->GetActorLocation();
+			}
+			UE_LOG(LogValhallaGame, Log, TEXT("aoeGround '%s': no cursor point, aimed at %s"),
+				*Skill->Id.ToString(), *AimPoint.ToCompactString());
+		}
+	}
+
+	Skills->CastFromActionBar(Slot, GetCurrentTarget(), AimPoint);
+}
+
+void AValhallaPlayerController::PressActionBarAimedAt(int32 Slot, const FVector2D& ScreenPosition)
+{
+	AimScreenOverride = ScreenPosition;
+	OnActionBarPressed(Slot);
+	AimScreenOverride.Reset();
 }
 
 AValhallaLootBag* AValhallaPlayerController::TraceForLootBagUnderCursor() const
@@ -1917,9 +1986,8 @@ namespace
 					return;
 				}
 
-				// The actor's forward, captured once: the character keeps facing
-				// the cursor while it strafes, exactly as 1.0's aimAngle did, so
-				// re-reading the forward each tick would make it curve.
+				// The actor's forward, captured once. The character now turns to
+				// face its walk anyway, so this walks straight on either way.
 				const FVector Direction = Pawn->GetActorForwardVector();
 				const TWeakObjectPtr<APawn> WeakPawn(Pawn);
 				const TWeakObjectPtr<UWorld> WeakWorld(World);
@@ -1947,6 +2015,59 @@ namespace
 				UE_LOG(LogValhallaVisual, Log, TEXT("valhalla.DebugWalk: %s walking %s for %.1f s"),
 					*Pawn->GetName(), *Direction.ToCompactString(), Seconds);
 			});
+		}));
+
+	/**
+	 * `valhalla.DebugFacing` — log every player's facing yaw in every PIE world.
+	 *
+	 * The controls-rework gate's instrument: the facing check reads the server's
+	 * yaw, what the player sees is their own client's, and the two must agree.
+	 * One line per character per world (server first), with the camera yaw
+	 * where the character is locally controlled, its speed, and whether
+	 * orient-to-movement currently owns the yaw.
+	 */
+	FAutoConsoleCommandWithWorldAndArgs GDebugFacingCommand(
+		TEXT("valhalla.DebugFacing"),
+		TEXT("Dev only. valhalla.DebugFacing — log each player's facing yaw (and camera yaw) in every PIE world."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& /*Args*/, UWorld* InWorld)
+		{
+			TArray<UWorld*> Worlds;
+#if WITH_EDITOR
+			if (GEngine)
+			{
+				for (const FWorldContext& Context : GEngine->GetWorldContexts())
+				{
+					if (Context.WorldType == EWorldType::PIE && Context.World())
+					{
+						// Server first, so a line pair reads "server, client".
+						if (Context.World()->GetNetMode() == NM_Client) { Worlds.Add(Context.World()); }
+						else { Worlds.Insert(Context.World(), 0); }
+					}
+				}
+			}
+#endif
+			if (Worlds.Num() == 0 && InWorld)
+			{
+				Worlds.Add(InWorld);
+			}
+
+			for (UWorld* World : Worlds)
+			{
+				const TCHAR* Mode = World->GetNetMode() == NM_Client ? TEXT("client") : TEXT("server");
+				for (TActorIterator<AValhallaCharacter> It(World); It; ++It)
+				{
+					const AValhallaCharacter* Body = *It;
+					const AValhallaPlayerState* BodyPS = Body->GetValhallaPlayerState();
+					const FString Camera = Body->IsLocallyControlled()
+						? FString::Printf(TEXT(" camera %.1f"), Body->GetCameraWorldYaw()) : FString();
+					UE_LOG(LogValhallaGame, Log, TEXT("facing [%s %s] %s (%s) yaw %.1f%s speed %.0f%s"),
+						Mode, *World->GetName(),
+						BodyPS ? *BodyPS->CharacterName : *Body->GetName(),
+						BodyPS ? *BodyPS->ClassId.ToString() : TEXT("?"),
+						Body->GetFacingYaw(), *Camera, Body->GetVelocity().Size2D(),
+						Body->IsWalkingForFacing() ? TEXT(" (walking)") : TEXT(""));
+				}
+			}
 		}));
 
 	/**

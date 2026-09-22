@@ -185,8 +185,8 @@ void AValhallaHUD::DrawDebugBlock()
 		ValhallaPawn ? NetRoleToString(ValhallaPawn->GetRemoteRole()) : TEXT("-"),
 		ValhallaPS->GetPingInMilliseconds()), ColourDim, CursorY);
 
-	DrawLine(FString::Printf(TEXT("Aim yaw %.1f    ServerTime %.1f s"),
-		ValhallaPawn ? ValhallaPawn->GetAimYaw() : 0.f,
+	DrawLine(FString::Printf(TEXT("Facing %.1f    ServerTime %.1f s"),
+		ValhallaPawn ? ValhallaPawn->GetFacingYaw() : 0.f,
 		ValhallaGS ? ValhallaGS->GetServerTime() : 0.0), ColourDim, CursorY);
 }
 
@@ -686,6 +686,16 @@ bool AValhallaHUD::DescribeEvent(const FValhallaCombatEvent& Event, FString& Out
 
 	case EValhallaCombatEventKind::Blocked:
 		OutText = TEXT("block");
+		OutColour = ColourMiss;
+		return true;
+
+	case EValhallaCombatEventKind::SkillFailed:
+		// Controls rework: the facing failure floats, like a miss.
+		if (Event.Reason != UValhallaCombatLibrary::NotFacingReason())
+		{
+			return false;
+		}
+		OutText = TEXT("Not facing");
 		OutColour = ColourMiss;
 		return true;
 

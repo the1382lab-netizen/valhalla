@@ -251,7 +251,24 @@ float UValhallaSkillComponent::GetCastProgress() const
 //  Validation — SkillSystem.ts:684
 // ─────────────────────────────────────────────────────────────────────────────
 
-FString UValhallaSkillComponent::ValidateCast(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now) const
+bool UValhallaSkillComponent::RequiresFacing(const FValhallaSkillTemplate& Skill, const AActor* Target) const
+{
+	// Only the kinds aimed at one other actor. A singleAlly heal on yourself
+	// needs no facing; self / aoeSelf / aoeGround are not aimed at an actor;
+	// a cone already hits only what is in front (its arc is off the yaw).
+	switch (Skill.TargetType)
+	{
+	case EValhallaSkillTargetType::SingleEnemy:
+		return Target != nullptr;
+	case EValhallaSkillTargetType::SingleAlly:
+		return Target != nullptr && Target != GetOwner();
+	default:
+		return false;
+	}
+}
+
+FString UValhallaSkillComponent::ValidateCast(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now,
+	FName* OutReasonCode) const
 {
 	const AValhallaCharacter* Character = GetValhallaOwner();
 	const AValhallaPlayerState* PlayerState = GetValhallaPlayerState();
@@ -376,6 +393,19 @@ FString UValhallaSkillComponent::ValidateCast(const FValhallaSkillTemplate& Skil
 		}
 	}
 
+	// ── Facing (controls rework) ─────────────────────────────────────────
+	// Last, so "Out of range" and the rest win: they are the more useful news.
+	// Refused before anything is spent — no cooldown, no resource, no cast bar
+	// — and the server does not turn the caster to make it pass.
+	if (RequiresFacing(Skill, Target) && !UValhallaCombatLibrary::IsFacing(Character, Target))
+	{
+		if (OutReasonCode)
+		{
+			*OutReasonCode = UValhallaCombatLibrary::NotFacingReason();
+		}
+		return UValhallaCombatLibrary::NotFacingText();
+	}
+
 	return FString();
 }
 
@@ -395,7 +425,7 @@ FValhallaSkillContext UValhallaSkillComponent::MakeContext(const FValhallaSkillT
 	return Context;
 }
 
-void UValhallaSkillComponent::SendSkillFailed(const FString& Reason) const
+void UValhallaSkillComponent::SendSkillFailed(const FString& Reason, FName ReasonCode, FName SkillId) const
 {
 	const AValhallaCharacter* Character = GetValhallaOwner();
 	AValhallaPlayerController* Controller = Character ? Cast<AValhallaPlayerController>(Character->GetController()) : nullptr;
@@ -407,7 +437,18 @@ void UValhallaSkillComponent::SendSkillFailed(const FString& Reason) const
 	FValhallaCombatEvent Event;
 	Event.Kind = EValhallaCombatEventKind::SkillFailed;
 	Event.Target = GetOwner();
+	Event.Instigator = GetOwner();
+	Event.SkillId = SkillId;
 	Event.Text = Reason;
+	Event.Reason = ReasonCode;
+	Event.Location = GetOwner() ? GetOwner()->GetActorLocation() : FVector::ZeroVector;
+
+	if (!ReasonCode.IsNone())
+	{
+		UE_LOG(LogValhallaGame, Log, TEXT("%s: skillFailed [%s] %s%s"),
+			*UValhallaCombatLibrary::GetDisplayName(GetOwner()), *ReasonCode.ToString(), *Reason,
+			SkillId.IsNone() ? TEXT("") : *FString::Printf(TEXT(" ('%s')"), *SkillId.ToString()));
+	}
 
 	// castFailed is the one event 1.0 sent only to the caster
 	// (GameRoom.ts:992). Broadcasting it would tell every client in the zone
@@ -427,12 +468,13 @@ void UValhallaSkillComponent::ServerCastSkill_Implementation(FName SkillId, AAct
 
 	const double Now = UValhallaCombatLibrary::GetServerTime(this);
 
-	const FString FailReason = ValidateCast(*Skill, Target, TargetLocation, Now);
+	FName FailCode;
+	const FString FailReason = ValidateCast(*Skill, Target, TargetLocation, Now, &FailCode);
 	if (!FailReason.IsEmpty())
 	{
 		UE_LOG(LogValhallaGame, Verbose, TEXT("%s: cast of '%s' refused — %s"),
 			*UValhallaCombatLibrary::GetDisplayName(GetOwner()), *SkillId.ToString(), *FailReason);
-		SendSkillFailed(FailReason);
+		SendSkillFailed(FailReason, FailCode, SkillId);
 		return;
 	}
 
@@ -852,11 +894,21 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 		return;
 	}
 
-	// SkillSystem.ts:510 — auto-face the target. In 2.0 the yaw is the facing.
-	if (!ToTarget.IsNearlyZero())
+	// Facing (controls rework). 1.0 auto-faced the target here
+	// (SkillSystem.ts:510); 2.0 never turns a player from the server. A swing
+	// at something the player is not facing is skipped — the loop stays on,
+	// and the timer is not advanced, so the swing lands the moment they turn
+	// to face it — and the player is told, at most once per 2 s.
+	if (!UValhallaCombatLibrary::IsFacing(Character, Target))
 	{
-		Character->SetActorRotation(FRotator(0.f, ToTarget.Rotation().Yaw, 0.f));
+		if (Now - LastNotFacingMessageAt >= Valhalla::NotFacingMessageIntervalSeconds)
+		{
+			LastNotFacingMessageAt = Now;
+			SendSkillFailed(UValhallaCombatLibrary::NotFacingText(), UValhallaCombatLibrary::NotFacingReason(), AutoAttackSkillId);
+		}
+		return;
 	}
+	LastNotFacingMessageAt = -1.0e9;
 
 	const FValhallaResolvedStats& Stats = PlayerState->GetStats();
 
@@ -1089,6 +1141,15 @@ void UValhallaSkillComponent::ServerFixedTick(float FixedDeltaSeconds, double No
 						SendSkillFailed(TEXT("Invalid target"));
 						return;
 					}
+				}
+
+				// Facing, again at fire time: the caster may have dragged the
+				// camera round mid-cast, or the target walked behind them. The
+				// cast fails before CompleteCast, so nothing is spent.
+				if (RequiresFacing(*Skill, Target) && !UValhallaCombatLibrary::IsFacing(GetOwner(), Target))
+				{
+					SendSkillFailed(UValhallaCombatLibrary::NotFacingText(), UValhallaCombatLibrary::NotFacingReason(), FinishedId);
+					return;
 				}
 
 				CompleteCast(*Skill, Target, Location, Now);

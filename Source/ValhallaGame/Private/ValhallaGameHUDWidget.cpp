@@ -32,6 +32,7 @@
 #include "ImageUtils.h"
 #include "Misc/Paths.h"
 #include "Styling/CoreStyle.h"
+#include "TimerManager.h"
 #include "UObject/UObjectIterator.h"
 #include "ValhallaCharacter.h"
 #include "ValhallaChatCommands.h"
@@ -255,10 +256,13 @@ namespace
 	 *
 	 *   inventory | skills | chat [text] | say <line> | loot | close
 	 *   arm <skillId> | filter <key> | tooltip <inventoryIndex> | reload | press <slot>
+	 *   orbit <degrees>  (the right-mouse drag: camera and, standing, the body)
+	 *   press <slot> <x> <y>  (with the aoeGround cursor read at viewport pixel x, y)
+	 *   walk <w|a|s|d> <seconds>  (hold one movement key)
 	 */
 	FAutoConsoleCommandWithWorldAndArgs GUICommand(
 		TEXT("valhalla.UI"),
-		TEXT("Dev only. valhalla.UI [@class] <inventory|skills|chat [text]|say <line>|loot|close|arm <skill>|filter <key>|tooltip <i>|reload|press <slot>> — drive a client's HUD."),
+		TEXT("Dev only. valhalla.UI [@class] <inventory|skills|chat [text]|say <line>|loot|close|arm <skill>|filter <key>|tooltip <i>|reload|press <slot> [x y]|orbit <deg>|walk <wasd> <s>> — drive a client's HUD."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& InArgs, UWorld* World)
 		{
 			TArray<FString> Args = InArgs;
@@ -297,9 +301,91 @@ namespace
 					// An action bar slot, exactly as its key or a click on the
 					// cell: OnActionBarPressed -> CastFromActionBar, so an auto
 					// attack goes through ServerStartAutoAttackWith (Phase 9).
+					// `press <slot> <x> <y>` also puts the aoeGround cursor read
+					// at viewport pixel (x, y): typing into the editor console
+					// takes the real cursor out of the PIE viewport.
 					if (AValhallaPlayerController* ValhallaPC = Cast<AValhallaPlayerController>(Hud.GetOwningPlayer()))
 					{
-						ValhallaPC->OnActionBarPressed(FMath::Clamp(FCString::Atoi(*Rest), 1, ValhallaActionBarSlots));
+						const int32 Slot = FMath::Clamp(Args.IsValidIndex(1) ? FCString::Atoi(*Args[1]) : 0, 1, ValhallaActionBarSlots);
+						if (Args.Num() >= 4)
+						{
+							ValhallaPC->PressActionBarAimedAt(Slot, FVector2D(FCString::Atof(*Args[2]), FCString::Atof(*Args[3])));
+						}
+						else
+						{
+							ValhallaPC->OnActionBarPressed(Slot);
+						}
+					}
+				}
+				else if (Verb == TEXT("walk"))
+				{
+					// Hold one WASD key for N seconds: HandleMove's body every
+					// frame on the owning client (predicted, then sent to the
+					// server as ordinary moves), exactly as a held key.
+					AValhallaPlayerController* ValhallaPC = Cast<AValhallaPlayerController>(Hud.GetOwningPlayer());
+					UWorld* HudWorld = Hud.GetWorld();
+					const FString Key = Args.IsValidIndex(1) ? Args[1].ToLower() : FString();
+					const float Seconds = Args.IsValidIndex(2) ? FCString::Atof(*Args[2]) : 1.f;
+					FVector2D Axis = FVector2D::ZeroVector;
+					if (Key == TEXT("w")) { Axis = FVector2D(0.0, 1.0); }
+					else if (Key == TEXT("s")) { Axis = FVector2D(0.0, -1.0); }
+					else if (Key == TEXT("a")) { Axis = FVector2D(-1.0, 0.0); }
+					else if (Key == TEXT("d")) { Axis = FVector2D(1.0, 0.0); }
+					if (!ValhallaPC || !HudWorld || Axis.IsZero() || Seconds <= 0.f)
+					{
+						UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI walk needs w|a|s|d and a positive number of seconds."));
+					}
+					else
+					{
+						const TWeakObjectPtr<AValhallaPlayerController> WeakPC(ValhallaPC);
+						TSharedRef<FTimerHandle> Hold = MakeShared<FTimerHandle>();
+						FTimerManagerTimerParameters Params;
+						Params.bLoop = true;
+						Params.bMaxOncePerFrame = true;
+						HudWorld->GetTimerManager().SetTimer(*Hold, FTimerDelegate::CreateLambda([WeakPC, Axis]()
+						{
+							if (AValhallaPlayerController* PC = WeakPC.Get()) { PC->ApplyMoveInput(Axis); }
+						}), 0.001f, Params);
+
+						auto LogFacing = [WeakPC, Key](const TCHAR* When)
+						{
+							const AValhallaPlayerController* PC = WeakPC.Get();
+							const AValhallaCharacter* Body = PC ? Cast<AValhallaCharacter>(PC->GetPawn()) : nullptr;
+							if (Body)
+							{
+								UE_LOG(LogValhallaHUD, Log, TEXT("walk %s %s: facing yaw %.1f camera yaw %.1f speed %.0f"),
+									*Key, When, Body->GetFacingYaw(), Body->GetCameraWorldYaw(), Body->GetVelocity().Size2D());
+							}
+						};
+						LogFacing(TEXT("start"));
+
+						FTimerHandle Mid;
+						HudWorld->GetTimerManager().SetTimer(Mid, FTimerDelegate::CreateLambda([LogFacing]() { LogFacing(TEXT("mid")); }),
+							FMath::Max(0.05f, Seconds * 0.5f), false);
+
+						const TWeakObjectPtr<UWorld> WeakWorld(HudWorld);
+						FTimerHandle Stop;
+						HudWorld->GetTimerManager().SetTimer(Stop, FTimerDelegate::CreateLambda([WeakWorld, Hold, LogFacing]()
+						{
+							if (UWorld* Alive = WeakWorld.Get()) { Alive->GetTimerManager().ClearTimer(*Hold); }
+							LogFacing(TEXT("end"));
+						}), Seconds, false);
+					}
+				}
+				else if (Verb == TEXT("orbit"))
+				{
+					// The right-mouse drag, in 5-degree steps through the same
+					// OrbitCameraBy the mouse delta drives, then the drag's end.
+					if (AValhallaPlayerController* ValhallaPC = Cast<AValhallaPlayerController>(Hud.GetOwningPlayer()))
+					{
+						float Remaining = FCString::Atof(*Rest);
+						while (!FMath::IsNearlyZero(Remaining))
+						{
+							const float Step = FMath::Clamp(Remaining, -5.f, 5.f);
+							ValhallaPC->OrbitCameraBy(Step, 0.f);
+							Remaining -= Step;
+						}
+						ValhallaPC->FinishCameraOrbitTurn();
 					}
 				}
 				else if (Verb == TEXT("loot"))
@@ -2257,7 +2343,15 @@ void UValhallaGameHUDWidget::HandleCombatEvent(const FValhallaCombatEvent& Event
 		if (bByMe) { PushCombatLog(FString::Printf(TEXT("%s interrupted"), *SkillName(Event.SkillId)), Srgb(0xff, 0x88, 0x44), TEXT("casts")); }
 		break;
 	case EValhallaCombatEventKind::SkillFailed:
-		PushCombatLog(FString::Printf(TEXT("Can't do that: %s"), *Event.Text), Srgb(0xff, 0x88, 0x44), TEXT("casts"));
+		if (Event.Reason == UValhallaCombatLibrary::NotFacingReason())
+		{
+			// Controls rework: the server's own sentence, word for word.
+			PushCombatLog(Event.Text, Srgb(0xff, 0x88, 0x44), TEXT("casts"));
+		}
+		else
+		{
+			PushCombatLog(FString::Printf(TEXT("Can't do that: %s"), *Event.Text), Srgb(0xff, 0x88, 0x44), TEXT("casts"));
+		}
 		break;
 	case EValhallaCombatEventKind::BuffApplied:
 		if (bOnMe)      { PushCombatLog(FString::Printf(TEXT("+%s applied (%.0fs)"), *SkillName(Event.SkillId), Event.Amount / 1000.f), Srgb(0x88, 0xcc, 0xff), TEXT("buffs")); }
@@ -2365,6 +2459,14 @@ void UValhallaGameHUDWidget::SpawnFloater(const FValhallaCombatEvent& Event)
 		break;
 	case EValhallaCombatEventKind::Missed: Text = TEXT("miss");  Colour = Srgb(0xb3, 0xb3, 0xc7); break;
 	case EValhallaCombatEventKind::Dodged: Text = TEXT("dodge"); Colour = Srgb(0xb3, 0xb3, 0xc7); break;
+	case EValhallaCombatEventKind::SkillFailed:
+		// Only the facing failure floats, over the player, like miss / dodge.
+		// Every other failure is a log line alone.
+		if (Event.Reason != UValhallaCombatLibrary::NotFacingReason()) { return; }
+		Text = TEXT("Not facing");
+		Colour = Srgb(0xff, 0x88, 0x44);
+		Anchor = GetValhallaPawn();
+		break;
 	case EValhallaCombatEventKind::XpGained:
 		Text = FString::Printf(TEXT("+%.0f xp"), Event.Amount);
 		Colour = Srgb(0xd9, 0xc7, 0x73);

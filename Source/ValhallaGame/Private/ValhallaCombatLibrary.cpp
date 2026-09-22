@@ -72,6 +72,36 @@ bool UValhallaCombatLibrary::IsAliveTarget(const AActor* Actor)
 	return false;
 }
 
+bool UValhallaCombatLibrary::IsFacingPoint(const FVector& ActorLocation, float ActorYawDegrees, const FVector& TargetLocation, float HalfAngleDeg)
+{
+	const FVector2D ToTarget(TargetLocation.X - ActorLocation.X, TargetLocation.Y - ActorLocation.Y);
+
+	// Standing on top of each other: there is no direction to face, and
+	// refusing would be a failure the player can do nothing about.
+	if (ToTarget.SizeSquared() < 1.0)
+	{
+		return true;
+	}
+
+	const double AngleToTarget = FMath::RadiansToDegrees(FMath::Atan2(ToTarget.Y, ToTarget.X));
+	const double Off = FMath::Abs(FRotator::NormalizeAxis(static_cast<float>(AngleToTarget - ActorYawDegrees)));
+	return Off <= HalfAngleDeg;
+}
+
+bool UValhallaCombatLibrary::IsFacing(const AActor* Actor, const AActor* Target, float HalfAngleDeg)
+{
+	if (!Actor || !Target)
+	{
+		return false;
+	}
+	if (Actor == Target)
+	{
+		return true;
+	}
+	return IsFacingPoint(Actor->GetActorLocation(), static_cast<float>(Actor->GetActorRotation().Yaw),
+		Target->GetActorLocation(), HalfAngleDeg);
+}
+
 bool UValhallaCombatLibrary::AreHostile(const AActor* A, const AActor* B)
 {
 	if (!A || !B || A == B)

@@ -121,4 +121,17 @@ namespace Valhalla
 	// ── Phase 1a defaults (no 1.0 equivalent) ───────────────────────────
 	/** Default FValhallaClassTemplate::VisionRange when classes.json omits it. */
 	inline constexpr double DefaultVisionRange = 1200.0;
+
+	// ── Controls rework: facing (2026-09-22, no 1.0 equivalent) ─────────
+	/**
+	 * Half-angle of the "facing your target" cone, degrees either side of the
+	 * actor's forward, 2D. A player's auto-attack swing and targeted casts need
+	 * the target inside it (UValhallaCombatLibrary::IsFacing). 60 is a 120
+	 * degree front arc: generous enough that nobody has to aim with the mouse,
+	 * tight enough that a target at your side or behind you is not "in front".
+	 */
+	inline constexpr double FacingHalfAngleDegrees = 60.0;
+
+	/** Seconds between repeats of the auto-attack "not facing" message, per attacker. */
+	inline constexpr double NotFacingMessageIntervalSeconds = 2.0;
 }

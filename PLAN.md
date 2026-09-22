@@ -427,6 +427,8 @@ tool; neither needs a Colyseus game room any more.
       draw what the server has.
 - [x] **Controls.** Right mouse button = hold and drag to orbit the camera
       (pitch clamped), wheel = zoom. Right click no longer attacks or loots.
+      (Superseded in part by the Controls rework below: the drag now also
+      turns the body, and the mouse no longer aims.)
       Auto-attacks are the action bar's skills, and each is its own kind:
       Auto Melee (`melee_attack`) and Auto Ranged (`ranged_attack`, needs a
       ranged weapon) — `ServerStartAutoAttackWith`.
@@ -493,6 +495,86 @@ DefaultEngine.ini); its window is now the 8b UMG loot panel. Admin:
       map editor, sprite-sheet fields). **On hold** (Kevin, 2026-09-22) — the
       Node backend and the web editor stay regardless; decide what counts as
       retired first. Snapshot commit `3630d75` in the 1.0 repo precedes it.
+
+## Controls rework (Kevin, 2026-09-22)
+
+Kevin: "Moving your mouse shouldn't re-position the character. Moving with WASD
+will point your character in a new direction, or holding down mouse and moving
+the camera will also point you in a new direction." And: a player who is not
+facing the NPC they hit or cast on is not turned; the hit/cast fails with
+"You must be facing your target".
+
+Why: the Phase 2 port kept 1.0's cursor `aimAngle` — the body faced the mouse
+every frame — which in a 3D third-person view read as the character twitching
+whenever the mouse moved, and made facing meaningless (the server auto-turned
+players to their auto-attack target anyway).
+
+- [x] **The mouse does not aim.** `UpdateAimFromCursor` / `UpdateAimYaw` are
+      gone. The cursor stays visible for click-to-target and loot (Phase 9,
+      unchanged). It is read once, at the key press, for an `aoeGround` skill
+      only (`AValhallaPlayerController::SampleCursorGroundPoint`); every other
+      skill is sent the caster's own position.
+- [x] **WASD turns the body.** `bOrientRotationToMovement = true`,
+      `RotationRate = (0, 720, 0)`; movement stays camera-relative (W walks
+      away from the camera). CharacterMovement predicts and replicates it.
+- [x] **The right-mouse drag turns camera and body together.** Each orbit step
+      turns the boom, then sets the body's yaw to the boom's
+      (`OrbitCameraBy` -> `AValhallaCharacter::SetFacingYawFromCamera`); pitch
+      is camera-only. Sent by `ServerSetFacingYaw` (was `ServerSetAimYaw`;
+      2 degree deadzone, 20 Hz, now Reliable because the server's yaw is what
+      the facing rule reads, plus a forced send when the drag ends).
+      **Who wins:** while the character is walking (acceleration, or more than
+      5 cm/s), orient-to-movement owns the yaw and the drag only turns the view
+      — which bends the walk with the new WASD basis. Standing still, the drag
+      owns it. Pending moves are flushed before each facing send so a late move
+      cannot turn the server's body back towards the walk.
+- [x] **Facing rule, no auto-turn.** `UValhallaCombatLibrary::IsFacing(Actor,
+      Target, HalfAngleDeg = Valhalla::FacingHalfAngleDegrees)` — 2D, the
+      target within 60 degrees either side of the actor's yaw (inclusive); a
+      target under 1 cm away counts as faced. Applied on the server to:
+      auto-attack swings (melee, ranged and the casters' magical basic — the
+      swing is skipped, the loop stays on, the timer is not advanced so the
+      swing lands the moment the player turns; a `skillFailed` with reason
+      `notFacing` at most once per `NotFacingMessageIntervalSeconds` = 2 s) and
+      `ValidateCast` for `singleEnemy` and `singleAlly`-at-someone-else
+      (refused before any cooldown, resource or cast bar), re-checked when a
+      timed cast completes. Self, `aoeSelf`, `aoeGround` and `cone` are exempt
+      (a cone is already measured off the caster's yaw, ±45). The 1.0
+      auto-face in `TickAutoAttack` (SkillSystem.ts:510) is removed; nothing on
+      the server turns a player for combat. NPCs are unchanged.
+- [x] **HUD.** `FValhallaCombatEvent::Reason` (new) carries `notFacing`; the
+      combat log prints the server's sentence as is, and a "Not facing" floater
+      rises over the player like miss / dodge.
+- [x] If an `aoeGround` press finds no cursor over the world (outside the
+      viewport, above the horizon) it aims at the selected target, else the
+      caster.
+- [x] Gate helpers: `valhalla.DebugFacing` (every player's yaw in every PIE
+      world, camera yaw for the local one); `valhalla.UI @class orbit <deg>`
+      (the drag, through the same `OrbitCameraBy`), `walk <w|a|s|d> <sec>`
+      (holds a key through HandleMove's body, `ApplyMoveInput`) and
+      `press <slot> <x> <y>` (the key press with the aoeGround cursor read at a
+      viewport pixel). Slate key presses do not reach PIE input and typing in
+      the editor console takes the cursor off the viewport, so these three are
+      the gate's hands; type them into the editor console.
+- [x] Test `Valhalla.Game.Combat.Facing`. 26/26.
+
+**Gate (2026-09-22, L_World, PIE_Client, 2 clients, one process, warrior +
+wizard). Pass.** (a) Slate hovers swept the warrior's in-game cursor across
+the viewport for 5.7 s ((527,48) → (1164,15) …): yaw -45.0 before and after,
+server and client. (b) Camera -45: S → 135, A → -135, W → -45, D → 45 (client
+and server agree). Drag 90° while walking W: at the end of the drag the body
+was still -45 and orient-to-movement then turned it to 45. (c) orbit 90: camera
+-45 → 45 and body -45 → 45 on the client, the server and the other client.
+(d) Test Enemy directly behind, Auto Melee on: no swings for 27 s and
+`You must be facing your target` at 40.6, 42.9, 44.9, 46.9 … s; turned to face
+it (orbit -135) at 07.280 and the first swing landed at 07.315, then every
+3.2 s. (e) Magic Missile (`singleEnemy`; Fireball is `aoeGround` in
+skills.json, so exempt) at an enemy behind: refused, mana 150 → 150, cooldown
+0, no cast, "Not facing" floater; after facing it: cast, hit 76, mana 110,
+cooldown 2.5 s. (f) Fireball `press 2 400 300`: independent deprojection of
+that pixel (2183.7, 1206.8); `spellImpact … at (2183.71, 1206.75)`, cast with
+the point 110° off the wizard's facing. (g) 26/26; no ensure, no new error
+lines. Screenshots in `outputs/controls/`.
 
 ## Phase 8c gate — first playable (independent verifier, 2026-09-22)
 

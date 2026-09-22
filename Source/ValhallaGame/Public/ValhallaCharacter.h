@@ -19,12 +19,24 @@ enum class EValhallaEquipSlot : uint8;
 /**
  * The player's body. One per connected client, server-spawned.
  *
- * Facing is aim, not motion. 1.0 stored `aimAngle` on the schema and let the
- * sprite face the cursor while the character strafed in any direction; that is
- * reproduced here by turning off both of Unreal's usual rotation sources
- * (bOrientRotationToMovement and bUseControllerRotationYaw) and driving the
- * actor yaw from the owning client's cursor instead. Movement itself is
- * ordinary CharacterMovement: client-predicted, server-corrected.
+ * Facing (controls rework, 2026-09-22). The mouse no longer aims: 1.0's
+ * cursor-driven `aimAngle` is gone. Two things turn a character, and only two:
+ *
+ *   Walking. bOrientRotationToMovement is on (RotationRate 720 deg/s), so WASD
+ *   turns the body towards where it is walking. CharacterMovement predicts the
+ *   turn on the owning client, re-simulates it on the server from the same
+ *   moves, and ReplicatedMovement carries it to everyone else.
+ *
+ *   The right-mouse drag. Orbiting the camera also turns the body to face the
+ *   way the camera looks (SetFacingYawFromCamera): applied locally at once and
+ *   sent to the server through the throttled ServerSetFacingYaw. Only while
+ *   standing still — when walking, orient-to-movement wins and the drag only
+ *   swings the camera (and with it the WASD basis).
+ *
+ * Nothing else writes the yaw. In particular the server never turns a player to
+ * face a combat target: a swing or a targeted cast at something the player is
+ * not facing fails with "You must be facing your target"
+ * (UValhallaCombatLibrary::IsFacing).
  *
  * The body is the 1.0 paperdoll, rebuilt in three dimensions. 1.0 drew a stack
  * of sprite layers in a fixed order — body, legs, chest, boots, gloves, helm,
@@ -61,23 +73,35 @@ public:
 	virtual void OnRep_PlayerState() override;
 	//~ End APawn interface
 
-	// ── Aim ─────────────────────────────────────────────────────────────
+	// ── Facing ──────────────────────────────────────────────────────────
 
 	/**
-	 * Point this character at a world-space yaw.
+	 * Turn this character to a world-space yaw because the camera turned — the
+	 * right-mouse drag. Owning client only.
 	 *
-	 * Called every frame by the owning AValhallaPlayerController with the yaw
-	 * from the cursor. Applies immediately so the local player never sees their
-	 * own aim lag, then forwards to the server at most AimSendRateHz times a
-	 * second and only once the yaw has moved AimYawDeadzoneDegrees. The server
-	 * sets the actor rotation, which reaches the other clients through
-	 * ReplicatedMovement.
+	 * Ignored while the character is walking (acceleration or more than a
+	 * crawl of velocity): orient-to-movement owns the yaw then, and writing it
+	 * here would fight CharacterMovement every frame. Otherwise applies at once,
+	 * so the player never sees their own turn lag, and forwards to the server at
+	 * most FacingSendRateHz times a second and only once the yaw has moved
+	 * FacingYawDeadzoneDegrees; a send the throttle held back is flushed by
+	 * FlushFacingYaw.
 	 */
-	void UpdateAimYaw(float NewAimYaw);
+	void SetFacingYawFromCamera(float NewYaw);
+
+	/**
+	 * Send a facing yaw the throttle held back. bForce sends the current yaw
+	 * even if it is inside the deadzone (the end of a drag). Called every frame
+	 * by the owning controller, and with bForce when the drag ends.
+	 */
+	void FlushFacingYaw(bool bForce = false);
 
 	/** The yaw this character is currently facing. */
-	UFUNCTION(BlueprintPure, Category = "Valhalla|Aim")
-	float GetAimYaw() const { return GetActorRotation().Yaw; }
+	UFUNCTION(BlueprintPure, Category = "Valhalla|Facing")
+	float GetFacingYaw() const { return GetActorRotation().Yaw; }
+
+	/** True while CharacterMovement is walking this character (it owns the yaw then). */
+	bool IsWalkingForFacing() const;
 
 	// ── Class ───────────────────────────────────────────────────────────
 
@@ -160,10 +184,11 @@ public:
 	/**
 	 * Orbit the camera around the character — the right-mouse drag.
 	 *
-	 * Local presentation only: the boom's rotation is absolute and never
-	 * replicated, and the one thing gameplay reads from it (the WASD basis, via
-	 * GetCameraWorldYaw) is already client-side. Pitch is clamped so the camera
-	 * can neither go under the floor nor look straight down the character's neck.
+	 * The boom's rotation is absolute and never replicated; the WASD basis
+	 * (GetCameraWorldYaw) is read from it client-side. The controller follows
+	 * each orbit step with SetFacingYawFromCamera, which is what turns the body
+	 * with the camera. Pitch is camera-only, and clamped so the camera can
+	 * neither go under the floor nor look straight down the character's neck.
 	 */
 	void AddCameraOrbit(float DeltaYawDegrees, float DeltaPitchDegrees);
 
@@ -178,9 +203,14 @@ public:
 	static constexpr float CameraArmStep = 150.f;
 
 protected:
-	/** Server-side half of UpdateAimYaw. Unreliable: the next one supersedes it. */
-	UFUNCTION(Server, Unreliable)
-	void ServerSetAimYaw(float NewAimYaw);
+	/**
+	 * Server-side half of SetFacingYawFromCamera. Reliable, although the next
+	 * one supersedes it: the server's yaw is what IsFacing reads, so the last
+	 * send of a drag must not be lost. The throttle and deadzone keep it to at
+	 * most FacingSendRateHz, and only while a drag is actually turning.
+	 */
+	UFUNCTION(Server, Reliable)
+	void ServerSetFacingYaw(float NewYaw);
 
 	/** Boom: fixed length, no lag, no collision probe — this is an RTS camera. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Camera")
@@ -272,18 +302,27 @@ protected:
 	/** Capsule half-height, cm — a 120 cm character, which is what the art measures. */
 	static constexpr float CapsuleHalfHeight = 60.f;
 
-	/** Yaw change, in degrees, below which the aim RPC is not worth sending. */
-	static constexpr float AimYawDeadzoneDegrees = 2.f;
+	/** Yaw change, in degrees, below which the facing RPC is not worth sending. */
+	static constexpr float FacingYawDeadzoneDegrees = 2.f;
 
-	/** Ceiling on aim RPCs per second. */
-	static constexpr float AimSendRateHz = 20.f;
+	/** Ceiling on facing RPCs per second. */
+	static constexpr float FacingSendRateHz = 20.f;
+
+	/** Rotation rate of orient-to-movement, degrees per second of yaw. */
+	static constexpr float FacingTurnRateDegrees = 720.f;
+
+	/** Below this 2D speed (cm/s), with no input, the character counts as standing still. */
+	static constexpr float FacingStillSpeed = 5.f;
 
 private:
 	/** The last yaw actually sent to the server. */
-	float LastSentAimYaw = 0.f;
+	float LastSentFacingYaw = 0.f;
 
-	/** World time of the last aim RPC, for the 20 Hz throttle. */
-	double LastAimSendTime = 0.0;
+	/** World time of the last facing RPC, for the 20 Hz throttle. */
+	double LastFacingSendTime = 0.0;
+
+	/** A camera turn the throttle has not sent yet. */
+	bool bFacingSendPending = false;
 
 	/** The class ApplyClassAppearance last ran for, so it is not redone per frame. */
 	FName AppliedClassId;

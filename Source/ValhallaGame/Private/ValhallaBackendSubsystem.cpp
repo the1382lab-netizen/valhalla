@@ -474,6 +474,68 @@ void UValhallaBackendSubsystem::Health(FValhallaSimpleCallback OnDone)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Account admin
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace
+{
+	TSharedRef<FJsonObject> MakeAccountBody(int32 UserId, const FString& Username)
+	{
+		const TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+		if (UserId > 0)
+		{
+			Body->SetNumberField(TEXT("userId"), UserId);
+		}
+		else
+		{
+			Body->SetStringField(TEXT("username"), Username.TrimStartAndEnd());
+		}
+		return Body;
+	}
+}
+
+void UValhallaBackendSubsystem::BanAccount(int32 UserId, const FString& Username, double Minutes, const FString& Reason, const FString& By, FValhallaJsonCallback OnDone)
+{
+	const TSharedRef<FJsonObject> Body = MakeAccountBody(UserId, Username);
+	if (Minutes > 0.0)
+	{
+		Body->SetNumberField(TEXT("minutes"), Minutes);
+	}
+	Body->SetStringField(TEXT("reason"), Reason);
+	Body->SetStringField(TEXT("by"), By);
+
+	Send(TEXT("POST"), TEXT("/api/accounts/ban"), Body, FString(), /*bServerAuth=*/true,
+		[OnDone = MoveTemp(OnDone), UserId, Username](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			UE_LOG(LogValhallaBackend, Log, TEXT("ban account %s: %s"),
+				UserId > 0 ? *FString::Printf(TEXT("#%d"), UserId) : *Username, bSuccess ? TEXT("ok") : *Error);
+			if (OnDone)
+			{
+				OnDone(bSuccess, Status, Json, Error);
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::UnbanAccount(int32 UserId, const FString& Username, FValhallaJsonCallback OnDone)
+{
+	Send(TEXT("POST"), TEXT("/api/accounts/unban"), MakeAccountBody(UserId, Username), FString(), /*bServerAuth=*/true,
+		[OnDone = MoveTemp(OnDone), UserId, Username](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			UE_LOG(LogValhallaBackend, Log, TEXT("unban account %s: %s"),
+				UserId > 0 ? *FString::Printf(TEXT("#%d"), UserId) : *Username, bSuccess ? TEXT("ok") : *Error);
+			if (OnDone)
+			{
+				OnDone(bSuccess, Status, Json, Error);
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::ListBans(FValhallaJsonCallback OnDone)
+{
+	Send(TEXT("GET"), TEXT("/api/accounts/bans"), nullptr, FString(), /*bServerAuth=*/true, MoveTemp(OnDone));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  JSON
 // ─────────────────────────────────────────────────────────────────────────────
 

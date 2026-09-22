@@ -5,6 +5,8 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
+#include "ValhallaGameHUDWidget.h"
 #include "ValhallaCharacter.h"
 #include "ValhallaCombatLibrary.h"
 #include "ValhallaConstants.h"
@@ -42,11 +44,52 @@ namespace
 	const FLinearColor ColourMiss(0.70f, 0.70f, 0.78f);
 	const FLinearColor ColourEnemy(0.85f, 0.22f, 0.22f);
 	const FLinearColor ColourPanel(0.04f, 0.04f, 0.05f);
+
+	/**
+	 * Phase 8b: the Phase 2 canvas HUD is a developer tool now. Off by default;
+	 * `valhalla.DebugHud 1` draws it again over the UMG HUD.
+	 */
+	TAutoConsoleVariable<int32> CVarDebugHud(
+		TEXT("valhalla.DebugHud"),
+		0,
+		TEXT("1 draws the Phase 2 canvas debug HUD (stat block, inventory list, party, target pane, cast/action bar, chat, floaters) over the UMG HUD."),
+		ECVF_Default);
 }
 
 AValhallaHUD::AValhallaHUD()
 {
 	PrimaryActorTick.bCanEverTick = false;
+}
+
+void AValhallaHUD::BeginPlay()
+{
+	Super::BeginPlay();
+
+	// Only the local player's HUD has a viewport to draw into. On a listen
+	// server a HUD exists only for the host anyway; this is belt and braces.
+	if (PlayerOwner && PlayerOwner->IsLocalController() && !GameHUD)
+	{
+		GameHUD = CreateWidget<UValhallaGameHUDWidget>(PlayerOwner, UValhallaGameHUDWidget::StaticClass(), TEXT("ValhallaGameHUD"));
+		if (GameHUD)
+		{
+			GameHUD->AddToViewport(/*ZOrder=*/0);
+			UE_LOG(LogValhallaGame, Log, TEXT("game HUD widget created for %s"), *PlayerOwner->GetName());
+		}
+		else
+		{
+			UE_LOG(LogValhallaGame, Warning, TEXT("could not create the game HUD widget; falling back to the canvas debug HUD."));
+		}
+	}
+}
+
+void AValhallaHUD::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (GameHUD)
+	{
+		GameHUD->RemoveFromParent();
+		GameHUD = nullptr;
+	}
+	Super::EndPlay(EndPlayReason);
 }
 
 void AValhallaHUD::DrawLine(const FString& Text, const FLinearColor& Colour, float& CursorY)
@@ -64,12 +107,23 @@ void AValhallaHUD::DrawHUD()
 		return;
 	}
 
+	// The bag labels are gameplay UI (they are what a click opens a bag
+	// through), so they are drawn whatever the debug setting.
+	LootLabelRects.Reset();
+	DrawLootBagLabels();
+
+	// Everything else is the Phase 2 debug HUD: behind valhalla.DebugHud, or
+	// as the fallback when there is no UMG HUD at all.
+	if (CVarDebugHud.GetValueOnGameThread() == 0 && GameHUD)
+	{
+		return;
+	}
+
 	DrawDebugBlock();
 	DrawInventoryBlock();
 	DrawPartyBlock();
 	DrawTargetPane();
 	DrawNPCNameplates();
-	DrawLootBagLabels();
 	DrawCastBar();
 	DrawActionBar();
 	DrawChatLog();
@@ -265,7 +319,12 @@ void AValhallaHUD::DrawChatLog()
 		return;
 	}
 
-	const TArray<FValhallaChatMessage>& Lines = Controller->GetChatLog();
+	// The controller keeps 50 lines for the UMG chat box; the debug block shows
+	// the last six, as it always did.
+	const TArray<FValhallaChatMessage>& AllLines = Controller->GetChatLog();
+	constexpr int32 DebugChatLines = 6;
+	const TArray<FValhallaChatMessage> Lines(AllLines.GetData() + FMath::Max(0, AllLines.Num() - DebugChatLines),
+		FMath::Min(AllLines.Num(), DebugChatLines));
 	if (Lines.Num() == 0)
 	{
 		return;
@@ -354,13 +413,47 @@ void AValhallaHUD::DrawLootBagLabels()
 
 		// Bright when it can be looted from where the player is standing, dim
 		// when it cannot — which is the 200 cm reach made visible, so a failed
-		// click is explained before it happens rather than after.
+		// click is explained before it happens rather than after. Drawn on a
+		// backing plate over the world, so a bag behind an NPC or under its own
+		// corpse is still seen, and the plate is itself a click target.
 		const bool bInReach = Bag->IsWithinReach(Pawn);
-		const FLinearColor Colour = bInReach ? FLinearColor(0.95f, 0.78f, 0.35f) : ColourDim;
+		const FLinearColor Colour = bInReach ? FLinearColor(1.f, 0.82f, 0.30f) : ColourDim;
 
-		DrawText(FString::Printf(TEXT("Loot (%d)"), Bag->GetSlotCount()), Colour,
-			Screen.X - 22.f, Screen.Y, GEngine ? GEngine->GetSmallFont() : nullptr, 1.f, false);
+		const FString Label = FString::Printf(TEXT("Loot (%d)"), Bag->GetSlotCount());
+		UFont* Font = GEngine ? GEngine->GetSmallFont() : nullptr;
+		float TextW = 0.f, TextH = 0.f;
+		GetTextSize(Label, TextW, TextH, Font, 1.f);
+
+		const float PadX = 6.f, PadY = 2.f;
+		const float BoxW = TextW + PadX * 2.f + 10.f;
+		const float BoxH = TextH + PadY * 2.f;
+		const float BoxX = Screen.X - BoxW * 0.5f;
+		const float BoxY = Screen.Y - BoxH * 0.5f;
+
+		DrawRect(ColourPanel.CopyWithNewOpacity(0.75f), BoxX, BoxY, BoxW, BoxH);
+		// A small diamond-ish marker so the bag reads as an object, not text.
+		DrawRect(Colour, BoxX + PadX, BoxY + BoxH * 0.5f - 3.f, 6.f, 6.f);
+		DrawText(Label, Colour, BoxX + PadX + 10.f, BoxY + PadY, Font, 1.f, false);
+
+		LootLabelRects.Emplace(FBox2D(FVector2D(BoxX, BoxY), FVector2D(BoxX + BoxW, BoxY + BoxH)),
+			const_cast<AValhallaLootBag*>(Bag));
 	}
+}
+
+AValhallaLootBag* AValhallaHUD::HitTestLootLabel(const FVector2D& ScreenPoint) const
+{
+	// The last drawn is on top, so search backwards.
+	for (int32 Index = LootLabelRects.Num() - 1; Index >= 0; --Index)
+	{
+		if (LootLabelRects[Index].Key.IsInside(ScreenPoint))
+		{
+			if (AValhallaLootBag* Bag = LootLabelRects[Index].Value.Get())
+			{
+				return Bag;
+			}
+		}
+	}
+	return nullptr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

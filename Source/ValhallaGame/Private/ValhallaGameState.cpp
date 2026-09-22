@@ -2,6 +2,7 @@
 
 #include "ValhallaGameState.h"
 
+#include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
@@ -17,6 +18,7 @@
 #include "ValhallaGameMode.h"
 #include "ValhallaNPC.h"
 #include "ValhallaPartySubsystem.h"
+#include "ValhallaPlayerController.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaSpellProjectile.h"
@@ -60,6 +62,62 @@ void AValhallaGameState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 
 	DOREPLIFETIME(AValhallaGameState, ServerTime);
 	DOREPLIFETIME(AValhallaGameState, ZoneId);
+	DOREPLIFETIME(AValhallaGameState, DataVersion);
+}
+
+void AValhallaGameState::BumpDataVersion()
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	++DataVersion;
+	ForceNetUpdate();
+	UE_LOG(LogValhallaGame, Log, TEXT("data version %d: clients will reload their data."), DataVersion);
+}
+
+void AValhallaGameState::OnRep_DataVersion()
+{
+	// The initial replication of a GameState arrives before its BeginPlay. A
+	// non-zero version then only means the server reloaded at some point before
+	// this client joined, and this client loaded its data moments ago.
+	if (!HasActorBegunPlay())
+	{
+		return;
+	}
+
+	UGameInstance* GameInstance = GetGameInstance();
+	UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+	if (!Data)
+	{
+		return;
+	}
+
+	const bool bOk = Data->Reload();
+	UE_LOG(LogValhallaGame, Log, TEXT("data version %d from the server: client reload %s."),
+		DataVersion, bOk ? TEXT("ok") : TEXT("FAILED (see LogValhallaCore)"));
+	if (!bOk)
+	{
+		return;
+	}
+
+	// Paperdolls resolve item ids to meshes on the client; everything else the
+	// HUD reads (names, tooltips, skill numbers) is looked up per frame.
+	if (UWorld* World = GetWorld())
+	{
+		for (TActorIterator<AValhallaCharacter> It(World); It; ++It)
+		{
+			It->RefreshEquipmentVisuals();
+		}
+
+		if (AValhallaPlayerController* PC = Cast<AValhallaPlayerController>(World->GetFirstPlayerController()))
+		{
+			if (PC->IsLocalController())
+			{
+				PC->ShowLocalSystemMessage(TEXT("Game data updated by the server."));
+			}
+		}
+	}
 }
 
 void AValhallaGameState::Tick(float DeltaSeconds)
@@ -93,6 +151,10 @@ void AValhallaGameState::Tick(float DeltaSeconds)
 		ServerTime += FixedStep;
 		ServerFixedTick(static_cast<float>(FixedStep));
 	}
+
+	// Everything raised this frame — by RPCs processed before the world tick
+	// and by the fixed steps above — goes out as one batch.
+	FlushCombatEvents();
 }
 
 #if !UE_BUILD_SHIPPING
@@ -297,9 +359,59 @@ void AValhallaGameState::ServerFixedTick(float FixedDeltaSeconds)
 //  Combat events
 // ─────────────────────────────────────────────────────────────────────────────
 
-void AValhallaGameState::MulticastCombatEvent_Implementation(const FValhallaCombatEvent& Event)
+void AValhallaGameState::QueueCombatEvent(const FValhallaCombatEvent& Event)
 {
-	RecordCombatEvent(Event);
+	if (!HasAuthority())
+	{
+		RecordCombatEvent(Event);
+		return;
+	}
+	PendingCombatEvents.Add(Event);
+}
+
+void AValhallaGameState::FlushCombatEvents()
+{
+	if (PendingCombatEvents.Num() == 0)
+	{
+		return;
+	}
+
+	// Moved out first: RecordCombatEvent runs on the server too (a multicast
+	// executes locally), and a listener that raised another event while it ran
+	// must land in the next batch rather than in the array being iterated.
+	TArray<FValhallaCombatEvent> Batch = MoveTemp(PendingCombatEvents);
+	PendingCombatEvents.Reset();
+	MulticastCombatEvents(Batch);
+}
+
+void AValhallaGameState::MulticastCombatEvents_Implementation(const TArray<FValhallaCombatEvent>& Events)
+{
+	for (const FValhallaCombatEvent& Event : Events)
+	{
+		RecordCombatEvent(Event);
+	}
+}
+
+void AValhallaGameState::MirrorCooldownFromEvent(const FValhallaCombatEvent& Event)
+{
+	if (Event.Kind != EValhallaCombatEventKind::SkillEffect || GetNetMode() != NM_Client)
+	{
+		return;
+	}
+
+	const AValhallaCharacter* Caster = Cast<AValhallaCharacter>(Event.Instigator);
+	AValhallaPlayerState* CasterState = Caster ? Caster->GetValhallaPlayerState() : nullptr;
+	const UGameInstance* GameInstance = GetGameInstance();
+	const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+	const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(Event.SkillId) : nullptr;
+	if (!CasterState || !Skill)
+	{
+		return;
+	}
+
+	UValhallaCombatLibrary::ApplyCooldown(
+		CasterState->GetSkillCooldownExpiry(), *Skill, Data->GetClassSkills(CasterState->ClassId),
+		[Data](FName Id) { return Data->FindSkill(Id); }, ServerTime);
 }
 
 void AValhallaGameState::RecordCombatEvent(const FValhallaCombatEvent& Event)
@@ -334,4 +446,8 @@ void AValhallaGameState::RecordCombatEvent(const FValhallaCombatEvent& Event)
 	// guard somebody can forget — and on a listen host the local player gets
 	// their effects through exactly the path a remote client does.
 	UValhallaVfxSubsystem::DispatchCombatEvent(this, Event);
+
+	// Phase 8b: the client's action bar sweep, and the HUD.
+	MirrorCooldownFromEvent(Event);
+	OnCombatEvent.Broadcast(Event);
 }

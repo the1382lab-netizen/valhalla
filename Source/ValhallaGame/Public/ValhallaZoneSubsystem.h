@@ -154,13 +154,13 @@ public:
 	// ── Overlays ────────────────────────────────────────────────────────
 
 	/**
-	 * Load `maps/overlays-2.0/<zone>.json` for every discovered zone, spawn
-	 * what it asks for, and check the rest against what the level already has.
+	 * Load `maps/overlays-2.0/<zone>.json` for every discovered zone and check
+	 * it against what the level already has.
 	 *
-	 * Spawners are *created* from the overlay: an `enemy_spawn` or `npc_spawn`
-	 * point becomes an `AValhallaNPCSpawner` at that zone-local coordinate. So
-	 * enemy placement is data, editable in the Phase 6 editor without opening
-	 * Unreal, exactly as it was in 1.0.
+	 * NPCs are no longer created from the overlay. They are placed in Unreal as
+	 * `AValhallaNPCSpawner` actors (NPC Spawn Points) in each zone's gameplay
+	 * sublevel; an `enemy_spawn` / `npc_spawn` entry left in an overlay is
+	 * reported and ignored.
 	 *
 	 * Portals, entries and player spawns are *validated*, not created, because
 	 * all three have to exist as level actors anyway — a portal needs a mesh
@@ -172,7 +172,7 @@ public:
 	 */
 	void LoadOverlays();
 
-	/** Destroy the spawners this subsystem made, then `LoadOverlays` again. */
+	/** Rediscover the zones and re-check the overlays. */
 	void ReloadOverlays();
 
 	/** `<DataRoot>/../../maps/overlays-2.0`, absolute. */
@@ -197,13 +197,10 @@ public:
 	 */
 	static bool ParseOverlay(const FString& JsonText, FValhallaZoneOverlay& OutOverlay, TArray<FString>& OutErrors);
 
-	/** How many spawners the last `LoadOverlays` created. For the gate log. */
-	int32 GetSpawnedSpawnerCount() const { return CreatedSpawners.Num(); }
+	/** How many NPC Spawn Points the loaded levels contain. For the gate log. */
+	int32 GetSpawnedSpawnerCount() const;
 
 protected:
-	/** Turn one overlay point into an `AValhallaNPCSpawner`. */
-	void SpawnFromOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point);
-
 	/** Check a portal / zone_entry / player_spawn point against the level. */
 	void ValidateOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point);
 
@@ -216,9 +213,6 @@ private:
 
 	/** Last zone-change time per pawn, against `UWorld::GetTimeSeconds`. */
 	TMap<TWeakObjectPtr<APawn>, double> LastTravelTime;
-
-	/** Spawners this subsystem created, so `ReloadOverlays` can undo itself. */
-	TArray<TWeakObjectPtr<AActor>> CreatedSpawners;
 
 	/** True once `LoadOverlays` has run, so a reload knows it is a reload. */
 	bool bOverlaysLoaded = false;

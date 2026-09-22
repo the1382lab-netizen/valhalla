@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "Subsystems/GameInstanceSubsystem.h"
 #include "ValhallaTypes.h"
+#include "ValhallaUIConfig.h"
 #include "ValhallaDataSubsystem.generated.h"
 
 /**
@@ -48,6 +49,13 @@ struct VALHALLACORE_API FValhallaDataTables
 	 * needs from it; converting it now would only guess wrong.
 	 */
 	TSharedPtr<FJsonObject> UiConfig;
+
+	/**
+	 * Phase 8b: the same file, typed. Parsed from UiConfig on every load, and
+	 * defaulted (DEFAULT_UI_CONFIG) when the file is missing, so a reader never
+	 * has to null-check it.
+	 */
+	FValhallaUIConfig UIConfigTyped;
 
 	/** Files that failed to load or parse at all, by filename. */
 	TArray<FString> FailedFiles;
@@ -123,6 +131,20 @@ public:
 
 	/** The raw ui-config.json object, or an invalid pointer if it failed to load. */
 	TSharedPtr<FJsonObject> GetUiConfig() const { return Tables.UiConfig; }
+
+	/** Phase 8b: ui-config.json as FValhallaUIConfig. Defaults when the file failed. */
+	const FValhallaUIConfig& GetUIConfig() const { return Tables.UIConfigTyped; }
+
+	/**
+	 * Re-read ui-config.json alone and re-parse it. What the HUD calls on
+	 * `valhalla.ReloadUI` and when it sees the file's timestamp move: the client
+	 * has its own game instance (and so its own copy of the data), and the
+	 * server's hot-reload watcher never touches it. True when the file parsed.
+	 */
+	bool ReloadUIConfig();
+
+	/** Absolute path of ui-config.json under the loaded data root. */
+	FString GetUIConfigPath() const;
 
 	/** Direct read-only access to every table, for systems that iterate. */
 	const FValhallaDataTables& GetTables() const { return Tables; }

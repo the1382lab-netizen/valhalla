@@ -79,8 +79,16 @@ bool UValhallaCombatLibrary::AreHostile(const AActor* A, const AActor* B)
 		return false;
 	}
 
-	// Phase 2b has no PvP and no factions. Players fight NPCs and nothing else;
-	// Phase 2c's party system is what will make "friendly" mean more than this.
+	// A friendly NPC (template `type: "npc"` — a merchant, a townsperson) is
+	// nobody's enemy: it cannot be attacked and does not attack.
+	const AValhallaNPC* NpcA = Cast<AValhallaNPC>(A);
+	const AValhallaNPC* NpcB = Cast<AValhallaNPC>(B);
+	if ((NpcA && NpcA->bFriendly) || (NpcB && NpcB->bFriendly))
+	{
+		return false;
+	}
+
+	// No PvP and no factions. Players fight NPCs and nothing else.
 	return IsNpcTarget(A) != IsNpcTarget(B);
 }
 
@@ -251,7 +259,7 @@ void UValhallaCombatLibrary::BroadcastCombatEvent(const UObject* WorldContext, c
 	const UWorld* World = GEngine ? GEngine->GetWorldFromContextObject(WorldContext, EGetWorldErrorMode::ReturnNull) : nullptr;
 	if (AValhallaGameState* GameState = World ? World->GetGameState<AValhallaGameState>() : nullptr)
 	{
-		GameState->MulticastCombatEvent(Event);
+		GameState->QueueCombatEvent(Event);
 	}
 }
 
@@ -355,7 +363,11 @@ int32 UValhallaCombatLibrary::ApplyDamage(AActor* Attacker, AActor* Target, doub
 			// it comes back on the result, so the HUD's shield bar is right on
 			// the same frame the damage lands.
 			PlayerState->ShieldHp = static_cast<float>(Result.RemainingShieldHp);
-			PlayerState->Hp = FMath::Max(0.f, PlayerState->Hp - static_cast<float>(Result.Damage));
+			// Admin god mode: the hit is still announced, the HP does not move.
+			if (!PlayerState->bAdminGodMode)
+			{
+				PlayerState->Hp = FMath::Max(0.f, PlayerState->Hp - static_cast<float>(Result.Damage));
+			}
 
 			if (PlayerState->Hp <= 0.f)
 			{

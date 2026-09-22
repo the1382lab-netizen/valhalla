@@ -8,19 +8,21 @@
 
 struct FValhallaCombatEvent;
 class AValhallaNPC;
+class AValhallaLootBag;
+class UValhallaGameHUDWidget;
 
 /**
- * A canvas HUD: a debug block, a target pane, a cast bar, an action bar and
- * floating combat numbers. All of it drawn with DrawText and DrawRect.
+ * The HUD actor. Since Phase 8b it does two things:
  *
- * Its job is to make the server visible. Phase 2a proved class resolution and
- * replication by printing a stat block; Phase 2b has to prove that a swing
- * connected, that a cooldown is running and that an NPC is losing HP, and it has
- * to do that without a single UMG asset existing — because Phase 8 is where the
- * real UI is designed, and building it twice would be a waste.
+ *  - It owns the real game HUD, `UValhallaGameHUDWidget` (UMG, laid out from
+ *    ui-config.json), creating it for the local player in BeginPlay.
+ *  - It draws the clickable "Loot (n)" labels over loot bags (Phase 9) on the
+ *    canvas, because they are world-anchored and hit-tested by the controller.
  *
- * Everything here reads replicated state or AValhallaGameState's event list. The
- * HUD never decides anything, and nothing should come to depend on it.
+ * The Phase 2 canvas debug HUD — stat block, inventory list, party block, target
+ * pane, cast bar, action bar, chat, floaters — is still here, behind
+ * `valhalla.DebugHud 1` (and as a fallback if the widget could not be made). It
+ * reads replicated state only and decides nothing.
  */
 UCLASS()
 class VALHALLAGAME_API AValhallaHUD : public AHUD
@@ -30,15 +32,34 @@ class VALHALLAGAME_API AValhallaHUD : public AHUD
 public:
 	AValhallaHUD();
 
+	//~ Begin AActor interface
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	//~ End AActor interface
+
 	//~ Begin AHUD interface
 	virtual void DrawHUD() override;
 	//~ End AHUD interface
+
+	/** The UMG game HUD, or null before BeginPlay / on a server. */
+	UValhallaGameHUDWidget* GetGameHUD() const { return GameHUD; }
 
 	/** Set false to hide the debug block without unsetting the HUD class. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Valhalla|Debug")
 	bool bShowDebugBlock = true;
 
+	/**
+	 * The bag whose "Loot (n)" label, drawn last frame, is under a screen
+	 * point, or null. The labels are drawn over the world, so a bag hidden
+	 * behind an NPC or its own corpse can still be clicked through its label.
+	 */
+	AValhallaLootBag* HitTestLootLabel(const FVector2D& ScreenPoint) const;
+
 private:
+	/** See GetGameHUD. */
+	UPROPERTY(Transient)
+	TObjectPtr<UValhallaGameHUDWidget> GameHUD;
+
 	/** Draw one line and advance the cursor. */
 	void DrawLine(const FString& Text, const FLinearColor& Colour, float& CursorY);
 
@@ -75,6 +96,9 @@ private:
 
 	/** A "Loot (n)" label over every bag on screen, brighter when within reach. */
 	void DrawLootBagLabels();
+
+	/** Last frame's clickable bag labels, rebuilt every DrawHUD. */
+	TArray<TPair<FBox2D, TWeakObjectPtr<AValhallaLootBag>>> LootLabelRects;
 
 	/**
 	 * The last second of combat events, projected to screen space and drawn

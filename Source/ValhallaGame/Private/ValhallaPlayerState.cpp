@@ -56,6 +56,7 @@ void AValhallaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, Inventory, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, PartyId, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, PartyMemberNames, COND_OwnerOnly);
+	DOREPLIFETIME(AValhallaPlayerState, bAdminFrozen);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

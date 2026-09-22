@@ -18,6 +18,10 @@
 #include "ValhallaCharacter.h"
 #include "ValhallaCombatLibrary.h"
 #include "ValhallaConstants.h"
+#include "ValhallaDataSettings.h"
+#include "ValhallaDataSubsystem.h"
+#include "HAL/FileManager.h"
+#include "Misc/Paths.h"
 #include "ValhallaGame.h"
 #include "ValhallaGameMode.h"
 #include "ValhallaNPCSpawner.h"
@@ -52,6 +56,129 @@ namespace
 
 	/** NPCSystem.ts:500 — the fallback when a template omits aggroRange. */
 	constexpr float DefaultAggroRange = 200.f;
+
+	/**
+	 * npc-templates.json read straight off disk, for editor dropdowns and
+	 * previews where no game instance (and so no data subsystem) exists.
+	 * Re-read when the file's timestamp moves, so the web editor's saves show
+	 * up without restarting Unreal.
+	 */
+	struct FDiskTemplateCache
+	{
+		FDateTime Stamp;
+		FString Path;
+		TMap<FName, FValhallaNPCTemplate> Templates;
+
+		const TMap<FName, FValhallaNPCTemplate>& Get()
+		{
+			const UValhallaDataSettings* Settings = UValhallaDataSettings::Get();
+			if (!Settings)
+			{
+				return Templates;
+			}
+
+			const FString Root = Settings->GetResolvedDataRoot();
+			const FString File = FPaths::Combine(Root, TEXT("npc-templates.json"));
+			const FDateTime Now = IFileManager::Get().GetTimeStamp(*File);
+			if (File == Path && Now == Stamp)
+			{
+				return Templates;
+			}
+
+			FValhallaDataTables Tables;
+			UValhallaDataSubsystem::LoadTablesFromRoot(Root, Tables);
+			Templates = MoveTemp(Tables.NPCTemplates);
+			Path = File;
+			Stamp = Now;
+			return Templates;
+		}
+	};
+
+	FDiskTemplateCache& DiskTemplates()
+	{
+		static FDiskTemplateCache Cache;
+		return Cache;
+	}
+}
+
+TArray<FString> AValhallaNPC::ReadTemplateIdsFromDisk()
+{
+	TArray<FString> Ids;
+	for (const TPair<FName, FValhallaNPCTemplate>& Pair : DiskTemplates().Get())
+	{
+		Ids.Add(Pair.Key.ToString());
+	}
+	Ids.Sort();
+	return Ids;
+}
+
+bool AValhallaNPC::ReadTemplateFromDisk(FName InTemplateId, FValhallaNPCTemplate& OutTemplate)
+{
+	if (const FValhallaNPCTemplate* Found = DiskTemplates().Get().Find(InTemplateId))
+	{
+		OutTemplate = *Found;
+		return true;
+	}
+	return false;
+}
+
+TArray<FString> AValhallaNPC::GetNPCTemplateOptions() const
+{
+	return ReadTemplateIdsFromDisk();
+}
+
+float AValhallaNPC::ResolveBodyScale(const FValhallaNPCTemplate& ForTemplate) const
+{
+	if (ScaleOverride > 0.f)
+	{
+		return ScaleOverride;
+	}
+	return ForTemplate.SpriteSize > 0.f ? ForTemplate.SpriteSize : 1.f;
+}
+
+void AValhallaNPC::GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletalMesh*>& OutPieces) const
+{
+	OutBody = BodyMesh ? BodyMesh->GetSkeletalMeshAsset() : nullptr;
+	OutPieces.Reset();
+
+	// A mesh can be chosen two ways on a BP_NPC_* type, and both count: the
+	// Look properties in Class Defaults, or the Skeletal Mesh Asset on the
+	// ChestMesh/HelmMesh/... component in the Components panel. The component
+	// is read off the class default object, so what the Blueprint set is never
+	// confused with a placeholder this function put on a live NPC earlier.
+	const AValhallaNPC* Defaults = GetClass()->GetDefaultObject<AValhallaNPC>();
+	auto AuthoredOn = [](const USkeletalMeshComponent* Component) -> USkeletalMesh*
+	{
+		return Component ? Component->GetSkeletalMeshAsset() : nullptr;
+	};
+
+	struct FSlot
+	{
+		const TSoftObjectPtr<USkeletalMesh>* Asset;
+		USkeletalMesh* ComponentMesh;
+		const TCHAR* Placeholder;
+	};
+	const FSlot Slots[] = {
+		{ &ChestMeshAsset,  AuthoredOn(Defaults ? Defaults->ChestMesh.Get()  : nullptr), EnemyChestAsset },
+		{ &HelmMeshAsset,   AuthoredOn(Defaults ? Defaults->HelmMesh.Get()   : nullptr), EnemyHelmAsset },
+		{ &LegsMeshAsset,   AuthoredOn(Defaults ? Defaults->LegsMesh.Get()   : nullptr), nullptr },
+		{ &BootsMeshAsset,  AuthoredOn(Defaults ? Defaults->BootsMesh.Get()  : nullptr), nullptr },
+		{ &GlovesMeshAsset, AuthoredOn(Defaults ? Defaults->GlovesMesh.Get() : nullptr), nullptr },
+	};
+
+	for (const FSlot& Slot : Slots)
+	{
+		USkeletalMesh* SlotMesh = Slot.Asset->IsNull() ? nullptr : Slot.Asset->LoadSynchronous();
+		if (!SlotMesh)
+		{
+			SlotMesh = Slot.ComponentMesh;
+		}
+		if (!SlotMesh && bWearPlaceholderKit && Slot.Placeholder)
+		{
+			SlotMesh = LoadObject<USkeletalMesh>(nullptr, Slot.Placeholder);
+		}
+		OutPieces.Add(SlotMesh);
+	}
 }
 
 AValhallaNPC::AValhallaNPC()
@@ -100,8 +227,14 @@ AValhallaNPC::AValhallaNPC()
 	ChestMesh->SetupAttachment(BodyMesh);
 	HelmMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("HelmMesh"));
 	HelmMesh->SetupAttachment(BodyMesh);
+	LegsMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("LegsMesh"));
+	LegsMesh->SetupAttachment(BodyMesh);
+	BootsMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("BootsMesh"));
+	BootsMesh->SetupAttachment(BodyMesh);
+	GlovesMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("GlovesMesh"));
+	GlovesMesh->SetupAttachment(BodyMesh);
 
-	for (USkeletalMeshComponent* Follower : { ChestMesh.Get(), HelmMesh.Get() })
+	for (USkeletalMeshComponent* Follower : { ChestMesh.Get(), HelmMesh.Get(), LegsMesh.Get(), BootsMesh.Get(), GlovesMesh.Get() })
 	{
 		Follower->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Follower->SetCollisionProfileName(TEXT("NoCollision"));
@@ -147,6 +280,9 @@ void AValhallaNPC::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(AValhallaNPC, bAlive);
 	DOREPLIFETIME(AValhallaNPC, TemplateId);
 	DOREPLIFETIME(AValhallaNPC, SyncedBuffs);
+	DOREPLIFETIME(AValhallaNPC, bFriendly);
+	DOREPLIFETIME(AValhallaNPC, BodyScale);
+	DOREPLIFETIME(AValhallaNPC, BodyColor);
 
 	// The threat table is not here and never will be. Knowing who an NPC is
 	// about to switch to is a tactical advantage the server does not give away.
@@ -163,6 +299,57 @@ void AValhallaNPC::BeginPlay()
 
 	ApplyAppearance();
 	OnRep_Alive();
+
+	// An NPC type dragged straight into a level, rather than spawned by an
+	// AValhallaNPCSpawner, plays its own template from where it was placed.
+	if (HasAuthority() && !bInitializedFromTemplate)
+	{
+		if (DefaultTemplateId.IsNone())
+		{
+			UE_LOG(LogValhallaGame, Warning, TEXT("%s: placed with no Default Template Id; it has no stats. Set one on the Blueprint."), *GetName());
+			return;
+		}
+
+		const UGameInstance* GameInstance = GetGameInstance();
+		const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+		if (const FValhallaNPCTemplate* Found = Data ? Data->FindNPCTemplate(DefaultTemplateId) : nullptr)
+		{
+			InitializeFromTemplate(*Found, GetActorLocation(), nullptr);
+		}
+		else
+		{
+			UE_LOG(LogValhallaGame, Warning, TEXT("%s: unknown template '%s'."), *GetName(), *DefaultTemplateId.ToString());
+		}
+	}
+}
+
+void AValhallaNPC::ApplyBodyScale()
+{
+	const float Scale = BodyScale > 0.f ? BodyScale : 1.f;
+	UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float OldHalfHeight = Capsule->GetUnscaledCapsuleHalfHeight();
+	Capsule->SetCapsuleSize(CapsuleRadius * Scale, CapsuleHalfHeight * Scale);
+
+	// Keep the feet where they were when the capsule changes height on an NPC
+	// that is already standing (a hot reload of spriteSize).
+	const float Delta = CapsuleHalfHeight * Scale - OldHalfHeight;
+	if (HasActorBegunPlay() && !FMath::IsNearlyZero(Delta))
+	{
+		AddActorWorldOffset(FVector(0.f, 0.f, Delta), false, nullptr, ETeleportType::TeleportPhysics);
+	}
+
+	if (BodyMesh)
+	{
+		BodyMesh->SetRelativeScale3D(FVector(Scale));
+		// The body's pivot is at its feet, so the offset that stands it on the
+		// capsule's bottom is the (scaled) capsule half-height, no more.
+		BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, UValhallaVisuals::MeshZOffset * Scale));
+	}
+}
+
+void AValhallaNPC::OnRep_BodyScale()
+{
+	ApplyAppearance();
 }
 
 void AValhallaNPC::ApplyAppearance()
@@ -172,14 +359,34 @@ void AValhallaNPC::ApplyAppearance()
 		return;
 	}
 
-	// `spriteSize` scales the whole body, exactly as it scaled the 1.0 sprite.
-	const float SpriteSize = Template.SpriteSize > 0.f ? Template.SpriteSize : 1.f;
-	BodyMesh->SetRelativeScale3D(FVector(SpriteSize));
-	// The mesh sits on the capsule bottom whatever it is scaled to, so the
-	// offset scales with it rather than leaving a large enemy's feet buried.
-	BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, UValhallaVisuals::MeshZOffset * SpriteSize));
+	// `spriteSize` (or the type's ScaleOverride) scales the whole body *and* its
+	// capsule. BodyScale is replicated; the template is not.
+	ApplyBodyScale();
 
-	if (!TintMaterial)
+	// Tint precedence: the NPC type's TintOverride, then the template's
+	// spriteColor (replicated as BodyColor), then — for enemies only — the
+	// grey-box green. A friendly NPC with no colour keeps its natural skin.
+	FLinearColor Tint = FLinearColor::FromSRGBColor(DefaultEnemySrgb);
+	bool bApplyTint = true;
+	if (TintOverride.A > 0.f)
+	{
+		Tint = FLinearColor(TintOverride.R, TintOverride.G, TintOverride.B, 1.f);
+	}
+	// 0xFFFFFF is the editor's "no colour chosen" default, so treat it as
+	// unauthored rather than as a deliberate white.
+	else if (BodyColor != 0 && BodyColor != 0xFFFFFF)
+	{
+		Tint = FLinearColor::FromSRGBColor(FColor(
+			static_cast<uint8>((BodyColor >> 16) & 0xFF),
+			static_cast<uint8>((BodyColor >> 8) & 0xFF),
+			static_cast<uint8>(BodyColor & 0xFF)));
+	}
+	else if (bFriendly)
+	{
+		bApplyTint = false;
+	}
+
+	if (bApplyTint && !TintMaterial)
 	{
 		if (UMaterialInterface* Source = BodyMesh->GetMaterial(SkinMaterialIndex))
 		{
@@ -188,45 +395,33 @@ void AValhallaNPC::ApplyAppearance()
 		}
 	}
 
-	if (TintMaterial)
+	if (bApplyTint && TintMaterial)
 	{
-		FColor Srgb = DefaultEnemySrgb;
-		// 0xFFFFFF is the editor's "no colour chosen" default, so treat it as
-		// unauthored rather than as a deliberate white.
-		if (Template.SpriteColor != 0 && Template.SpriteColor != 0xFFFFFF)
-		{
-			Srgb = FColor(
-				static_cast<uint8>((Template.SpriteColor >> 16) & 0xFF),
-				static_cast<uint8>((Template.SpriteColor >> 8) & 0xFF),
-				static_cast<uint8>(Template.SpriteColor & 0xFF));
-		}
-		TintMaterial->SetVectorParameterValue(BaseColorParameter, FLinearColor::FromSRGBColor(Srgb));
+		TintMaterial->SetVectorParameterValue(BaseColorParameter, Tint);
 	}
 
-	// The fixed kit. Not driven by data because an NPC has no inventory and no
-	// equipment slots to replicate — a template that wants a different look in
-	// Phase 8 gets `spriteId` fields of its own rather than a paperdoll.
-	struct FPiece { USkeletalMeshComponent* Component; const TCHAR* Asset; };
-	const FPiece Pieces[] = { { ChestMesh, EnemyChestAsset }, { HelmMesh, EnemyHelmAsset } };
+	// The NPC type's look: its own armour meshes, with the placeholder chain
+	// shirt and full helm filling chest and helm when it names none (and wants
+	// the placeholder). Resolved on every machine from the class defaults, so
+	// nothing about it has to replicate.
+	USkeletalMesh* Body = nullptr;
+	TArray<USkeletalMesh*> Pieces;
+	GetAppearanceMeshes(Body, Pieces);
 
-	for (const FPiece& Piece : Pieces)
+	USkeletalMeshComponent* Components[] = { ChestMesh, HelmMesh, LegsMesh, BootsMesh, GlovesMesh };
+	for (int32 Index = 0; Index < static_cast<int32>(UE_ARRAY_COUNT(Components)); ++Index)
 	{
-		if (!Piece.Component || Piece.Component->GetSkeletalMeshAsset())
+		USkeletalMeshComponent* Component = Components[Index];
+		USkeletalMesh* Wanted = Pieces.IsValidIndex(Index) ? Pieces[Index] : nullptr;
+		if (!Component || Component->GetSkeletalMeshAsset() == Wanted)
 		{
 			continue;
 		}
 
-		USkeletalMesh* LoadedMesh = LoadObject<USkeletalMesh>(nullptr, Piece.Asset);
-		if (!LoadedMesh)
-		{
-			UE_LOG(LogValhallaVisual, Warning, TEXT("npc asset=%s MISSING"), Piece.Asset);
-			continue;
-		}
-
-		Piece.Component->SetSkeletalMeshAsset(LoadedMesh);
+		Component->SetSkeletalMeshAsset(Wanted);
 		// Re-linked after the mesh swap: SetSkeletalMeshAsset drops the link.
-		Piece.Component->SetLeaderPoseComponent(BodyMesh);
-		UE_LOG(LogValhallaVisual, Log, TEXT("npc=%s asset=%s"), *DisplayName, Piece.Asset);
+		Component->SetLeaderPoseComponent(BodyMesh);
+		UE_LOG(LogValhallaVisual, Log, TEXT("npc=%s asset=%s"), *DisplayName, *GetPathNameSafe(Wanted));
 	}
 }
 
@@ -244,9 +439,14 @@ void AValhallaNPC::InitializeFromTemplate(const FValhallaNPCTemplate& InTemplate
 	Template = InTemplate;
 	HomeLocation = InHomeLocation;
 	Spawner = InSpawner;
+	bInitializedFromTemplate = true;
 
 	TemplateId = InTemplate.Id;
-	DisplayName = InTemplate.Name;
+	DisplayName = NameOverride.IsEmpty() ? InTemplate.Name : NameOverride;
+	bFriendly = InTemplate.Type == EValhallaNPCType::Npc;
+	BodyScale = ResolveBodyScale(InTemplate);
+	BodyColor = InTemplate.SpriteColor;
+	ApplyAppearance();
 	Level = FMath::Max(1, InTemplate.Level);
 	MaxHp = InTemplate.Hp;
 	Hp = InTemplate.Hp;
@@ -359,7 +559,9 @@ void AValhallaNPC::Die(AActor* Killer, double Now)
 
 	bAlive = false;
 	Hp = 0.f;
-	RespawnAt = Now + Template.RespawnMs / 1000.0;
+	// A spawn point's NPC is replaced by a fresh instance on the spawn point's
+	// timer; only a hand-placed NPC keeps 1.0's stand-back-up timer.
+	RespawnAt = Spawner.IsValid() ? 0.0 : Now + Template.RespawnMs / 1000.0;
 	AggroTarget = nullptr;
 	ThreatTable.Reset();
 	ActiveBuffs.Reset();
@@ -376,14 +578,22 @@ void AValhallaNPC::Die(AActor* Killer, double Now)
 	Event.Location = GetActorLocation();
 	UValhallaCombatLibrary::BroadcastCombatEvent(this, Event);
 
-	UE_LOG(LogValhallaCombat, Log, TEXT("npcDied %s killed by %s, xpReward=%d, respawn in %.0f ms"),
-		*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Killer), Template.XpReward, Template.RespawnMs);
+	UE_LOG(LogValhallaCombat, Log, TEXT("npcDied %s killed by %s, xpReward=%d%s"),
+		*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Killer), Template.XpReward,
+		Spawner.IsValid() ? TEXT(", respawn on its spawn point's timer") : *FString::Printf(TEXT(", respawn in %.0f ms"), Template.RespawnMs));
 
 	// GameRoom.broadcastCombatEvents:942 — loot and XP are the game mode's job,
 	// not the NPC's. Phase 2c's party split and loot tables hang off this hook.
 	if (AValhallaGameMode* GameMode = GetWorld() ? GetWorld()->GetAuthGameMode<AValhallaGameMode>() : nullptr)
 	{
 		GameMode->OnNPCKilled(this, Killer);
+	}
+
+	// Last, after the loot has been dropped where the body lies: the spawn
+	// point starts the corpse's decay and the respawn countdown.
+	if (AValhallaNPCSpawner* OwningSpawner = Spawner.Get())
+	{
+		OwningSpawner->NotifyNPCDied(this);
 	}
 }
 
@@ -419,10 +629,20 @@ void AValhallaNPC::ReapplyTemplate(const FValhallaNPCTemplate& NewTemplate)
 	// Taken before MaxHp moves. A dead NPC has Hp 0 and stays on 0.
 	const float HpFraction = MaxHp > 0.f ? FMath::Clamp(Hp / MaxHp, 0.f, 1.f) : 1.f;
 
+	// Only a name that came from the template follows the template; a type's
+	// NameOverride or a spawn point's label stays put.
+	const bool bNameFromTemplate = NameOverride.IsEmpty() && DisplayName == Template.Name;
+
 	Template = NewTemplate;
 
 	TemplateId = NewTemplate.Id;
-	DisplayName = NewTemplate.Name;
+	if (bNameFromTemplate)
+	{
+		DisplayName = NewTemplate.Name;
+	}
+	bFriendly = NewTemplate.Type == EValhallaNPCType::Npc;
+	BodyScale = ResolveBodyScale(NewTemplate);
+	BodyColor = NewTemplate.SpriteColor;
 	Level = FMath::Max(1, NewTemplate.Level);
 	MaxHp = NewTemplate.Hp;
 	Hp = bAlive ? FMath::Max(1.f, MaxHp * HpFraction) : 0.f;

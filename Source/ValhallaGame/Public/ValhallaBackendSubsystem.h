@@ -291,6 +291,8 @@ using FValhallaCharacterCallback = TFunction<void(bool, const FValhallaCharacter
 using FValhallaVerifyCallback = TFunction<void(bool, const FValhallaVerifiedToken& /*Verified*/, const FString& /*Error*/)>;
 using FValhallaLoadCallback = TFunction<void(bool, const FValhallaLoadedCharacter& /*Character*/, const FString& /*Error*/)>;
 using FValhallaSimpleCallback = TFunction<void(bool /*bSuccess*/, const FString& /*Error*/)>;
+/** The raw parsed body, for the admin account routes whose answer goes straight back to the dashboard. */
+using FValhallaJsonCallback = TFunction<void(bool /*bSuccess*/, int32 /*StatusCode*/, const TSharedPtr<FJsonObject>& /*Json*/, const FString& /*Error*/)>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  The subsystem
@@ -377,6 +379,21 @@ public:
 
 	/** `GET /api/health` — is the backend up at all. Used by the front end's banner. */
 	void Health(FValhallaSimpleCallback OnDone);
+
+	// ── Account admin (X-Server-Secret; driven by the admin API) ────────
+
+	/**
+	 * `POST /api/accounts/ban`. Identify the account by UserId (> 0) or, when
+	 * that is zero, by Username. Minutes <= 0 is a permanent ban. `By` is the
+	 * name written to `users.banned_by`.
+	 */
+	void BanAccount(int32 UserId, const FString& Username, double Minutes, const FString& Reason, const FString& By, FValhallaJsonCallback OnDone);
+
+	/** `POST /api/accounts/unban`, same identification rules as BanAccount. */
+	void UnbanAccount(int32 UserId, const FString& Username, FValhallaJsonCallback OnDone);
+
+	/** `GET /api/accounts/bans` — every ban still in force. */
+	void ListBans(FValhallaJsonCallback OnDone);
 
 	// ── Pure helpers ────────────────────────────────────────────────────
 

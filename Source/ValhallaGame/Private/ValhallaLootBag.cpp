@@ -2,6 +2,7 @@
 
 #include "ValhallaLootBag.h"
 
+#include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -54,6 +55,19 @@ AValhallaLootBag::AValhallaLootBag()
 	ProxyMesh->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	ProxyMesh->SetCollisionResponseToAllChannels(ECR_Ignore);
 	ProxyMesh->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+
+	// The click target: bigger than the bag, invisible, and the only thing in
+	// the game on the Interact channel. Attached with an absolute scale so the
+	// proxy's 0.32 does not shrink it.
+	ClickTarget = CreateDefaultSubobject<USphereComponent>(TEXT("ClickTarget"));
+	ClickTarget->SetupAttachment(ProxyMesh);
+	ClickTarget->SetUsingAbsoluteScale(true);
+	ClickTarget->InitSphereRadius(ClickRadius);
+	ClickTarget->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	ClickTarget->SetCollisionResponseToAllChannels(ECR_Ignore);
+	ClickTarget->SetCollisionResponseToChannel(InteractChannel, ECR_Block);
+	ClickTarget->SetGenerateOverlapEvents(false);
+	ClickTarget->SetHiddenInGame(true);
 
 	bReplicates = true;
 	SetReplicateMovement(false);

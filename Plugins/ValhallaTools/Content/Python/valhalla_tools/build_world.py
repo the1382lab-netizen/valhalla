@@ -75,6 +75,34 @@ SUBLEVELS = [
     ("/Game/Valhalla/Maps/Zones/L_Desert", unreal.Vector(40000.0, 0.0, 0.0)),
 ]
 
+#: Hand-authored gameplay content per zone — today the NPC Spawn Points — at the
+#: same offset as the zone it belongs to. These are created once, empty, and
+#: **never cleared or rebuilt** by this script: they are where a designer works
+#: in the Unreal editor, so a zone rebuild must not cost them anything.
+GAMEPLAY_SUBLEVELS = [
+    ("/Game/Valhalla/Maps/Zones/L_Grasslands_Gameplay", unreal.Vector(0.0, 0.0, 0.0)),
+    ("/Game/Valhalla/Maps/Zones/L_Desert_Gameplay", unreal.Vector(40000.0, 0.0, 0.0)),
+]
+
+
+def ensure_gameplay_levels():
+    """Create any missing gameplay sublevel, empty. Never touches an existing one.
+
+    Leaves the editor on whatever level `new_level` opened, so call it before
+    opening `L_World`.
+    """
+    created = []
+    for level_path, _offset in GAMEPLAY_SUBLEVELS:
+        if unreal.EditorAssetLibrary.does_asset_exist(level_path):
+            continue
+        if not _levels().new_level(level_path):
+            raise RuntimeError("new_level({}) returned False".format(level_path))
+        if not _levels().save_current_level():
+            raise RuntimeError("could not save {}".format(level_path))
+        created.append(level_path)
+        _log("created empty gameplay sublevel {}".format(level_path))
+    return created
+
 #: The toon outline. Authored by `build_toon.py`.
 OUTLINE_MATERIAL = "/Game/Valhalla/Materials/PP_Outline"
 
@@ -368,11 +396,11 @@ def build_post_process():
 
 
 def attach_sublevels():
-    """Add both zones as always-loaded streaming sublevels at their offsets."""
+    """Add both zones, and their gameplay sublevels, as always-loaded streaming sublevels at their offsets."""
     world = unreal.EditorLevelLibrary.get_editor_world()
     added = []
 
-    for level_path, offset in SUBLEVELS:
+    for level_path, offset in SUBLEVELS + GAMEPLAY_SUBLEVELS:
         transform = unreal.Transform(location=offset,
                                      rotation=unreal.Rotator(),
                                      scale=unreal.Vector(1.0, 1.0, 1.0))
@@ -470,6 +498,7 @@ def build_all():
         "grasslands": build_zone_level(build_grasslands.LEVEL_PATH, build_grasslands),
         "desert": build_zone_level(build_desert.LEVEL_PATH, build_desert),
     }
+    result["gameplayLevelsCreated"] = ensure_gameplay_levels()
     result["world"] = build_world()
 
     _log("VALHALLA_WORLD_DONE " + str(result))

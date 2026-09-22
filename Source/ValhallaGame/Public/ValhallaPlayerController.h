@@ -21,7 +21,7 @@ struct FInputActionInstance;
  * The port of client/src/systems/InputManager.ts.
  *
  * Every Enhanced Input asset this controller needs is built in code, in
- * SetupInputComponent: one UInputMappingContext and eleven UInputActions,
+ * SetupInputComponent: one UInputMappingContext and eighteen UInputActions,
  * NewObject'd into this controller and thrown away with it. The project
  * therefore contains no input .uassets, which is deliberate — the key bindings
  * are part of the port and belong in source control as source, not as a binary
@@ -100,10 +100,9 @@ public:
 	void OnPrimaryClick();
 	virtual void OnPrimaryClick_Implementation();
 
-	/** Right mouse button. */
-	UFUNCTION(BlueprintNativeEvent, Category = "Valhalla|Input")
-	void OnSecondaryClick();
-	virtual void OnSecondaryClick_Implementation();
+	// The right mouse button is the camera: hold and drag to orbit (see
+	// BeginCameraOrbit). It no longer targets, attacks or loots — attacking is
+	// the auto melee / auto ranged skills on the action bar.
 
 	/** K — the 1.0 skill book toggle. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Valhalla|Input")
@@ -182,6 +181,18 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerLootAll(AValhallaLootBag* Bag);
 
+	/** The bag whose loot window is open on this client, or null. */
+	AValhallaLootBag* GetOpenLootBag() const { return OpenLootBag.Get(); }
+
+	/**
+	 * Open a bag's loot window if it is within reach; otherwise say so in chat
+	 * ("You are too far away to loot that."), as EverQuest did. Client side.
+	 */
+	void TryOpenLootBag(AValhallaLootBag* Bag);
+
+	/** Close the loot window (the HUD's loot panel). */
+	void CloseLootWindow();
+
 	// ── Party — GameRoom.ts:364-479 ─────────────────────────────────────
 
 	/** GameRoom.ts:364 PARTY_INVITE. */
@@ -232,8 +243,39 @@ public:
 	/** The last few lines, oldest first. Client-side presentation state for the HUD. */
 	const TArray<FValhallaChatMessage>& GetChatLog() const { return ChatLog; }
 
-	/** How many lines the HUD keeps. GameScene's CHAT_MAX_MESSAGES, shrunk to what fits. */
-	static constexpr int32 ChatLogMaxLines = 6;
+	/** How many lines the client keeps. GameScene's CHAT_MAX_MESSAGES (ui-config `chat.maxMessages`). */
+	static constexpr int32 ChatLogMaxLines = 50;
+
+	/** Every line ever received, so the HUD can tell a new line from a trimmed log. */
+	int32 GetChatReceivedCount() const { return ChatReceivedCount; }
+
+	/** A client-side system line (a usage message the chat box produced). Never sent. */
+	void AddLocalChatLine(const FValhallaChatMessage& Line);
+
+	// ── Phase 8b: the HUD ───────────────────────────────────────────────
+
+	/** The UMG game HUD, or null on a server or before AValhallaHUD has made it. */
+	class UValhallaGameHUDWidget* GetGameHUD() const;
+
+	/**
+	 * True while the chat box has keyboard focus. Movement, the action bar
+	 * keys and the panel toggles are ignored while it is set — belt to the
+	 * UI-only input mode's braces, which already stops them reaching Enhanced
+	 * Input at all.
+	 */
+	void SetUiTyping(bool bTyping) { bUiTyping = bTyping; }
+	bool IsUiTyping() const { return bUiTyping; }
+
+	/**
+	 * GameRoom.ts:414 — the invitee is told. 1.0 said so in chat only; 2.0
+	 * also raises the HUD's Accept / Decline prompt from this.
+	 */
+	UFUNCTION(Client, Reliable)
+	void ClientPartyInvite(const FString& InviterName);
+
+	/** Who invited us, or empty. Cleared by accept, decline, a party update or the invite's expiry. */
+	const FString& GetPendingPartyInviter() const { return PendingPartyInviter; }
+	void ClearPendingPartyInvite() { PendingPartyInviter.Reset(); }
 
 protected:
 	/**
@@ -252,8 +294,17 @@ protected:
 	/** The player state, as everything in this file wants it. */
 	AValhallaPlayerState* GetValhallaPlayerState() const;
 
-	/** Under the cursor, if it is a loot bag within reach. Null otherwise. */
+	/**
+	 * The loot bag under the cursor, reach or not, found on the dedicated
+	 * Interact channel so nothing standing in front of the bag can hide it.
+	 */
 	AValhallaLootBag* TraceForLootBagUnderCursor() const;
+
+public:
+	/** Print one system line in this client's chat log. Client side. */
+	void ShowLocalSystemMessage(const FString& Text);
+
+protected:
 
 	/** See GetChatLog. Trimmed to ChatLogMaxLines as lines arrive. */
 	TArray<FValhallaChatMessage> ChatLog;
@@ -268,8 +319,22 @@ protected:
 	void HandleActionBar(const FInputActionInstance& Instance);
 
 	void HandlePrimaryClick();
-	void HandleSecondaryClick();
 	void HandleToggleSkills();
+	/** I and B: the combined character + inventory panel, as in 1.0. */
+	void HandleToggleInventory();
+	/** Enter: open the chat box. */
+	void HandleOpenChat();
+	/** Escape: close the topmost panel. */
+	void HandleEscape();
+
+	/** Right mouse pressed: start orbiting, hide and park the cursor. */
+	void BeginCameraOrbit();
+	/** Right mouse released: stop orbiting, put the cursor back where it was. */
+	void EndCameraOrbit();
+	/** Mouse delta while orbiting. Ignored otherwise, so the cursor still aims. */
+	void HandleCameraLook(const FInputActionValue& Value);
+	/** Mouse wheel. */
+	void HandleCameraZoom(const FInputActionValue& Value);
 
 	// ── Input objects, all built in SetupInputComponent ─────────────────
 
@@ -289,8 +354,40 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> PrimaryClickAction;
 
+	/** Phase 8b: I — inventory. */
 	UPROPERTY(Transient)
-	TObjectPtr<UInputAction> SecondaryClickAction;
+	TObjectPtr<UInputAction> InventoryAction;
+
+	/** Phase 8b: B — character (the same combined panel as I, as in 1.0). */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> CharacterAction;
+
+	/** Phase 8b: Enter — open the chat box. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> ChatAction;
+
+	/** Phase 8b: Escape — close the topmost panel. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> EscapeAction;
+
+	/** Right mouse button, held. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> CameraOrbitAction;
+
+	/** Mouse2D delta. Only applied while CameraOrbitAction is held. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> CameraLookAction;
+
+	/** Mouse wheel. */
+	UPROPERTY(Transient)
+	TObjectPtr<UInputAction> CameraZoomAction;
+
+	/**
+	 * Degrees of orbit per unit of Mouse2D delta. The project's input config
+	 * scales raw mouse pixels by 0.07 (DefaultInput.ini, AxisConfig), so this
+	 * is roughly a quarter of a degree per pixel.
+	 */
+	static constexpr float CameraOrbitDegreesPerUnit = 3.5f;
 
 	/** The Sobel silhouette material. See build_toon.py for how it is authored. */
 	static constexpr const TCHAR* OutlineMaterialPath = TEXT("/Game/Valhalla/Materials/PP_Outline");
@@ -304,6 +401,27 @@ protected:
 private:
 	/** Recompute AimWorldPoint / AimYaw from the cursor and push them to the pawn. */
 	void UpdateAimFromCursor();
+
+	/** True while the right mouse button is held. */
+	bool bCameraOrbiting = false;
+
+	/** See GetOpenLootBag. Closed automatically when out of reach or emptied. */
+	TWeakObjectPtr<AValhallaLootBag> OpenLootBag;
+
+	/** Where the cursor was when the orbit started, restored when it ends. */
+	FVector2D OrbitCursorRestore = FVector2D::ZeroVector;
+
+	/** See SetUiTyping. */
+	bool bUiTyping = false;
+
+	/** See GetChatReceivedCount. */
+	int32 ChatReceivedCount = 0;
+
+	/** See GetPendingPartyInviter. */
+	FString PendingPartyInviter;
+
+	/** Client world time the invite arrived, for the prompt's expiry. */
+	double PendingPartyInviteAt = 0.0;
 
 	/** Ground-plane point under the cursor, at the character's foot height. */
 	FVector AimWorldPoint = FVector::ZeroVector;

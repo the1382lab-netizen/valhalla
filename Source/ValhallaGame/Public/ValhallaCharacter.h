@@ -157,6 +157,26 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Camera")
 	float GetCameraWorldYaw() const;
 
+	/**
+	 * Orbit the camera around the character — the right-mouse drag.
+	 *
+	 * Local presentation only: the boom's rotation is absolute and never
+	 * replicated, and the one thing gameplay reads from it (the WASD basis, via
+	 * GetCameraWorldYaw) is already client-side. Pitch is clamped so the camera
+	 * can neither go under the floor nor look straight down the character's neck.
+	 */
+	void AddCameraOrbit(float DeltaYawDegrees, float DeltaPitchDegrees);
+
+	/** Mouse wheel. Positive steps pull the camera out, negative push it in. */
+	void AddCameraZoom(float Steps);
+
+	/** Camera limits. The defaults (-45 pitch, 1500 arm) are the 1.0 isometric view. */
+	static constexpr float CameraPitchMin = -80.f;
+	static constexpr float CameraPitchMax = -15.f;
+	static constexpr float CameraArmMin = 500.f;
+	static constexpr float CameraArmMax = 2600.f;
+	static constexpr float CameraArmStep = 150.f;
+
 protected:
 	/** Server-side half of UpdateAimYaw. Unreliable: the next one supersedes it. */
 	UFUNCTION(Server, Unreliable)

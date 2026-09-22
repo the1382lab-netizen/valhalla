@@ -5,6 +5,7 @@
 #include "Camera/CameraComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/SpringArmComponent.h"
@@ -19,6 +20,8 @@
 #include "ValhallaFogRenderer.h"
 #include "ValhallaGame.h"
 #include "ValhallaGameState.h"
+#include "ValhallaGameHUDWidget.h"
+#include "ValhallaHUD.h"
 #include "ValhallaInventoryLibrary.h"
 #include "ValhallaLootBag.h"
 #include "ValhallaNPC.h"
@@ -193,9 +196,40 @@ void AValhallaPlayerController::SetupInputComponent()
 	PrimaryClickAction->ValueType = EInputActionValueType::Boolean;
 	ValhallaMappingContext->MapKey(PrimaryClickAction, EKeys::LeftMouseButton);
 
-	SecondaryClickAction = NewObject<UInputAction>(this, TEXT("IA_SecondaryClick"));
-	SecondaryClickAction->ValueType = EInputActionValueType::Boolean;
-	ValhallaMappingContext->MapKey(SecondaryClickAction, EKeys::RightMouseButton);
+	// Camera: hold the right button and drag to orbit, wheel to zoom. 2.0 has a
+	// perspective camera that can turn, so the 1.0 right-click (attack) moved
+	// onto the action bar's auto-attack skills.
+	CameraOrbitAction = NewObject<UInputAction>(this, TEXT("IA_CameraOrbit"));
+	CameraOrbitAction->ValueType = EInputActionValueType::Boolean;
+	ValhallaMappingContext->MapKey(CameraOrbitAction, EKeys::RightMouseButton);
+
+	CameraLookAction = NewObject<UInputAction>(this, TEXT("IA_CameraLook"));
+	CameraLookAction->ValueType = EInputActionValueType::Axis2D;
+	ValhallaMappingContext->MapKey(CameraLookAction, EKeys::Mouse2D);
+
+	CameraZoomAction = NewObject<UInputAction>(this, TEXT("IA_CameraZoom"));
+	CameraZoomAction->ValueType = EInputActionValueType::Axis1D;
+	ValhallaMappingContext->MapKey(CameraZoomAction, EKeys::MouseWheelAxis);
+
+	// Phase 8b: the HUD's panels. I and B open the same combined character +
+	// inventory panel, as 1.0's GameScene did; Enter opens the chat box, and
+	// Escape closes whatever is on top. While the chat box has focus the
+	// controller is in UI-only input mode, so none of these (nor WASD) fire.
+	InventoryAction = NewObject<UInputAction>(this, TEXT("IA_Inventory"));
+	InventoryAction->ValueType = EInputActionValueType::Boolean;
+	ValhallaMappingContext->MapKey(InventoryAction, EKeys::I);
+
+	CharacterAction = NewObject<UInputAction>(this, TEXT("IA_Character"));
+	CharacterAction->ValueType = EInputActionValueType::Boolean;
+	ValhallaMappingContext->MapKey(CharacterAction, EKeys::B);
+
+	ChatAction = NewObject<UInputAction>(this, TEXT("IA_Chat"));
+	ChatAction->ValueType = EInputActionValueType::Boolean;
+	ValhallaMappingContext->MapKey(ChatAction, EKeys::Enter);
+
+	EscapeAction = NewObject<UInputAction>(this, TEXT("IA_Escape"));
+	EscapeAction->ValueType = EInputActionValueType::Boolean;
+	ValhallaMappingContext->MapKey(EscapeAction, EKeys::Escape);
 
 	// ── Bind ────────────────────────────────────────────────────────────
 	EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &AValhallaPlayerController::HandleMove);
@@ -207,7 +241,15 @@ void AValhallaPlayerController::SetupInputComponent()
 
 	EnhancedInput->BindAction(ToggleSkillsAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleToggleSkills);
 	EnhancedInput->BindAction(PrimaryClickAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandlePrimaryClick);
-	EnhancedInput->BindAction(SecondaryClickAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleSecondaryClick);
+	EnhancedInput->BindAction(CameraOrbitAction, ETriggerEvent::Started, this, &AValhallaPlayerController::BeginCameraOrbit);
+	EnhancedInput->BindAction(CameraOrbitAction, ETriggerEvent::Completed, this, &AValhallaPlayerController::EndCameraOrbit);
+	EnhancedInput->BindAction(CameraOrbitAction, ETriggerEvent::Canceled, this, &AValhallaPlayerController::EndCameraOrbit);
+	EnhancedInput->BindAction(CameraLookAction, ETriggerEvent::Triggered, this, &AValhallaPlayerController::HandleCameraLook);
+	EnhancedInput->BindAction(CameraZoomAction, ETriggerEvent::Triggered, this, &AValhallaPlayerController::HandleCameraZoom);
+	EnhancedInput->BindAction(InventoryAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleToggleInventory);
+	EnhancedInput->BindAction(CharacterAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleToggleInventory);
+	EnhancedInput->BindAction(ChatAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleOpenChat);
+	EnhancedInput->BindAction(EscapeAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleEscape);
 
 	// ── Activate ────────────────────────────────────────────────────────
 	if (ULocalPlayer* LocalPlayer = GetLocalPlayer())
@@ -215,8 +257,8 @@ void AValhallaPlayerController::SetupInputComponent()
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 		{
 			Subsystem->AddMappingContext(ValhallaMappingContext, MappingContextPriority);
-			UE_LOG(LogValhallaGame, Log, TEXT("Enhanced Input ready: WASD + 1-8 + K + mouse (%d actions, built in code)."),
-				ActionBarActions.Num() + 4);
+			UE_LOG(LogValhallaGame, Log, TEXT("Enhanced Input ready: WASD + 1-8 + K + I/B + Enter + Esc + mouse + RMB orbit + wheel zoom (%d actions, built in code)."),
+				ActionBarActions.Num() + 10);
 		}
 	}
 }
@@ -225,9 +267,29 @@ void AValhallaPlayerController::PlayerTick(float DeltaTime)
 {
 	Super::PlayerTick(DeltaTime);
 
-	if (IsLocalController())
+	// While orbiting the cursor is hidden and parked, so it is not aiming at
+	// anything; keep the last aim rather than aiming at wherever it was parked.
+	if (IsLocalController() && !bCameraOrbiting)
 	{
 		UpdateAimFromCursor();
+	}
+
+	// The loot window follows the bag: it closes when the bag is emptied (and
+	// destroyed) or when the player walks out of reach.
+	if (IsLocalController() && !OpenLootBag.IsExplicitlyNull())
+	{
+		const AValhallaLootBag* Bag = OpenLootBag.Get();
+		if (!Bag || !Bag->IsWithinReach(GetPawn()))
+		{
+			CloseLootWindow();
+		}
+	}
+
+	// The invite prompt expires with the server's invite (ValhallaPartyInviteExpirySeconds).
+	if (IsLocalController() && !PendingPartyInviter.IsEmpty() && GetWorld()
+		&& GetWorld()->GetTimeSeconds() - PendingPartyInviteAt > ValhallaPartyInviteExpirySeconds)
+	{
+		PendingPartyInviter.Reset();
 	}
 }
 
@@ -279,6 +341,13 @@ void AValhallaPlayerController::UpdateAimFromCursor()
 
 void AValhallaPlayerController::HandleMove(const FInputActionValue& Value)
 {
+	// Typing in the chat box. UI-only input mode already keeps the keys away
+	// from Enhanced Input; this covers the frame the mode switches on.
+	if (bUiTyping)
+	{
+		return;
+	}
+
 	APawn* ControlledPawn = GetPawn();
 	if (!ControlledPawn)
 	{
@@ -289,6 +358,16 @@ void AValhallaPlayerController::HandleMove(const FInputActionValue& Value)
 	if (Axis.IsNearlyZero())
 	{
 		return;
+	}
+
+	// Frozen by an admin. The server has also stopped the movement component;
+	// this keeps the client from predicting steps the server will refuse.
+	if (const AValhallaPlayerState* ValhallaPS = GetValhallaPlayerState())
+	{
+		if (ValhallaPS->bAdminFrozen)
+		{
+			return;
+		}
 	}
 
 	// MovementSystem.ts:30-34 rotated the input vector 45 degrees clockwise so
@@ -312,6 +391,11 @@ void AValhallaPlayerController::HandleMove(const FInputActionValue& Value)
 
 void AValhallaPlayerController::HandleActionBar(const FInputActionInstance& Instance)
 {
+	if (bUiTyping)
+	{
+		return;
+	}
+
 	const UInputAction* Source = Instance.GetSourceAction();
 	const int32 Index = ActionBarActions.IndexOfByPredicate(
 		[Source](const TObjectPtr<UInputAction>& Candidate) { return Candidate.Get() == Source; });
@@ -327,14 +411,103 @@ void AValhallaPlayerController::HandlePrimaryClick()
 	OnPrimaryClick();
 }
 
-void AValhallaPlayerController::HandleSecondaryClick()
+void AValhallaPlayerController::BeginCameraOrbit()
 {
-	OnSecondaryClick();
+	if (bCameraOrbiting)
+	{
+		return;
+	}
+
+	bCameraOrbiting = true;
+
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	if (GetMousePosition(MouseX, MouseY))
+	{
+		OrbitCursorRestore = FVector2D(MouseX, MouseY);
+	}
+
+	// Hiding the cursor while the button holds the viewport's capture puts the
+	// viewport into relative mouse mode, so the drag never runs out of screen.
+	bShowMouseCursor = false;
+}
+
+void AValhallaPlayerController::EndCameraOrbit()
+{
+	if (!bCameraOrbiting)
+	{
+		return;
+	}
+
+	bCameraOrbiting = false;
+	bShowMouseCursor = true;
+	SetMouseLocation(FMath::RoundToInt(OrbitCursorRestore.X), FMath::RoundToInt(OrbitCursorRestore.Y));
+}
+
+void AValhallaPlayerController::HandleCameraLook(const FInputActionValue& Value)
+{
+	if (!bCameraOrbiting)
+	{
+		return;
+	}
+
+	AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn());
+	if (!ValhallaPawn)
+	{
+		return;
+	}
+
+	// Mouse right turns the view right; mouse up raises the camera's gaze
+	// towards the horizon (MMO convention).
+	const FVector2D Delta = Value.Get<FVector2D>();
+	ValhallaPawn->AddCameraOrbit(Delta.X * CameraOrbitDegreesPerUnit, Delta.Y * CameraOrbitDegreesPerUnit);
+}
+
+void AValhallaPlayerController::HandleCameraZoom(const FInputActionValue& Value)
+{
+	if (AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(GetPawn()))
+	{
+		// Wheel up (positive) zooms in.
+		ValhallaPawn->AddCameraZoom(-Value.Get<float>());
+	}
 }
 
 void AValhallaPlayerController::HandleToggleSkills()
 {
-	OnToggleSkills();
+	if (!bUiTyping)
+	{
+		OnToggleSkills();
+	}
+}
+
+void AValhallaPlayerController::HandleToggleInventory()
+{
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD(); Hud && !bUiTyping)
+	{
+		Hud->ToggleInventory();
+	}
+}
+
+void AValhallaPlayerController::HandleOpenChat()
+{
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD(); Hud && !Hud->IsChatOpen())
+	{
+		Hud->OpenChat();
+	}
+}
+
+void AValhallaPlayerController::HandleEscape()
+{
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD())
+	{
+		Hud->CloseTopmost();
+	}
+}
+
+UValhallaGameHUDWidget* AValhallaPlayerController::GetGameHUD() const
+{
+	const AValhallaHUD* Hud = Cast<AValhallaHUD>(GetHUD());
+	return Hud ? Hud->GetGameHUD() : nullptr;
 }
 
 // ── Targeting ───────────────────────────────────────────────────────────
@@ -741,8 +914,16 @@ void AValhallaPlayerController::ServerPartyLeave_Implementation()
 	}
 }
 
+void AValhallaPlayerController::ClientPartyInvite_Implementation(const FString& InviterName)
+{
+	PendingPartyInviter = InviterName;
+	PendingPartyInviteAt = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0;
+	UE_LOG(LogValhallaGame, Log, TEXT("partyInvite received from %s"), *InviterName);
+}
+
 void AValhallaPlayerController::ClientPartyUpdate_Implementation(int32 InPartyId, const TArray<FString>& MemberNames)
 {
+	PendingPartyInviter.Reset();
 	UE_LOG(LogValhallaGame, Log, TEXT("partyUpdate received: party %d with %d member(s): %s"),
 		InPartyId, MemberNames.Num(), *FString::Join(MemberNames, TEXT(", ")));
 }
@@ -923,6 +1104,19 @@ void AValhallaPlayerController::ServerChat_Implementation(const FString& Channel
 		return;
 	}
 
+	// Muted by an admin: tell them, deliver nothing. Checked after the
+	// __system escape so usage lines still reach a muted player.
+	if (Sender->AdminMutedUntil > Now)
+	{
+		FValhallaChatMessage Muted;
+		Muted.Channel = EValhallaChatChannel::System;
+		Muted.Message = FString::Printf(TEXT("You are muted for another %d minute(s)."),
+			FMath::Max(1, FMath::CeilToInt((Sender->AdminMutedUntil - Now) / 60.0)));
+		Muted.Timestamp = Now;
+		ClientChatMessage(Muted);
+		return;
+	}
+
 	EValhallaChatChannel Parsed;
 	if (!ParseChatChannel(Channel, Parsed))
 	{
@@ -1050,9 +1244,20 @@ void AValhallaPlayerController::ServerChat_Implementation(const FString& Channel
 	}
 }
 
+void AValhallaPlayerController::AddLocalChatLine(const FValhallaChatMessage& Line)
+{
+	ChatLog.Add(Line);
+	++ChatReceivedCount;
+	while (ChatLog.Num() > ChatLogMaxLines)
+	{
+		ChatLog.RemoveAt(0);
+	}
+}
+
 void AValhallaPlayerController::ClientChatMessage_Implementation(const FValhallaChatMessage& Line)
 {
 	ChatLog.Add(Line);
+	++ChatReceivedCount;
 	while (ChatLog.Num() > ChatLogMaxLines)
 	{
 		ChatLog.RemoveAt(0);
@@ -1108,36 +1313,80 @@ void AValhallaPlayerController::OnActionBarPressed_Implementation(int32 Slot)
 AValhallaLootBag* AValhallaPlayerController::TraceForLootBagUnderCursor() const
 {
 	FHitResult Hit;
-	if (!GetHitResultUnderCursor(ECC_Visibility, /*bTraceComplex=*/false, Hit))
+	if (!GetHitResultUnderCursor(AValhallaLootBag::InteractChannel, /*bTraceComplex=*/false, Hit))
 	{
 		return nullptr;
 	}
+	return Cast<AValhallaLootBag>(Hit.GetActor());
+}
 
-	AValhallaLootBag* Bag = Cast<AValhallaLootBag>(Hit.GetActor());
+void AValhallaPlayerController::ShowLocalSystemMessage(const FString& Text)
+{
+	FValhallaChatMessage Line;
+	Line.Channel = EValhallaChatChannel::System;
+	Line.Message = Text;
+	Line.Timestamp = UValhallaCombatLibrary::GetServerTime(this);
+	// A client RPC called on the owning client runs locally: this is the same
+	// path a server-sent system line takes into the chat log.
+	ClientChatMessage(Line);
+}
+
+void AValhallaPlayerController::TryOpenLootBag(AValhallaLootBag* Bag)
+{
 	if (!Bag)
 	{
-		return nullptr;
+		return;
 	}
 
-	// The client's reach test is presentational only — it decides whether the
-	// click is worth an RPC. The server re-runs it against its own positions in
-	// ServerLootItem / ServerLootAll, and that one is the rule.
-	return Bag->IsWithinReach(GetPawn()) ? Bag : nullptr;
+	// The client's reach test is presentational only — it decides whether to
+	// open the window. The server re-runs it in ServerLootItem / ServerLootAll
+	// against its own positions, and that one is the rule.
+	if (!Bag->IsWithinReach(GetPawn()))
+	{
+		ShowLocalSystemMessage(TEXT("You are too far away to loot that."));
+		return;
+	}
+
+	OpenLootBag = Bag;
+
+	// Phase 8b: the window is the HUD's UMG loot panel.
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD())
+	{
+		Hud->OpenLootPanel(Bag);
+	}
+}
+
+void AValhallaPlayerController::CloseLootWindow()
+{
+	OpenLootBag = nullptr;
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD(); Hud && Hud->IsLootPanelOpen())
+	{
+		Hud->CloseLootPanel();
+	}
 }
 
 void AValhallaPlayerController::OnPrimaryClick_Implementation()
 {
-	// A bag under the cursor beats a target under it: something you can pick up
-	// is never something you want to select.
-	//
-	// 1.0 put both loot actions on the right button (GameScene's bag panel:
-	// right-click a slot to take it, and a separate "Loot All" button). 2.0 has
-	// no bag window to open yet, so the two actions are split across the two
-	// buttons instead — primary takes everything, secondary takes one slot.
-	// Phase 8's bag panel restores the 1.0 arrangement.
+	// ── The bag labels first ────────────────────────────────────────────
+	// The HUD draws a "Loot (n)" label over every bag, on top of the world, so
+	// it wins over anything the cursor also happens to be over in 3D. The loot
+	// window itself is the UMG panel (Phase 8b): a click on it is consumed by
+	// Slate and never reaches this handler.
+	float MouseX = 0.f;
+	float MouseY = 0.f;
+	if (AValhallaHUD* ValhallaHUD = Cast<AValhallaHUD>(GetHUD()); ValhallaHUD && GetMousePosition(MouseX, MouseY))
+	{
+		if (AValhallaLootBag* Bag = ValhallaHUD->HitTestLootLabel(FVector2D(MouseX, MouseY)))
+		{
+			TryOpenLootBag(Bag);
+			return;
+		}
+	}
+
+	// ── A bag in the world, on the Interact channel ─────────────────────
 	if (AValhallaLootBag* Bag = TraceForLootBagUnderCursor())
 	{
-		ServerLootAll(Bag);
+		TryOpenLootBag(Bag);
 		return;
 	}
 
@@ -1155,51 +1404,15 @@ void AValhallaPlayerController::OnPrimaryClick_Implementation()
 	ServerSetTarget(Hit);
 }
 
-void AValhallaPlayerController::OnSecondaryClick_Implementation()
-{
-	// Right-clicking a bag takes one slot — the 1.0 gesture, minus the panel.
-	// See OnPrimaryClick for why the two loot actions are split this way.
-	if (AValhallaLootBag* Bag = TraceForLootBagUnderCursor())
-	{
-		ServerLootItem(Bag, 0);
-		return;
-	}
-
-	UValhallaSkillComponent* Skills = GetSkillComponent();
-	if (!Skills)
-	{
-		return;
-	}
-
-	// GameScene.ts:833 — a right click on an NPC also selects it, so attacking
-	// something you have not selected is one click rather than two.
-	AActor* Hit = TraceForTargetUnderCursor();
-	if (Hit && Hit != GetCurrentTarget())
-	{
-		ServerSetTarget(Hit);
-	}
-
-	AActor* Target = Hit ? Hit : GetCurrentTarget();
-	if (!Target || !UValhallaCombatLibrary::AreHostile(GetPawn(), Target))
-	{
-		return;
-	}
-
-	// The toggle: right-clicking an enemy you are already attacking stops.
-	if (Skills->bAutoAttacking && Skills->AutoAttackTargetActor == Target)
-	{
-		Skills->ServerStopAutoAttack();
-	}
-	else
-	{
-		Skills->ServerStartAutoAttack(Target);
-	}
-}
-
 void AValhallaPlayerController::OnToggleSkills_Implementation()
 {
-	// Phase 8 opens the skill book here. Until there is a UMG panel to open,
-	// listing the bar in the log is the whole of the feature.
+	// Phase 8b: the skills pane. The log listing stays, because it is what a
+	// headless run can read.
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD())
+	{
+		Hud->ToggleSkills();
+	}
+
 	const UValhallaSkillComponent* Skills = GetSkillComponent();
 	if (!Skills)
 	{
@@ -1244,9 +1457,39 @@ namespace
 	 * The class filter is what picks one of the two: an unfiltered command drives
 	 * the warrior and the wizard at once.
 	 */
-	void ForEachValhallaController(UWorld* World, const FString& ClassFilter, TFunctionRef<void(AValhallaPlayerController&)> Fn)
+	/**
+	 * The world a dev command should act in. A client world has no authority;
+	 * in a one-process PIE (Play As Client, Run Under One Process) the editor
+	 * console hands commands to a *client* world, so the in-process server's
+	 * PIE world is found and used instead. Null when there is none — a remote
+	 * client really cannot act, and must not pretend to.
+	 */
+	UWorld* AuthorityWorldFor(UWorld* World)
 	{
-		if (!World || World->GetNetMode() == NM_Client)
+		if (World && World->GetNetMode() != NM_Client)
+		{
+			return World;
+		}
+#if WITH_EDITOR
+		if (GEngine)
+		{
+			for (const FWorldContext& Context : GEngine->GetWorldContexts())
+			{
+				UWorld* Candidate = Context.World();
+				if (Context.WorldType == EWorldType::PIE && Candidate && Candidate->GetNetMode() != NM_Client)
+				{
+					return Candidate;
+				}
+			}
+		}
+#endif
+		return nullptr;
+	}
+
+	void ForEachValhallaController(UWorld* InWorld, const FString& ClassFilter, TFunctionRef<void(AValhallaPlayerController&)> Fn)
+	{
+		UWorld* World = AuthorityWorldFor(InWorld);
+		if (!World)
 		{
 			// A client copy of the world has no authority; acting there would
 			// silently do nothing, or worse, half of something.
@@ -1448,7 +1691,7 @@ namespace
 		TEXT("Dev only. valhalla.DebugTargetNearest [classId] — select the nearest living NPC."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
-			ForEachValhallaController(World, ClassFilterFromArgs(Args, 0), [World](AValhallaPlayerController& Controller)
+			ForEachValhallaController(World, ClassFilterFromArgs(Args, 0), [](AValhallaPlayerController& Controller)
 			{
 				const APawn* Pawn = Controller.GetPawn();
 				if (!Pawn)
@@ -1459,7 +1702,7 @@ namespace
 				AValhallaNPC* Nearest = nullptr;
 				double NearestDistSq = TNumericLimits<double>::Max();
 
-				for (TActorIterator<AValhallaNPC> It(World); It; ++It)
+				for (TActorIterator<AValhallaNPC> It(Controller.GetWorld()); It; ++It)
 				{
 					if (!It->IsAlive())
 					{
@@ -1665,10 +1908,11 @@ namespace
 				return;
 			}
 
-			ForEachValhallaController(World, ClassFilterFromArgs(Args, 1), [Seconds, World](AValhallaPlayerController& Controller)
+			ForEachValhallaController(World, ClassFilterFromArgs(Args, 1), [Seconds](AValhallaPlayerController& Controller)
 			{
 				APawn* Pawn = Controller.GetPawn();
-				if (!Pawn)
+				UWorld* World = Controller.GetWorld();
+				if (!Pawn || !World)
 				{
 					return;
 				}
@@ -1951,7 +2195,7 @@ namespace
 		TEXT("Dev only. valhalla.DebugLootNearest [classId] — loot all from the nearest loot bag."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 		{
-			ForEachValhallaController(World, ClassFilterFromArgs(Args, 0), [World](AValhallaPlayerController& Controller)
+			ForEachValhallaController(World, ClassFilterFromArgs(Args, 0), [](AValhallaPlayerController& Controller)
 			{
 				const APawn* Pawn = Controller.GetPawn();
 				if (!Pawn)
@@ -1962,7 +2206,7 @@ namespace
 				AValhallaLootBag* Nearest = nullptr;
 				double NearestDistSq = TNumericLimits<double>::Max();
 
-				for (TActorIterator<AValhallaLootBag> It(World); It; ++It)
+				for (TActorIterator<AValhallaLootBag> It(Controller.GetWorld()); It; ++It)
 				{
 					const double DistSq = FVector::DistSquared2D(It->GetActorLocation(), Pawn->GetActorLocation());
 					if (DistSq < NearestDistSq)

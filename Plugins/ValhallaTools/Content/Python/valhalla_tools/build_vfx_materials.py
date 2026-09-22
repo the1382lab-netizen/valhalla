@@ -244,7 +244,10 @@ def _build(package_path, make_mask, translucent=False, glow=1.0):
 #: Emissive gain for the sprite. Tuned in PIE against sunlit grass at the
 #: shipping camera: enough that a gold heal mote reads gold rather than brown,
 #: not so much that a white-hot colour clips everything to white.
-SPRITE_GLOW = 2.5
+#: Phase 8b: 2.5 -> 1.6. At 2.5 the over-bright palette clipped every tint to a
+#: near-white disc; 1.6 with the saturated palette in ValhallaVfxLibrary.cpp
+#: keeps the hue.
+SPRITE_GLOW = 1.6
 #: The ring is additive and already reads as a line; it only needs a lift.
 RING_GLOW = 2.0
 

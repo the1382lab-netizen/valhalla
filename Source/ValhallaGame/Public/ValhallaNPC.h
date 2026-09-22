@@ -9,6 +9,7 @@
 #include "ValhallaNPC.generated.h"
 
 class UStaticMeshComponent;
+class USkeletalMesh;
 class USkeletalMeshComponent;
 class UMaterialInstanceDynamic;
 class AValhallaNPCSpawner;
@@ -39,6 +40,15 @@ struct VALHALLAGAME_API FValhallaNPCBuffInfo
 
 /**
  * One live enemy or friendly NPC. The port of `NPCState` + `NPCSystem`.
+ *
+ * **NPC types are Blueprints of this class.** `/Game/Valhalla/NPCs/BP_NPC_*` is
+ * the library of pre-built NPCs: each one names the npc-templates.json entry it
+ * plays (DefaultTemplateId — stats, behaviour, loot and respawn time stay in the
+ * JSON, where the web editor balances them) and carries its own look (the body
+ * and armour meshes on its components, scale, tint, a fixed name). An
+ * AValhallaNPCSpawner placed in a level spawns one instance of one type. A type
+ * dragged straight into a level also works: it plays its template and stands
+ * itself back up where it was placed after the template's respawn time.
  *
  * There is no AIController, no behaviour tree and no navmesh here, and that is
  * a decision rather than an omission. `NPCSystem.update` is a flat state machine
@@ -103,6 +113,86 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|NPC")
 	TArray<FValhallaNPCBuffInfo> SyncedBuffs;
 
+	/**
+	 * The template's `type` is `npc` rather than `enemy`: a townsperson or a
+	 * merchant. Players cannot attack it and it never aggroes. Replicated
+	 * because the client's own hostility check (can I auto-attack this?) needs
+	 * it and the template itself is server-only.
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|NPC")
+	bool bFriendly = false;
+
+	// ── NPC type (set on a BP_NPC_* Blueprint's Class Defaults) ─────────
+
+	/**
+	 * Which npc-templates.json entry this NPC type plays. The dropdown is read
+	 * from the JSON on disk, so a template added in the web editor shows up
+	 * here as soon as it is saved.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type", meta = (GetOptions = "GetNPCTemplateOptions"))
+	FName DefaultTemplateId;
+
+	/** A fixed name ("Bjorn the Trader"), or empty to use the template's name. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type")
+	FString NameOverride;
+
+	/**
+	 * Put the placeholder chain shirt and full helm on the chest and helm
+	 * slots when this type does not name its own. Turn it off for an NPC whose
+	 * look is exactly the meshes below — including bare-headed.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	bool bWearPlaceholderKit = true;
+
+	/** Armour this type wears, from /Game/Valhalla/Characters/Equipment. Empty = none (or the placeholder). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	TSoftObjectPtr<USkeletalMesh> ChestMeshAsset;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	TSoftObjectPtr<USkeletalMesh> HelmMeshAsset;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	TSoftObjectPtr<USkeletalMesh> LegsMeshAsset;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	TSoftObjectPtr<USkeletalMesh> BootsMeshAsset;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	TSoftObjectPtr<USkeletalMesh> GlovesMeshAsset;
+
+	/** Body scale. 0 uses the template's `spriteSize`. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look", meta = (ClampMin = "0.0", UIMax = "3.0"))
+	float ScaleOverride = 0.f;
+
+	/** Skin tint. Leave alpha at 0 to use the template's `spriteColor`. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
+	FLinearColor TintOverride = FLinearColor(0.f, 0.f, 0.f, 0.f);
+
+	/** npc-templates.json ids, for the DefaultTemplateId dropdown. */
+	UFUNCTION()
+	TArray<FString> GetNPCTemplateOptions() const;
+
+	/**
+	 * Every npc-templates.json id on disk, sorted. Works in the editor, where
+	 * there is no game instance and so no UValhallaDataSubsystem; the tables are
+	 * cached and re-read when the file changes.
+	 */
+	static TArray<FString> ReadTemplateIdsFromDisk();
+
+	/** One template read from disk, for editor previews. False if unknown. */
+	static bool ReadTemplateFromDisk(FName TemplateId, FValhallaNPCTemplate& OutTemplate);
+
+	/** The body scale this type plays a template at: ScaleOverride, else spriteSize. */
+	float ResolveBodyScale(const FValhallaNPCTemplate& ForTemplate) const;
+
+	/**
+	 * The armour meshes this NPC type wears — chest, helm, legs, boots, gloves,
+	 * each null when empty — placeholder kit included. Called on a class
+	 * default object for the spawn point's editor preview, so it never touches
+	 * a live component.
+	 */
+	void GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletalMesh*>& OutPieces) const;
+
 	// ── Server API ──────────────────────────────────────────────────────
 
 	/**
@@ -110,6 +200,12 @@ public:
 	 * @param Spawner The actor that owns it; also its leash anchor. May be null.
 	 */
 	void InitializeFromTemplate(const FValhallaNPCTemplate& Template, const FVector& InHomeLocation, AValhallaNPCSpawner* InSpawner);
+
+	/** The spawn point that owns it, or null for a hand-placed or admin NPC. */
+	AValhallaNPCSpawner* GetSpawner() const { return Spawner.Get(); }
+
+	/** True once InitializeFromTemplate has run. */
+	bool IsInitialized() const { return bInitializedFromTemplate; }
 
 	/**
 	 * NPCSystem.ts:111 `update`, for one NPC, one fixed step.
@@ -138,7 +234,11 @@ public:
 	/** Apply or refresh a buff on this NPC, keeping SyncedBuffs in step. */
 	void ApplyNPCBuff(const FValhallaActiveBuff& Buff);
 
-	/** Kill it now, start the respawn timer, and emit npcDied. */
+	/**
+	 * Kill it now and emit npcDied. A spawn point's NPC tells its spawn point,
+	 * which lets the corpse decay and spawns a fresh instance when its respawn
+	 * time is up; a hand-placed NPC starts its own timer and stands back up.
+	 */
 	void Die(AActor* Killer, double Now);
 
 	/**
@@ -178,6 +278,9 @@ public:
 	/** Where it will run home to. */
 	FVector GetHomeLocation() const { return HomeLocation; }
 
+	/** Move the leash anchor / respawn point. Server only. */
+	void SetHomeLocation(const FVector& InHomeLocation) { HomeLocation = InHomeLocation; }
+
 	/** Who it is currently trying to kill. Null when it is idle. */
 	AActor* GetAggroTarget() const { return AggroTarget.Get(); }
 
@@ -208,6 +311,24 @@ protected:
 	 */
 	void ApplyAppearance();
 
+	/**
+	 * Scale the capsule with the body. Before this, `spriteSize` scaled only the
+	 * mesh, so anything above 1.0 stood its feet below the capsule — and the
+	 * floor. Server and client both run it; the capsule is not replicated.
+	 */
+	void ApplyBodyScale();
+
+	/** The template's scale, replicated so clients size the capsule the same. */
+	UPROPERTY(ReplicatedUsing = OnRep_BodyScale)
+	float BodyScale = 1.f;
+
+	UFUNCTION()
+	void OnRep_BodyScale();
+
+	/** The template's tint as packed 0xRRGGBB, replicated for the same reason. */
+	UPROPERTY(ReplicatedUsing = OnRep_BodyScale)
+	int32 BodyColor = 0;
+
 	/** The animated body — the same rig and the same skeleton a player uses. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> BodyMesh;
@@ -219,6 +340,18 @@ protected:
 	/** `SK_helm_iron_full`, a follower of BodyMesh. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> HelmMesh;
+
+	/** Legs armour, a follower of BodyMesh. Set from LegsMeshAsset. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<USkeletalMeshComponent> LegsMesh;
+
+	/** Boots, a follower of BodyMesh. Set from BootsMeshAsset. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<USkeletalMeshComponent> BootsMesh;
+
+	/** Gloves, a follower of BodyMesh. Set from GlovesMeshAsset. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<USkeletalMeshComponent> GlovesMesh;
 
 	/** Idle / Walk / attack / hit / death. Identical driving to a player's. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
@@ -265,6 +398,9 @@ private:
 
 	/** NPCSystem `respawnAt`, in server-time seconds. 0 while alive. */
 	double RespawnAt = 0.0;
+
+	/** See IsInitialized. */
+	bool bInitializedFromTemplate = false;
 
 	/** NPCSystem `lastAttackTime`, in server-time seconds. */
 	double LastAttackTime = 0.0;

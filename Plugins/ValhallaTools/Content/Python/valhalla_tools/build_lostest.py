@@ -163,10 +163,8 @@ class Builder(object):
         actor = self.place_class(unreal.ValhallaNPCSpawner, "Spawn_" + label, "Gameplay",
                                  x, y, SPAWN_Z)
         actor.set_editor_property("template_id", template)
-        actor.set_editor_property("count", 1)
-        # Zero radius: ComputeHomeLocation returns the spawner's own location, so
+        # One spawn point, one NPC, standing exactly on the marker — so
         # "exactly 1500 cm" is exactly 1500 cm.
-        actor.set_editor_property("spawn_radius", 0.0)
         actor.set_editor_property("debug_label", label)
         self.notes.append("{} at ({:.0f}, {:.0f})".format(label, x, y))
         return actor

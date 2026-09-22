@@ -37,9 +37,6 @@ namespace
 	/** How far off an overlay point a level actor may be before it is a mismatch, cm. */
 	constexpr double OverlayMatchToleranceCm = 128.0;
 
-	/** Overlay coordinates are 2D; a spawner is lifted to roughly standing height. */
-	constexpr double SpawnerZOffsetCm = 8.0;
-
 	/** `type` string -> enum. The 1.0 spellings. */
 	EValhallaOverlayPointType ParsePointType(const FString& Text)
 	{
@@ -585,7 +582,6 @@ void UValhallaZoneSubsystem::LoadOverlays()
 
 	const FString Directory = GetOverlayDirectory();
 	int32 TotalPoints = 0;
-	int32 TotalSpawners = 0;
 
 	for (const FValhallaZoneDef& Zone : Zones)
 	{
@@ -629,8 +625,13 @@ void UValhallaZoneSubsystem::LoadOverlays()
 			{
 			case EValhallaOverlayPointType::EnemySpawn:
 			case EValhallaOverlayPointType::NpcSpawn:
-				SpawnFromOverlayPoint(Zone, Point);
-				++TotalSpawners;
+				// NPC placement moved into Unreal: every NPC now comes from an
+				// AValhallaNPCSpawner placed in the zone's gameplay sublevel.
+				// A leftover overlay entry is reported, never spawned, so an
+				// NPC can never exist twice.
+				UE_LOG(LogValhallaZones, Warning,
+					TEXT("overlay %s point '%s' is an %s; ignored. NPCs are placed in Unreal as NPC Spawn Points now (migrate_overlay_spawns)."),
+					*Zone.ZoneId.ToString(), *Point.Id.ToString(), PointTypeName(Point.Type));
 				break;
 			default:
 				ValidateOverlayPoint(Zone, Point);
@@ -646,8 +647,8 @@ void UValhallaZoneSubsystem::LoadOverlays()
 	bOverlaysLoaded = true;
 
 	UE_LOG(LogValhallaZones, Log,
-		TEXT("overlays-2.0 loaded from %s: %d zones, %d points, %d spawners created."),
-		*Directory, Zones.Num(), TotalPoints, TotalSpawners);
+		TEXT("overlays-2.0 loaded from %s: %d zones, %d points checked; %d NPC spawn points placed in the levels."),
+		*Directory, Zones.Num(), TotalPoints, GetSpawnedSpawnerCount());
 }
 
 void UValhallaZoneSubsystem::ReloadOverlays()
@@ -658,93 +659,23 @@ void UValhallaZoneSubsystem::ReloadOverlays()
 		return;
 	}
 
-	// The spawners go, and with them the NPCs they own: AValhallaNPCSpawner
-	// spawns its group as attached-in-spirit children and a stale group left
-	// behind would double every enemy count on the second reload.
-	int32 Destroyed = 0;
-	for (const TWeakObjectPtr<AActor>& Weak : CreatedSpawners)
-	{
-		if (AValhallaNPCSpawner* Spawner = Cast<AValhallaNPCSpawner>(Weak.Get()))
-		{
-			for (const TWeakObjectPtr<AValhallaNPC>& Npc : Spawner->GetSpawnedNPCs())
-			{
-				if (AActor* NpcActor = Cast<AActor>(Npc.Get()))
-				{
-					NpcActor->Destroy();
-				}
-			}
-			Spawner->Destroy();
-			++Destroyed;
-		}
-	}
-	CreatedSpawners.Reset();
-
-	UE_LOG(LogValhallaZones, Log, TEXT("valhalla.ReloadOverlays: %d spawners destroyed."), Destroyed);
-
+	// Nothing to undo: the overlay only validates level actors now. NPCs come
+	// from the NPC Spawn Points placed in the levels and are left alone.
 	DiscoverZones();
 	LoadOverlays();
 }
 
-void UValhallaZoneSubsystem::SpawnFromOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point)
+int32 UValhallaZoneSubsystem::GetSpawnedSpawnerCount() const
 {
-	UWorld* World = GetWorld();
-	if (!World)
+	int32 Count = 0;
+	if (UWorld* World = GetWorld())
 	{
-		return;
+		for (TActorIterator<AValhallaNPCSpawner> It(World); It; ++It)
+		{
+			++Count;
+		}
 	}
-
-	const FVector Location = Zone.FromZoneLocal(Point.X, Point.Y, SpawnerZOffsetCm);
-
-	if (!Zone.Contains2D(Location))
-	{
-		UE_LOG(LogValhallaZones, Warning,
-			TEXT("overlay %s point '%s' is at zone-local (%.0f, %.0f), outside the zone box; spawned anyway."),
-			*Zone.ZoneId.ToString(), *Point.Id.ToString(), Point.X, Point.Y);
-	}
-
-	// ── Deferred, and it has to be ────────────────────────────────────────
-	//
-	// `AValhallaNPCSpawner` reads `TemplateId` in `BeginPlay`. A plain
-	// `SpawnActor` into a world that has *already* begun play dispatches
-	// BeginPlay from inside the call — before this function gets the chance to
-	// set anything — so the spawner wakes up with `TemplateId` still None,
-	// logs "unknown NPC template 'None'; nothing spawned" and makes nothing.
-	//
-	// That is invisible on the initial load, because there the world has not
-	// begun play yet and BeginPlay comes later; it shows up only on
-	// `valhalla.ReloadOverlays`, which is exactly the path the Phase 6 editor
-	// loop depends on. Deferring makes both paths the same: construct, set the
-	// properties, *then* finish, and BeginPlay runs once with real data.
-	const FTransform SpawnTransform(FRotator::ZeroRotator, Location);
-
-	AValhallaNPCSpawner* Spawner = World->SpawnActorDeferred<AValhallaNPCSpawner>(
-		AValhallaNPCSpawner::StaticClass(), SpawnTransform, /*Owner*/ nullptr, /*Instigator*/ nullptr,
-		ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-
-	if (!Spawner)
-	{
-		UE_LOG(LogValhallaZones, Warning,
-			TEXT("overlay %s point '%s': spawner would not spawn."),
-			*Zone.ZoneId.ToString(), *Point.Id.ToString());
-		return;
-	}
-
-	Spawner->TemplateId = Point.TemplateId;
-	Spawner->Count = Point.Count;
-	Spawner->SpawnRadius = static_cast<float>(Point.Radius);
-	Spawner->DebugLabel = Point.Label.IsEmpty() ? Point.Id.ToString() : Point.Label;
-#if WITH_EDITOR
-	Spawner->SetActorLabel(FString::Printf(TEXT("Overlay_%s_%s"), *Zone.ZoneId.ToString(), *Point.Id.ToString()));
-#endif
-
-	Spawner->FinishSpawning(SpawnTransform);
-
-	CreatedSpawners.Add(Spawner);
-
-	UE_LOG(LogValhallaZones, Log,
-		TEXT("overlay %s: spawner '%s' template '%s' x%d r%.0f at (%.0f, %.0f) [zone-local %.0f, %.0f]"),
-		*Zone.ZoneId.ToString(), *Spawner->DebugLabel, *Point.TemplateId.ToString(),
-		Point.Count, Point.Radius, Location.X, Location.Y, Point.X, Point.Y);
+	return Count;
 }
 
 void UValhallaZoneSubsystem::ValidateOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point)

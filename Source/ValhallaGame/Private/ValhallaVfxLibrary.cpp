@@ -35,20 +35,23 @@ namespace
 	/**
 	 * The four-entry palette.
 	 *
-	 * Deliberately over-bright: every VFX material is additive and unlit, so a
-	 * colour at 1.0 reads as a pale wash rather than as a colour. These are the
-	 * values that survive the tonemapper at the Phase 3 exposure.
+	 * Phase 8b: saturated, and only modestly over-bright. 8a's values
+	 * (1.6/0.42/0.08 and friends) were tuned under a 2.5x sprite glow, which
+	 * together pushed every channel past 1 after the tonemapper and read as a
+	 * near-white wash whatever the tint. With M_ValhallaVfxSprite's glow at 1.6
+	 * the dominant channel lands at ~1.6-1.9 and the others stay low, so a
+	 * wizard's bolt reads violet and a heal reads gold.
 	 */
-	const FLinearColor RedOrange(1.6f, 0.42f, 0.08f, 1.f);
-	const FLinearColor Green(0.22f, 1.5f, 0.35f, 1.f);
-	const FLinearColor BlueViolet(0.55f, 0.35f, 1.8f, 1.f);
-	const FLinearColor Gold(1.7f, 1.25f, 0.35f, 1.f);
+	const FLinearColor RedOrange(1.15f, 0.20f, 0.02f, 1.f);
+	const FLinearColor Green(0.06f, 1.05f, 0.12f, 1.f);
+	const FLinearColor BlueViolet(0.38f, 0.10f, 1.20f, 1.f);
+	const FLinearColor Gold(1.15f, 0.70f, 0.05f, 1.f);
 
 	/** A bow's arrow is wood and fletching, not magic. */
 	const FLinearColor ArrowBrown(0.85f, 0.5f, 0.22f, 1.f);
 
 	/** What an attack with no skill row at all (an NPC's punch) is drawn in. */
-	const FLinearColor NeutralSteel(1.1f, 1.15f, 1.3f, 1.f);
+	const FLinearColor NeutralSteel(0.75f, 0.8f, 0.95f, 1.f);
 
 	const FName ColorParameter(TEXT("Color"));
 	const FName RadiusParameter(TEXT("Radius"));
@@ -123,6 +126,11 @@ bool UValhallaVfxLibrary::IsProjectileSkill(const FValhallaSkillTemplate& Skill)
 	return Skill.bHasProjectile || Skill.Id == SkillFireball || Skill.Id == SkillMagicMissile;
 }
 
+bool UValhallaVfxLibrary::SpawnsProjectileActor(const FValhallaSkillTemplate& Skill)
+{
+	return IsProjectileSkill(Skill) && Skill.Id != SkillMagicMissile;
+}
+
 FLinearColor UValhallaVfxLibrary::ColorForSkill(const FValhallaSkillTemplate& Skill, int32 ClassColorPacked)
 {
 	if (Skill.ScalingStat == StatStrength)
@@ -147,7 +155,7 @@ FLinearColor UValhallaVfxLibrary::ColorForSkill(const FValhallaSkillTemplate& Sk
 	// stamina skill does not read as a dim version of everything else.
 	if (ClassColorPacked != 0)
 	{
-		return FromPackedColor(ClassColorPacked) * 1.8f;
+		return FromPackedColor(ClassColorPacked) * 1.2f;
 	}
 	return NeutralSteel;
 }
@@ -284,7 +292,7 @@ FValhallaVfxPlan UValhallaVfxLibrary::ResolveForSkillId(const UObject* WorldCont
 		FValhallaVfxPlan Plan;
 		Plan.System = EValhallaVfx::Slash;
 		Plan.Attach = EValhallaVfxAttach::ActorFeet;
-		Plan.Color = ClassColor != 0 ? FromPackedColor(ClassColor) * 1.8f : NeutralSteel;
+		Plan.Color = ClassColor != 0 ? FromPackedColor(ClassColor) * 1.2f : NeutralSteel;
 		Plan.Radius = 95.f;
 		return Plan;
 	}
@@ -676,8 +684,14 @@ void UValhallaVfxSubsystem::HandleCombatEvent(const FValhallaCombatEvent& Event)
 				UValhallaVfxLibrary::InstantBoltSeconds);
 
 			// Magic Missile never misses and never detonates, so nothing else
-			// would ever mark where it landed.
-			if (Event.Target && Event.Target != Event.Instigator)
+			// would ever mark where it landed. A fireball *does* detonate: its
+			// spellImpact draws the burst where it actually lands, so drawing
+			// one on the selected target at cast time as well was a second,
+			// wrong impact (Phase 8a's leftover).
+			const UValhallaDataSubsystem* Data = FindData(this);
+			const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(Event.SkillId) : nullptr;
+			const bool bHasProjectileActor = Skill && UValhallaVfxLibrary::SpawnsProjectileActor(*Skill);
+			if (Event.Target && Event.Target != Event.Instigator && !bHasProjectileActor)
 			{
 				FValhallaVfxPlan Hit = Plan;
 				Hit.System = EValhallaVfx::Impact;

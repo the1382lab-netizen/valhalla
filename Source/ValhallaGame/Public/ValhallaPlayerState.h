@@ -238,6 +238,21 @@ public:
 	TMap<FName, double>& GetSkillCooldownExpiry() { return SkillCooldownExpiry; }
 	const TMap<FName, double>& GetSkillCooldownExpiry() const { return SkillCooldownExpiry; }
 
+	// ── Admin state (set through the admin API) ─────────────────────────
+
+	/** God mode: damage still lands as an event but never lowers HP. Server only. */
+	bool bAdminGodMode = false;
+
+	/**
+	 * Frozen by an admin: cannot move. Replicated so the owning client stops
+	 * predicting movement instead of rubber-banding against the server.
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Admin")
+	bool bAdminFrozen = false;
+
+	/** Server time until which this player's chat is refused. 0 = not muted. */
+	double AdminMutedUntil = 0.0;
+
 	/** Every buff, debuff, DoT and HoT currently applied. Server-only. */
 	TArray<FValhallaActiveBuff>& GetActiveBuffs() { return ActiveBuffs; }
 	const TArray<FValhallaActiveBuff>& GetActiveBuffs() const { return ActiveBuffs; }

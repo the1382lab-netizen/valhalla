@@ -57,13 +57,30 @@ public:
 	 * Tell every client that something happened. The 2.0 replacement for
 	 * GameRoom's `this.broadcast(...)` calls (GameRoom.ts:939-1141).
 	 *
-	 * Unreliable on purpose: these are presentation, not state. A dropped
-	 * floating damage number is invisible; a reliable channel backed up behind
-	 * fourteen of them in a busy fight is not. Everything that must be true on
-	 * the client already replicates as a property.
+	 * Phase 8b: queued, then sent once per server frame as one *reliable*
+	 * batch (MulticastCombatEvents). Until 8b every event was its own
+	 * unreliable multicast, and Unreal sends an actor's unreliable multicasts
+	 * only when that actor replicates — for this game state 10 times a second
+	 * — and drops every call to the same RPC past `net.MaxRPCPerNetUpdate`
+	 * (default 2) within one of those windows. An instant cast raises
+	 * skillStarted, the handler's own events and skillEffect in the same
+	 * frame, so its third event onward never left the server; that is why
+	 * frost nova, mana shield and every warrior skill had no client-side
+	 * skillEffect while a 2.5 s fireball, whose events are 2.5 s apart, did.
+	 * One reliable batch per frame is one RPC call per frame, is never
+	 * dropped, and keeps the events in the order the server raised them.
+	 *
+	 * Called on a client (a listen-less standalone test), records locally.
 	 */
-	UFUNCTION(NetMulticast, Unreliable)
-	void MulticastCombatEvent(const FValhallaCombatEvent& Event);
+	void QueueCombatEvent(const FValhallaCombatEvent& Event);
+
+	/** The batch. Reliable; see QueueCombatEvent for why. */
+	UFUNCTION(NetMulticast, Reliable)
+	void MulticastCombatEvents(const TArray<FValhallaCombatEvent>& Events);
+
+	/** Fired on every end for every recorded event. The HUD's combat log and floaters listen here. */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnValhallaCombatEvent, const FValhallaCombatEvent&);
+	FOnValhallaCombatEvent OnCombatEvent;
 
 	/**
 	 * The last few events, newest last, with the time each arrived. Client-side
@@ -93,7 +110,28 @@ public:
 	 */
 	static constexpr double DataWatchIntervalSeconds = 2.0;
 
+	/**
+	 * Bumped by the server every time `AValhallaGameMode::ReloadGameData`
+	 * succeeds, so connected clients reload their own copy of the data too.
+	 *
+	 * The server's reload only ever touched the server's game instance: a
+	 * client kept the item names, skill numbers and equipment meshes it loaded
+	 * at startup until it restarted, so a tooltip or a paperdoll disagreed with
+	 * the server after every edit. Clients read the same files from their own
+	 * data root (`UValhallaDataSettings::DataRoot`), which on a dev machine is
+	 * the same folder the server reads.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_DataVersion)
+	int32 DataVersion = 0;
+
+	/** Server: announce a successful data reload to every client. */
+	void BumpDataVersion();
+
 protected:
+	/** Client: reload the data subsystem and redraw what depends on it. */
+	UFUNCTION()
+	void OnRep_DataVersion();
+
 	/**
 	 * One fixed 1/60 s step of the server simulation, in `GameRoom.update`'s
 	 * order: spell projectiles, then skills and auto-attacks, then respawns,
@@ -138,6 +176,24 @@ private:
 
 	/** See GetRecentEvents. Trimmed by age every time one is added. */
 	TArray<TPair<double, FValhallaCombatEvent>> RecentEvents;
+
+	/** Events raised this frame, sent by FlushCombatEvents at the end of Tick. Server only. */
+	TArray<FValhallaCombatEvent> PendingCombatEvents;
+
+	/** Send PendingCombatEvents as one batch. */
+	void FlushCombatEvents();
+
+	/**
+	 * Client only: mirror a cooldown locally when our own skillEffect arrives.
+	 *
+	 * The cooldown table is server-only by design (AValhallaPlayerState's class
+	 * comment), so a client's action bar had no way to draw a sweep. The
+	 * skillEffect event says exactly when a cast completed, which is when the
+	 * server started its cooldown; ApplyCooldown on the client's otherwise
+	 * unused copy of the table puts the same expiry there, one network trip
+	 * late. It is presentation only — the server never reads the client's copy.
+	 */
+	void MirrorCooldownFromEvent(const FValhallaCombatEvent& Event);
 
 	/** Hard cap on RecentEvents, in case a fight outpaces the trim. */
 	static constexpr int32 MaxRecentEvents = 64;

@@ -98,9 +98,22 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerCancelCast();
 
-	/** SkillSystem.ts:352 `startAutoAttack`. */
+	/**
+	 * SkillSystem.ts:352 `startAutoAttack`, with whichever auto-attack the
+	 * character's weapon implies (ResolveAutoAttackSkillId). Kept for the debug
+	 * console command; the action bar uses ServerStartAutoAttackWith.
+	 */
 	UFUNCTION(Server, Reliable)
 	void ServerStartAutoAttack(AActor* Target);
+
+	/**
+	 * Start the auto-attack loop with one specific auto-attack skill —
+	 * `melee_attack` or `ranged_attack` — rather than letting the weapon decide.
+	 * The skill must be an auto-attack the character's class may use, and
+	 * `requiresWeapon` is enforced (a ranged attack needs a ranged weapon).
+	 */
+	UFUNCTION(Server, Reliable)
+	void ServerStartAutoAttackWith(AActor* Target, FName SkillId);
 
 	/** SkillSystem.ts:420 `stopAutoAttack`. */
 	UFUNCTION(Server, Reliable)
@@ -145,6 +158,13 @@ public:
 	/** The auto-attack skill this character would use: ranged_attack or melee_attack. */
 	FName ResolveAutoAttackSkillId() const;
 
+	/**
+	 * Why this character cannot auto-attack with SkillId, or empty if it can.
+	 * Checks: it is an auto-attack skill, the class may use it, and a weapon
+	 * the skill requires is equipped (ranged: an `isRangedWeapon` weapon).
+	 */
+	FString GetAutoAttackBlocker(FName SkillId) const;
+
 	/** The current swing interval in ms, after ComputeAutoAttackSpeed. For the report and the HUD. */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|AutoAttack")
 	float GetAutoAttackIntervalMs() const;
@@ -182,6 +202,9 @@ protected:
 
 	/** Tell the owning client why their cast did not happen. */
 	void SendSkillFailed(const FString& Reason) const;
+
+	/** Shared body of both start RPCs. SkillId must already be validated. */
+	void StartAutoAttackInternal(AActor* Target, FName SkillId);
 
 	/** Build the context a handler is run with. */
 	FValhallaSkillContext MakeContext(const FValhallaSkillTemplate& Skill, AActor* Target, const FVector& TargetLocation, double Now) const;

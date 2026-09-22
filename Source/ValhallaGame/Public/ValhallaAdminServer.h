@@ -74,6 +74,14 @@ struct VALHALLAGAME_API FValhallaAdminPlayerInfo
 	double Mana = 0.0;
 	double MaxMana = 0.0;
 	bool bAlive = true;
+	/** Admin flags, for the dashboard's player list. */
+	bool bGodMode = false;
+	bool bFrozen = false;
+	/** Seconds of mute left; 0 when not muted. */
+	double MutedSeconds = 0.0;
+	/** Backend account name and `users.id`; empty / 0 for a dev join with no token. */
+	FString Account;
+	int32 UserId = 0;
 };
 
 /** One NPC actor. */
@@ -103,12 +111,36 @@ struct VALHALLAGAME_API FValhallaAdminLootBagInfo
 	TArray<FValhallaAdminItemStack> Items;
 };
 
+/** One NPC Spawn Point placed in a level. */
+struct VALHALLAGAME_API FValhallaAdminSpawnPointInfo
+{
+	/** `AActor::GetName()`. */
+	FString Id;
+	/** The Outliner label in the editor, else the name override, else Id. */
+	FString Label;
+	/** The NPC type's Blueprint name, e.g. "BP_NPC_Orc". */
+	FString NpcClass;
+	/** The template it plays after the override. */
+	FString TemplateId;
+	double X = 0.0;
+	double Y = 0.0;
+	/** Effective respawn seconds, and whether the spawn point overrides the template. */
+	double RespawnSeconds = 0.0;
+	bool bRespawnOverride = false;
+	/** Seconds until the next spawn; 0 when its NPC is up. */
+	double SecondsUntilRespawn = 0.0;
+	/** Its NPC's id, or empty when none exists right now. */
+	FString NpcId;
+	bool bNpcAlive = false;
+};
+
 /** Everything in one zone. */
 struct VALHALLAGAME_API FValhallaAdminZoneSnapshot
 {
 	TArray<FValhallaAdminPlayerInfo> Players;
 	TArray<FValhallaAdminNpcInfo> Npcs;
 	TArray<FValhallaAdminLootBagInfo> LootBags;
+	TArray<FValhallaAdminSpawnPointInfo> SpawnPoints;
 };
 
 /** The whole of `GET /state`, before it is JSON. */
@@ -288,6 +320,45 @@ protected:
 	bool HandleDeleteNpc(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool HandleReloadOverlays(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool HandleReloadData(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	// ── MMO admin actions (2.0 only) ────────────────────────────────────
+
+	/**
+	 * `POST /player-action` `{ sessionId, action, ... }` — one route for every
+	 * per-player admin action, so the editor's proxy and the audit log see one
+	 * shape. Actions: set-vitals {hp?, mana?}, heal, kill, resurrect,
+	 * give-item {itemId, quantity?}, remove-item {slot, quantity?},
+	 * set-level {level}, grant-xp {amount}, teleport-to-player
+	 * {targetSessionId}, unstuck, freeze {enabled}, god-mode {enabled},
+	 * reset-cooldowns, clear-buffs, message {text}, mute {minutes}, save,
+	 * ban {minutes?, reason?} (the player's account; minutes <= 0 = permanent).
+	 */
+	bool HandlePlayerAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	/** `POST /player-inspect` `{ sessionId }` — stats, inventory, equipment, buffs, flags. */
+	bool HandlePlayerInspect(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	/** `POST /broadcast` `{ text, zoneId? }` — a system message to everyone, or one zone. */
+	bool HandleBroadcast(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	/**
+	 * `POST /spawn-point-action` `{ spawnPointId, action, seconds? }` —
+	 * respawn-now, or set-respawn-seconds (this session only; the level keeps
+	 * the value you placed it with).
+	 */
+	bool HandleSpawnPointAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	/**
+	 * `POST /account-action` `{ action, username? | userId?, minutes?, reason? }`
+	 * — ban, unban or list-bans, by account rather than by connected player, so
+	 * an offline account can be banned and a ban can be lifted at all. A ban
+	 * also kicks every connection on that account. Answers asynchronously,
+	 * once the account backend has.
+	 */
+	bool HandleAccountAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
+
+	/** Append one line per mutating request to Saved/Logs/ValhallaAdminAudit.log. */
+	static void AppendAuditLine(const FString& Route, const FHttpServerRequest& Request);
 
 	/**
 	 * Phase 7's hook, and today a no-op that returns true.

@@ -1,6 +1,7 @@
 // Copyright Valhalla 2.0. All Rights Reserved.
 
 #include "ValhallaAdminServer.h"
+#include "ValhallaBackendSubsystem.h"
 
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
@@ -27,6 +28,19 @@
 #include "ValhallaPlayerState.h"
 #include "ValhallaTypes.h"
 #include "ValhallaZoneSubsystem.h"
+#include "ValhallaCharacter.h"
+#include "ValhallaCombatLibrary.h"
+#include "ValhallaConstants.h"
+#include "ValhallaInventoryLibrary.h"
+#include "ValhallaPlayerController.h"
+#include "ValhallaSkillComponent.h"
+#include "HAL/FileManager.h"
+#include "Misc/DateTime.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Misc/PackageName.h"
+#include "Engine/Level.h"
+#include "TimerManager.h"
 
 #if WITH_VALHALLA_ADMIN_API
 #include "HttpPath.h"
@@ -49,6 +63,41 @@ namespace
 	double Round(double Value)
 	{
 		return FMath::RoundToDouble(Value);
+	}
+
+	/**
+	 * A world-unique id for an actor, for the admin API.
+	 *
+	 * `GetName()` is only unique within one level, and since NPC Spawn Points
+	 * (and the NPCs they spawn) live in each zone's gameplay sublevel, both
+	 * `L_Grasslands_Gameplay` and `L_Desert_Gameplay` have a
+	 * `ValhallaNPCSpawner_0`. An actor in the persistent level keeps its bare
+	 * name; anything else is prefixed with its level's short package name
+	 * (PIE's `UEDPIE_n_` prefix stripped), e.g. `L_Desert_Gameplay.ValhallaNPCSpawner_0`.
+	 */
+	FString AdminActorId(const AActor* Actor)
+	{
+		if (!Actor)
+		{
+			return FString();
+		}
+		const ULevel* Level = Actor->GetLevel();
+		const UWorld* World = Actor->GetWorld();
+		if (!Level || !World || Level == World->PersistentLevel)
+		{
+			return Actor->GetName();
+		}
+		FString LevelName = FPackageName::GetShortName(Level->GetOutermost()->GetName());
+		if (LevelName.StartsWith(TEXT("UEDPIE_")))
+		{
+			int32 Underscore = INDEX_NONE;
+			const FString Rest = LevelName.Mid(7);
+			if (Rest.FindChar(TEXT('_'), Underscore))
+			{
+				LevelName = Rest.Mid(Underscore + 1);
+			}
+		}
+		return LevelName + TEXT(".") + Actor->GetName();
 	}
 
 	/** `NPCTemplate.type` as the 1.0 JSON spelled it. */
@@ -276,13 +325,20 @@ void UValhallaAdminServer::Start()
 	BindRoute(TEXT("/reload-overlays"),  Post, &UValhallaAdminServer::HandleReloadOverlays);
 	BindRoute(TEXT("/reload-data"),      Post, &UValhallaAdminServer::HandleReloadData);
 
+	// ── 2.0 only: MMO admin actions ───────────────────────────────────────
+	BindRoute(TEXT("/player-action"),      Post, &UValhallaAdminServer::HandlePlayerAction);
+	BindRoute(TEXT("/player-inspect"),     Post, &UValhallaAdminServer::HandlePlayerInspect);
+	BindRoute(TEXT("/broadcast"),          Post, &UValhallaAdminServer::HandleBroadcast);
+	BindRoute(TEXT("/spawn-point-action"), Post, &UValhallaAdminServer::HandleSpawnPointAction);
+	BindRoute(TEXT("/account-action"),     Post, &UValhallaAdminServer::HandleAccountAction);
+
 	HttpServerModule.StartAllListeners();
 
 	bRunning = true;
 	ActiveInstance = this;
 
 	UE_LOG(LogValhallaAdmin, Log,
-		TEXT("admin API listening on http://127.0.0.1:%d%s — %d routes. Point the 1.0 editor's proxy (GAME_SERVER_URL) here."),
+		TEXT("admin API listening on http://127.0.0.1:%d%s — %d routes. The web editor's proxy reaches it through VALHALLA_ADMIN_URL."),
 		BoundPort, AdminRoot, RouteHandles.Num());
 #endif // WITH_VALHALLA_ADMIN_API
 }
@@ -412,6 +468,20 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 			Info.MaxHp     = PS->MaxHp;
 			Info.MaxMana   = PS->MaxMana;
 			Info.bAlive    = PS->bAlive;
+			Info.bGodMode  = PS->bAdminGodMode;
+			Info.bFrozen   = PS->bAdminFrozen;
+			if (const AValhallaGameMode* GameMode = World->GetAuthGameMode<AValhallaGameMode>())
+			{
+				if (const FValhallaBackendSession* Session = GameMode->FindBackendSession(Cast<APlayerController>(PS->GetOwner())))
+				{
+					Info.Account = Session->Username;
+					Info.UserId  = Session->UserId;
+				}
+			}
+			if (const AValhallaGameState* GS = World->GetGameState<AValhallaGameState>())
+			{
+				Info.MutedSeconds = FMath::Max(0.0, PS->AdminMutedUntil - GS->GetServerTime());
+			}
 
 			// 1.0's `mana` was one pool; 2.0 splits mana and energy by class.
 			// The dashboard draws one blue bar, so it gets whichever pool the
@@ -457,7 +527,7 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
 
 		FValhallaAdminNpcInfo Info;
-		Info.Id         = Npc->GetName();
+		Info.Id         = AdminActorId(Npc);
 		Info.TemplateId = Npc->TemplateId.ToString();
 		Info.Name       = Npc->DisplayName;
 		Info.NpcType    = NpcTypeString(Npc->GetTemplate().Type);
@@ -471,6 +541,41 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 		OutSnapshot.Zones.FindOrAdd(ZoneKey).Npcs.Add(MoveTemp(Info));
 	}
 
+	// ── NPC Spawn Points ─────────────────────────────────────────────────
+	for (TActorIterator<AValhallaNPCSpawner> It(World); It; ++It)
+	{
+		const AValhallaNPCSpawner* Spawner = *It;
+		const FVector Location = Spawner->GetActorLocation();
+		const FString ZoneKey = ZoneKeyAt(Location);
+		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
+
+		FValhallaAdminSpawnPointInfo Info;
+		Info.Id = AdminActorId(Spawner);
+#if WITH_EDITOR
+		Info.Label = Spawner->GetActorLabel();
+#endif
+		if (Info.Label.IsEmpty())
+		{
+			Info.Label = Spawner->DebugLabel.IsEmpty() ? Info.Id : Spawner->DebugLabel;
+		}
+		FString ClassName = Spawner->NPCClass ? Spawner->NPCClass->GetName() : TEXT("ValhallaNPC");
+		ClassName.RemoveFromEnd(TEXT("_C"));
+		Info.NpcClass = ClassName;
+		Info.TemplateId = Spawner->GetEffectiveTemplateId().ToString();
+		Info.X = Local.X;
+		Info.Y = Local.Y;
+		Info.RespawnSeconds = Spawner->GetEffectiveRespawnSeconds();
+		Info.bRespawnOverride = Spawner->RespawnSeconds > 0.f;
+		Info.SecondsUntilRespawn = Spawner->GetSecondsUntilRespawn();
+		if (const AValhallaNPC* Npc = Spawner->GetSpawnedNPC())
+		{
+			Info.NpcId = AdminActorId(Npc);
+			Info.bNpcAlive = Npc->IsAlive();
+		}
+
+		OutSnapshot.Zones.FindOrAdd(ZoneKey).SpawnPoints.Add(MoveTemp(Info));
+	}
+
 	// ── Loot bags ────────────────────────────────────────────────────────
 	for (TActorIterator<AValhallaLootBag> It(World); It; ++It)
 	{
@@ -480,7 +585,7 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
 
 		FValhallaAdminLootBagInfo Info;
-		Info.Id = Bag->GetName();
+		Info.Id = AdminActorId(Bag);
 		Info.X  = Local.X;
 		Info.Y  = Local.Y;
 
@@ -538,6 +643,12 @@ TSharedRef<FJsonObject> UValhallaAdminServer::BuildStateJson(const FValhallaAdmi
 			Obj->SetNumberField(TEXT("mana"),      Round(Player.Mana));
 			Obj->SetNumberField(TEXT("maxMana"),   Round(Player.MaxMana));
 			Obj->SetBoolField  (TEXT("alive"),     Player.bAlive);
+			Obj->SetStringField(TEXT("zoneId"),    ZoneKey);
+			Obj->SetBoolField  (TEXT("godMode"),   Player.bGodMode);
+			Obj->SetBoolField  (TEXT("frozen"),    Player.bFrozen);
+			Obj->SetNumberField(TEXT("mutedSeconds"), Round(Player.MutedSeconds));
+			Obj->SetStringField(TEXT("account"),   Player.Account);
+			Obj->SetNumberField(TEXT("userId"),    Player.UserId);
 			PlayersJson.Add(MakeShared<FJsonValueObject>(Obj));
 		}
 
@@ -579,6 +690,25 @@ TSharedRef<FJsonObject> UValhallaAdminServer::BuildStateJson(const FValhallaAdmi
 
 			BagsJson.Add(MakeShared<FJsonValueObject>(Obj));
 		}
+
+		TArray<TSharedPtr<FJsonValue>> SpawnPointsJson;
+		for (const FValhallaAdminSpawnPointInfo& Point : Zone.SpawnPoints)
+		{
+			const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("id"),              Point.Id);
+			Obj->SetStringField(TEXT("label"),           Point.Label);
+			Obj->SetStringField(TEXT("npcClass"),        Point.NpcClass);
+			Obj->SetStringField(TEXT("templateId"),      Point.TemplateId);
+			Obj->SetNumberField(TEXT("x"),               Round(Point.X));
+			Obj->SetNumberField(TEXT("y"),               Round(Point.Y));
+			Obj->SetNumberField(TEXT("respawnSeconds"),  Point.RespawnSeconds);
+			Obj->SetBoolField  (TEXT("respawnOverride"), Point.bRespawnOverride);
+			Obj->SetNumberField(TEXT("respawnIn"),       FMath::RoundToDouble(Point.SecondsUntilRespawn * 10.0) / 10.0);
+			Obj->SetStringField(TEXT("npcId"),           Point.NpcId);
+			Obj->SetBoolField  (TEXT("npcAlive"),        Point.bNpcAlive);
+			SpawnPointsJson.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+		ZoneJson->SetArrayField(TEXT("spawnPoints"), SpawnPointsJson);
 
 		TotalPlayers  += Zone.Players.Num();
 		TotalNpcs     += Zone.Npcs.Num();
@@ -646,6 +776,11 @@ bool UValhallaAdminServer::BindRoute(const FString& Path, uint16 Verbs, bool (UV
 			{
 				OnComplete(MoveTemp(Denied));
 				return true;
+			}
+
+			if (Request.Verb == EHttpServerRequestVerbs::VERB_POST)
+			{
+				AppendAuditLine(FullPath, Request);
 			}
 
 			return (Self->*Handler)(Request, OnComplete);
@@ -752,12 +887,12 @@ namespace
 		return true;
 	}
 
-	/** The NPC actor with this `GetName()`, alive or dead, or null. */
+	/** The NPC actor with this admin id (see AdminActorId), alive or dead, or null. */
 	AValhallaNPC* FindNpcByName(UWorld* World, const FString& NpcId)
 	{
 		for (TActorIterator<AValhallaNPC> It(World); It; ++It)
 		{
-			if (It->GetName() == NpcId)
+			if (AdminActorId(*It) == NpcId)
 			{
 				return *It;
 			}
@@ -850,16 +985,15 @@ bool UValhallaAdminServer::HandleSpawnNpc(const FHttpServerRequest& Request, con
 	}
 
 	Spawner->TemplateId = FName(*TemplateId);
-	Spawner->Count = 1;
-	Spawner->SpawnRadius = 0.f;
-	Spawner->DebugLabel = FString::Printf(TEXT("Admin_%s"), *TemplateId);
+	// A one-time spawn: the dashboard's "Spawn NPC here" is a GM dropping a
+	// mob, not level design. Its corpse decays and nothing replaces it.
+	Spawner->bRespawn = false;
 #if WITH_EDITOR
 	Spawner->SetActorLabel(FString::Printf(TEXT("Admin_%s_%s"), *ZoneId, *TemplateId));
 #endif
 	Spawner->FinishSpawning(SpawnTransform);
 
-	const TArray<TWeakObjectPtr<AValhallaNPC>>& Spawned = Spawner->GetSpawnedNPCs();
-	AValhallaNPC* Npc = Spawned.Num() > 0 ? Spawned[0].Get() : nullptr;
+	AValhallaNPC* Npc = Spawner->GetSpawnedNPC();
 	if (!Npc)
 	{
 		Spawner->Destroy();
@@ -873,7 +1007,7 @@ bool UValhallaAdminServer::HandleSpawnNpc(const FHttpServerRequest& Request, con
 
 	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetBoolField(TEXT("ok"), true);
-	Json->SetStringField(TEXT("npcId"), Npc->GetName());
+	Json->SetStringField(TEXT("npcId"), AdminActorId(Npc));
 	OnComplete(MakeJsonResponse(Json, EHttpServerResponseCodes::Ok));
 	return true;
 }
@@ -937,7 +1071,7 @@ bool UValhallaAdminServer::HandleDropItem(const FHttpServerRequest& Request, con
 
 	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
 	Json->SetBoolField(TEXT("ok"), true);
-	Json->SetStringField(TEXT("bagId"), Bag->GetName());
+	Json->SetStringField(TEXT("bagId"), AdminActorId(Bag));
 	OnComplete(MakeJsonResponse(Json, EHttpServerResponseCodes::Ok));
 	return true;
 }
@@ -967,14 +1101,25 @@ bool UValhallaAdminServer::HandleKickPlayer(const FHttpServerRequest& Request, c
 		return true;
 	}
 
-	UE_LOG(LogValhallaAdmin, Log, TEXT("kick-player: %s (session %s)"), *PS->CharacterName, *SessionId);
+	// Optional `reason`, shown to the player. New in 2.0.
+	FString Reason;
+	if (Body.IsValid())
+	{
+		Body->TryGetStringField(TEXT("reason"), Reason);
+	}
+	Reason = Reason.TrimStartAndEnd();
+	const FString KickText = Reason.IsEmpty() ? FString(TEXT("Kicked by admin.")) : FString::Printf(TEXT("Kicked by admin: %s"), *Reason);
+
+	UE_LOG(LogValhallaAdmin, Log, TEXT("kick-player: %s (session %s)%s%s"), *PS->CharacterName, *SessionId,
+		Reason.IsEmpty() ? TEXT("") : TEXT(" — "), *Reason);
+
 
 	// The engine's own kick path, which sends the reason and closes the
 	// connection. 1.0 sent a `kicked` message and then `client.leave(4002)`;
 	// this is the same two things in one call.
 	if (AGameSession* Session = Context.GameMode->GameSession)
 	{
-		Session->KickPlayer(PC, FText::FromString(TEXT("Kicked by admin.")));
+		Session->KickPlayer(PC, FText::FromString(KickText));
 	}
 	else
 	{
@@ -1135,7 +1280,16 @@ bool UValhallaAdminServer::HandleRespawnNpc(const FHttpServerRequest& Request, c
 		return true;
 	}
 
-	Npc->Respawn();
+	// A spawn point's NPC is replaced by a fresh instance, exactly as its timer
+	// would have done; a hand-placed one stands back up.
+	if (AValhallaNPCSpawner* Spawner = Npc->GetSpawner())
+	{
+		Spawner->RespawnNow();
+	}
+	else
+	{
+		Npc->Respawn();
+	}
 
 	UE_LOG(LogValhallaAdmin, Log, TEXT("respawn-npc: %s ('%s')"), *NpcId, *Npc->DisplayName);
 
@@ -1169,18 +1323,16 @@ bool UValhallaAdminServer::HandleDeleteNpc(const FHttpServerRequest& Request, co
 
 	const FString DisplayName = Npc->DisplayName;
 
-	// Destroying the actor is the whole of "permanently, no respawn": the
-	// respawn timer lives on the NPC (`RespawnAt`, ticked by its own
-	// ServerFixedTick), so there is nothing left to fire. 1.0 needed
-	// `adminDelete` to reach into NPCSystem's tracker precisely because the
-	// timer lived somewhere else.
-	//
-	// The spawner that made it is left standing and is *not* asked to make
-	// another: AValhallaNPCSpawner spawns its group once, in BeginPlay, and
-	// never again. A deleted NPC stays deleted until the next
-	// `reload-overlays`, which is the behaviour a designer clearing a field
-	// expects.
-	Npc->Destroy();
+	// A spawn point's NPC: remove it and let the spawn point's countdown bring
+	// the next one, as if it had died. Anything else is simply gone.
+	if (AValhallaNPCSpawner* Spawner = Npc->GetSpawner())
+	{
+		Spawner->RemoveNPCAndScheduleRespawn();
+	}
+	else
+	{
+		Npc->Destroy();
+	}
 
 	UE_LOG(LogValhallaAdmin, Log, TEXT("delete-npc: %s ('%s') destroyed"), *NpcId, *DisplayName);
 
@@ -1258,4 +1410,782 @@ bool UValhallaAdminServer::HandleReloadData(const FHttpServerRequest& /*Request*
 	return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  MMO admin actions (2.0 only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void UValhallaAdminServer::AppendAuditLine(const FString& Route, const FHttpServerRequest& Request)
+{
+	// One line per mutating request: when, which route, and the body as sent.
+	// The body never carries a secret (that is a header), so it is safe to keep.
+	FString Body;
+	if (Request.Body.Num() > 0)
+	{
+		const FUTF8ToTCHAR Converted(reinterpret_cast<const ANSICHAR*>(Request.Body.GetData()), Request.Body.Num());
+		Body = FString(Converted.Length(), Converted.Get());
+		Body.ReplaceInline(TEXT("\r"), TEXT(" "));
+		Body.ReplaceInline(TEXT("\n"), TEXT(" "));
+	}
+
+	const FString Line = FString::Printf(TEXT("%s\t%s\t%s\n"), *FDateTime::UtcNow().ToIso8601(), *Route, *Body);
+	const FString Path = FPaths::Combine(FPaths::ProjectLogDir(), TEXT("ValhallaAdminAudit.log"));
+	FFileHelper::SaveStringToFile(Line, *Path, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM,
+		&IFileManager::Get(), FILEWRITE_Append);
+	UE_LOG(LogValhallaAdmin, Log, TEXT("audit: %s %s"), *Route, *Body);
+}
+
+namespace
+{
+	/** A system chat line from the admin. */
+	FValhallaChatMessage MakeAdminLine(const FString& Text, double Now)
+	{
+		FValhallaChatMessage Line;
+		Line.Channel = EValhallaChatChannel::System;
+		Line.SenderName = TEXT("Admin");
+		Line.Message = FString::Printf(TEXT("[Admin] %s"), *Text);
+		Line.Timestamp = Now;
+		return Line;
+	}
+
+	/** Move a pawn somewhere and stop it, the way every admin teleport does. */
+	void TeleportPawn(APawn* Pawn, const FVector& Destination)
+	{
+		Pawn->TeleportTo(Destination, Pawn->GetActorRotation(), /*bIsATest=*/false, /*bNoCheck=*/true);
+		if (UCharacterMovementComponent* Movement = Pawn->FindComponentByClass<UCharacterMovementComponent>())
+		{
+			Movement->StopMovementImmediately();
+		}
+	}
+
+	FString EquipSlotKey(EValhallaEquipSlot Slot)
+	{
+		return StaticEnum<EValhallaEquipSlot>()->GetNameStringByValue(static_cast<int64>(Slot)).ToLower();
+	}
+
+	TSharedRef<FJsonObject> MakeOkMessage(const FString& Message)
+	{
+		const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+		Json->SetBoolField(TEXT("ok"), true);
+		Json->SetStringField(TEXT("message"), Message);
+		return Json;
+	}
+
+	/** The account backend's failure status, as the admin API's. */
+	EHttpServerResponseCodes BackendFailureCode(int32 Status)
+	{
+		switch (Status)
+		{
+		case 0:   return EHttpServerResponseCodes::ServiceUnavail;
+		case 400: return EHttpServerResponseCodes::BadRequest;
+		case 404: return EHttpServerResponseCodes::NotFound;
+		default:  return EHttpServerResponseCodes::ServerError;
+		}
+	}
+
+	/** Kick every connection logged into this account. Returns how many. */
+	int32 KickAccount(AValhallaGameMode* GameMode, int32 UserId, const FString& Text)
+	{
+		int32 Kicked = 0;
+		for (APlayerController* PC : GameMode->FindControllersForUser(UserId))
+		{
+			if (AGameSession* Session = GameMode->GameSession)
+			{
+				Session->KickPlayer(PC, FText::FromString(Text));
+			}
+			else
+			{
+				GameMode->Logout(PC);
+			}
+			++Kicked;
+		}
+		return Kicked;
+	}
+
+	/**
+	 * Ban through the account backend, then kick every connection on that
+	 * account. The HTTP answer goes out from the backend's continuation, so the
+	 * dashboard only reports success once the ban is actually stored.
+	 */
+	void StartAccountBan(UWorld* World, int32 UserId, const FString& Username, double Minutes, const FString& Reason, const FHttpResultCallback& OnComplete)
+	{
+		UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(World);
+		if (!Backend)
+		{
+			OnComplete(MakeErrorResponse(EHttpServerResponseCodes::ServiceUnavail, TEXT("No account backend in this game instance")));
+			return;
+		}
+
+		TWeakObjectPtr<UWorld> WeakWorld(World);
+		Backend->BanAccount(UserId, Username, Minutes, Reason, TEXT("admin"),
+			[WeakWorld, OnComplete, Minutes](bool bOk, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+			{
+				if (!bOk || !Json.IsValid())
+				{
+					OnComplete(MakeErrorResponse(BackendFailureCode(Status), FString::Printf(TEXT("Ban failed: %s"), *Error)));
+					return;
+				}
+
+				double BannedUserId = 0.0;
+				FString Account, Sentence;
+				Json->TryGetNumberField(TEXT("userId"), BannedUserId);
+				Json->TryGetStringField(TEXT("username"), Account);
+				Json->TryGetStringField(TEXT("message"), Sentence);
+				if (Sentence.IsEmpty())
+				{
+					Sentence = TEXT("This account has been banned.");
+				}
+
+				int32 Kicked = 0;
+				if (UWorld* LiveWorld = WeakWorld.Get())
+				{
+					if (AValhallaGameMode* GameMode = LiveWorld->GetAuthGameMode<AValhallaGameMode>())
+					{
+						Kicked = KickAccount(GameMode, static_cast<int32>(BannedUserId), Sentence);
+					}
+				}
+
+				const FString Summary = FString::Printf(TEXT("%s %s; %d connection(s) kicked"),
+					*Account,
+					Minutes > 0.0 ? *FString::Printf(TEXT("suspended for %.0f min"), Minutes) : TEXT("banned permanently"),
+					Kicked);
+				UE_LOG(LogValhallaAdmin, Log, TEXT("account ban: %s"), *Summary);
+
+				const TSharedRef<FJsonObject> Out = MakeOkMessage(Summary);
+				const TSharedPtr<FJsonObject>* Ban = nullptr;
+				if (Json->TryGetObjectField(TEXT("ban"), Ban) && Ban)
+				{
+					Out->SetObjectField(TEXT("ban"), *Ban);
+				}
+				OnComplete(MakeJsonResponse(Out, EHttpServerResponseCodes::Ok));
+			});
+	}
+}
+
+bool UValhallaAdminServer::HandlePlayerAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+{
+	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
+
+	FString SessionId, Action;
+	if (!GetRequiredString(Body, TEXT("sessionId"), SessionId) || !GetRequiredString(Body, TEXT("action"), Action))
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("sessionId and action required")));
+		return true;
+	}
+
+	FAdminContext Context;
+	if (!ResolveContext(this, Context, OnComplete))
+	{
+		return true;
+	}
+
+	AValhallaPlayerState* PS = FindPlayerBySessionId(Context.World, SessionId);
+	AValhallaPlayerController* PC = PS ? Cast<AValhallaPlayerController>(PS->GetOwner()) : nullptr;
+	if (!PS)
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::NotFound, TEXT("Player not found")));
+		return true;
+	}
+
+	AValhallaCharacter* Character = Cast<AValhallaCharacter>(PS->GetPawn());
+	const AValhallaGameState* GameState = Context.World->GetGameState<AValhallaGameState>();
+	const double Now = GameState ? GameState->GetServerTime() : 0.0;
+
+	auto Fail = [&OnComplete](EHttpServerResponseCodes Code, const FString& Message)
+	{
+		OnComplete(MakeErrorResponse(Code, Message));
+		return true;
+	};
+	auto Ok = [&OnComplete, PS, &Action](const FString& Message)
+	{
+		UE_LOG(LogValhallaAdmin, Log, TEXT("player-action %s on %s: %s"), *Action, *PS->CharacterName, *Message);
+		OnComplete(MakeJsonResponse(MakeOkMessage(Message), EHttpServerResponseCodes::Ok));
+		return true;
+	};
+	auto Number = [&Body](const TCHAR* Field, double& Out) { return Body->TryGetNumberField(Field, Out); };
+	auto Flag = [&Body](const TCHAR* Field, bool Default)
+	{
+		bool Value = Default;
+		Body->TryGetBoolField(Field, Value);
+		return Value;
+	};
+	const bool bUsesMana = PS->MaxMana > 0.f;
+
+	// ── Account ──────────────────────────────────────────────────────────
+	if (Action == TEXT("ban"))
+	{
+		const FValhallaBackendSession* Session = Context.GameMode->FindBackendSession(PC);
+		if (!Session || Session->UserId <= 0)
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("This player has no backend account (dev join without a token) - kick them instead"));
+		}
+		double Minutes = 0.0;
+		Number(TEXT("minutes"), Minutes);
+		FString Reason;
+		Body->TryGetStringField(TEXT("reason"), Reason);
+		UE_LOG(LogValhallaAdmin, Log, TEXT("player-action ban on %s (account '%s'): requesting"), *PS->CharacterName, *Session->Username);
+		StartAccountBan(Context.World, Session->UserId, Session->Username, Minutes, Reason.TrimStartAndEnd().Left(200), OnComplete);
+		return true;
+	}
+
+	// ── Vitals ───────────────────────────────────────────────────────────
+	if (Action == TEXT("set-vitals"))
+	{
+		if (!PS->IsAlive())
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player is dead; resurrect first"));
+		}
+		double Hp = PS->Hp, Pool = bUsesMana ? PS->Mana : PS->Energy;
+		const bool bHp = Number(TEXT("hp"), Hp);
+		const bool bPool = Number(TEXT("mana"), Pool);
+		if (!bHp && !bPool)
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("hp and/or mana required"));
+		}
+		if (bPool)
+		{
+			if (bUsesMana) { PS->Mana = FMath::Clamp(static_cast<float>(Pool), 0.f, PS->MaxMana); }
+			else { PS->Energy = FMath::Clamp(static_cast<float>(Pool), 0.f, PS->MaxEnergy); }
+		}
+		if (bHp)
+		{
+			PS->Hp = FMath::Clamp(static_cast<float>(Hp), 0.f, PS->MaxHp);
+			if (PS->Hp <= 0.f && Character)
+			{
+				Context.GameMode->HandlePlayerDeath(Character, nullptr);
+				return Ok(TEXT("HP set to 0; the player died"));
+			}
+		}
+		return Ok(FString::Printf(TEXT("HP %.0f/%.0f, %s %.0f/%.0f"), PS->Hp, PS->MaxHp,
+			bUsesMana ? TEXT("mana") : TEXT("energy"),
+			bUsesMana ? PS->Mana : PS->Energy, bUsesMana ? PS->MaxMana : PS->MaxEnergy));
+	}
+
+	if (Action == TEXT("heal"))
+	{
+		if (!PS->IsAlive())
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player is dead; resurrect first"));
+		}
+		PS->Hp = PS->MaxHp;
+		PS->Mana = PS->MaxMana;
+		PS->Energy = PS->MaxEnergy;
+		return Ok(TEXT("Fully healed"));
+	}
+
+	if (Action == TEXT("kill"))
+	{
+		if (!PS->IsAlive() || !Character)
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player is already dead"));
+		}
+		PS->Hp = 0.f;
+		Context.GameMode->HandlePlayerDeath(Character, nullptr);
+		return Ok(TEXT("Killed"));
+	}
+
+	if (Action == TEXT("resurrect"))
+	{
+		if (!Context.GameMode->AdminResurrectInPlace(PS))
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player is not dead"));
+		}
+		return Ok(TEXT("Resurrected where they fell, full HP"));
+	}
+
+	// ── Items ────────────────────────────────────────────────────────────
+	if (Action == TEXT("give-item"))
+	{
+		FString ItemId;
+		if (!GetRequiredString(Body, TEXT("itemId"), ItemId))
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("itemId required"));
+		}
+		const FValhallaItemTemplate* Item = Context.Data ? Context.Data->FindItem(FName(*ItemId)) : nullptr;
+		if (!Item)
+		{
+			return Fail(EHttpServerResponseCodes::NotFound, FString::Printf(TEXT("Unknown item: %s"), *ItemId));
+		}
+		double Quantity = 1.0;
+		Number(TEXT("quantity"), Quantity);
+		const int32 Count = FMath::Clamp(FMath::RoundToInt32(Quantity), 1, 9999);
+		const UValhallaDataSubsystem* Data = Context.Data;
+		auto FindItem = [Data](FName Id) -> const FValhallaItemTemplate* { return Data->FindItem(Id); };
+		if (!UValhallaInventoryLibrary::AddItem(PS->Inventory, FName(*ItemId), Count, FindItem))
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Inventory full"));
+		}
+		if (PC)
+		{
+			PC->ClientChatMessage(MakeAdminLine(FString::Printf(TEXT("You received %d x %s."), Count, *Item->Name), Now));
+		}
+		return Ok(FString::Printf(TEXT("Gave %d x %s"), Count, *Item->Name));
+	}
+
+	if (Action == TEXT("remove-item"))
+	{
+		double Slot = -1.0;
+		if (!Number(TEXT("slot"), Slot) || !PS->Inventory.IsValidIndex(FMath::RoundToInt32(Slot)))
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("valid inventory slot required"));
+		}
+		const int32 Index = FMath::RoundToInt32(Slot);
+		const FValhallaInventorySlot Removed = PS->Inventory[Index];
+		double Quantity = Removed.Quantity;
+		Number(TEXT("quantity"), Quantity);
+		const int32 Count = FMath::Clamp(FMath::RoundToInt32(Quantity), 1, Removed.Quantity);
+		UValhallaInventoryLibrary::RemoveItem(PS->Inventory, Index, Count);
+		return Ok(FString::Printf(TEXT("Removed %d x %s"), Count, *Removed.ItemId.ToString()));
+	}
+
+	// ── Progression ──────────────────────────────────────────────────────
+	if (Action == TEXT("set-level"))
+	{
+		double Level = 0.0;
+		if (!Number(TEXT("level"), Level))
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("level required"));
+		}
+		PS->Level = FMath::Clamp(FMath::RoundToInt32(Level), 1, Valhalla::MaxLevel);
+		PS->Xp = 0;
+		PS->RecomputeStats();
+		PS->Hp = PS->IsAlive() ? PS->MaxHp : 0.f;
+		PS->Mana = PS->MaxMana;
+		PS->Energy = PS->MaxEnergy;
+		return Ok(FString::Printf(TEXT("Level set to %d"), PS->Level));
+	}
+
+	if (Action == TEXT("grant-xp"))
+	{
+		double Amount = 0.0;
+		if (!Number(TEXT("amount"), Amount) || Amount <= 0.0)
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("positive amount required"));
+		}
+		const int32 Before = PS->Level;
+		PS->AwardXp(FMath::RoundToInt32(Amount));
+		return Ok(FString::Printf(TEXT("Granted %.0f XP (level %d -> %d)"), Amount, Before, PS->Level));
+	}
+
+	// ── Movement ─────────────────────────────────────────────────────────
+	if (Action == TEXT("teleport-to-player"))
+	{
+		FString TargetSession;
+		if (!GetRequiredString(Body, TEXT("targetSessionId"), TargetSession))
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("targetSessionId required"));
+		}
+		AValhallaPlayerState* TargetPS = FindPlayerBySessionId(Context.World, TargetSession);
+		APawn* TargetPawn = TargetPS ? TargetPS->GetPawn() : nullptr;
+		if (!Character || !TargetPawn || TargetPS == PS)
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Both players need a pawn, and they must differ"));
+		}
+		// Beside, not inside: a capsule-width and a bit to the target's right.
+		const FVector Destination = TargetPawn->GetActorLocation() + TargetPawn->GetActorRightVector() * 80.0 + FVector(0, 0, 10);
+		TeleportPawn(Character, Destination);
+		PS->ZoneId = TargetPS->ZoneId;
+		return Ok(FString::Printf(TEXT("Moved to %s"), *TargetPS->CharacterName));
+	}
+
+	if (Action == TEXT("unstuck"))
+	{
+		const FValhallaZoneDef* Zone = Context.Zones ? Context.Zones->FindZone(PS->ZoneId) : nullptr;
+		if (!Character || !Zone)
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player has no pawn, or their zone is unknown"));
+		}
+		const double HalfHeight = Character->GetDefaultHalfHeight();
+		TeleportPawn(Character, Zone->DefaultSpawn + FVector(0, 0, HalfHeight + 2.0));
+		return Ok(FString::Printf(TEXT("Sent to %s's default spawn"), *Zone->DisplayName));
+	}
+
+	if (Action == TEXT("freeze"))
+	{
+		const bool bEnable = Flag(TEXT("enabled"), true);
+		PS->bAdminFrozen = bEnable;
+		if (Character)
+		{
+			if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+			{
+				if (bEnable)
+				{
+					Movement->StopMovementImmediately();
+					Movement->DisableMovement();
+				}
+				else
+				{
+					Movement->SetMovementMode(MOVE_Walking);
+				}
+			}
+			if (bEnable)
+			{
+				if (UValhallaSkillComponent* Skills = Character->GetSkillComponent())
+				{
+					Skills->ServerCancelCast();
+					Skills->ServerStopAutoAttack();
+				}
+			}
+		}
+		if (PC)
+		{
+			PC->ClientChatMessage(MakeAdminLine(bEnable ? TEXT("You have been frozen by an admin.") : TEXT("You can move again."), Now));
+		}
+		return Ok(bEnable ? TEXT("Frozen") : TEXT("Unfrozen"));
+	}
+
+	// ── Combat state ─────────────────────────────────────────────────────
+	if (Action == TEXT("god-mode"))
+	{
+		PS->bAdminGodMode = Flag(TEXT("enabled"), true);
+		return Ok(PS->bAdminGodMode ? TEXT("God mode on") : TEXT("God mode off"));
+	}
+
+	if (Action == TEXT("reset-cooldowns"))
+	{
+		const int32 Count = PS->GetSkillCooldownExpiry().Num();
+		PS->GetSkillCooldownExpiry().Reset();
+		return Ok(FString::Printf(TEXT("Cleared %d cooldown(s)"), Count));
+	}
+
+	if (Action == TEXT("clear-buffs"))
+	{
+		const int32 Count = PS->GetActiveBuffs().Num();
+		PS->GetActiveBuffs().Reset();
+		PS->RecomputeStats();
+		return Ok(FString::Printf(TEXT("Removed %d buff(s)/debuff(s)"), Count));
+	}
+
+	// ── Communication ────────────────────────────────────────────────────
+	if (Action == TEXT("message"))
+	{
+		FString Text;
+		if (!GetRequiredString(Body, TEXT("text"), Text) || Text.TrimStartAndEnd().IsEmpty())
+		{
+			return Fail(EHttpServerResponseCodes::BadRequest, TEXT("text required"));
+		}
+		if (!PC)
+		{
+			return Fail(EHttpServerResponseCodes::Conflict, TEXT("Player has no controller"));
+		}
+		PC->ClientChatMessage(MakeAdminLine(Text.TrimStartAndEnd().Left(200), Now));
+		return Ok(TEXT("Message sent"));
+	}
+
+	if (Action == TEXT("mute"))
+	{
+		double Minutes = 0.0;
+		Number(TEXT("minutes"), Minutes);
+		PS->AdminMutedUntil = Minutes > 0.0 ? Now + Minutes * 60.0 : 0.0;
+		if (PC)
+		{
+			PC->ClientChatMessage(MakeAdminLine(Minutes > 0.0
+				? FString::Printf(TEXT("You have been muted for %.0f minute(s)."), Minutes)
+				: FString(TEXT("You are no longer muted.")), Now));
+		}
+		return Ok(Minutes > 0.0 ? FString::Printf(TEXT("Muted for %.0f min"), Minutes) : FString(TEXT("Unmuted")));
+	}
+
+	// ── Persistence ──────────────────────────────────────────────────────
+	if (Action == TEXT("save"))
+	{
+		Context.GameMode->SaveCharacterFor(PS, TEXT("admin"));
+		return Ok(TEXT("Save requested; see the server log for the backend's answer"));
+	}
+
+	return Fail(EHttpServerResponseCodes::BadRequest, FString::Printf(TEXT("Unknown action: %s"), *Action));
+}
+
+bool UValhallaAdminServer::HandlePlayerInspect(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+{
+	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
+
+	FString SessionId;
+	if (!GetRequiredString(Body, TEXT("sessionId"), SessionId))
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("sessionId required")));
+		return true;
+	}
+
+	FAdminContext Context;
+	if (!ResolveContext(this, Context, OnComplete))
+	{
+		return true;
+	}
+
+	const AValhallaPlayerState* PS = FindPlayerBySessionId(Context.World, SessionId);
+	if (!PS)
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::NotFound, TEXT("Player not found")));
+		return true;
+	}
+
+	const AValhallaGameState* GameState = Context.World->GetGameState<AValhallaGameState>();
+	const double Now = GameState ? GameState->GetServerTime() : 0.0;
+	auto ItemName = [&Context](FName Id) -> FString
+	{
+		const FValhallaItemTemplate* Item = Context.Data ? Context.Data->FindItem(Id) : nullptr;
+		return Item ? Item->Name : Id.ToString();
+	};
+
+	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
+	Json->SetBoolField(TEXT("ok"), true);
+	Json->SetStringField(TEXT("sessionId"), SessionId);
+	Json->SetStringField(TEXT("name"), PS->CharacterName);
+	Json->SetStringField(TEXT("classId"), PS->ClassId.ToString());
+	Json->SetNumberField(TEXT("level"), PS->Level);
+	Json->SetNumberField(TEXT("xp"), PS->Xp);
+	Json->SetStringField(TEXT("zoneId"), PS->ZoneId.ToString());
+	Json->SetBoolField(TEXT("alive"), PS->IsAlive());
+	Json->SetNumberField(TEXT("hp"), Round(PS->Hp));
+	Json->SetNumberField(TEXT("maxHp"), Round(PS->MaxHp));
+	Json->SetNumberField(TEXT("mana"), Round(PS->Mana));
+	Json->SetNumberField(TEXT("maxMana"), Round(PS->MaxMana));
+	Json->SetNumberField(TEXT("energy"), Round(PS->Energy));
+	Json->SetNumberField(TEXT("maxEnergy"), Round(PS->MaxEnergy));
+	Json->SetBoolField(TEXT("godMode"), PS->bAdminGodMode);
+	Json->SetBoolField(TEXT("frozen"), PS->bAdminFrozen);
+	Json->SetNumberField(TEXT("mutedSeconds"), Round(FMath::Max(0.0, PS->AdminMutedUntil - Now)));
+
+	const FValhallaResolvedStats& Stats = PS->GetStats();
+	const TSharedRef<FJsonObject> StatsJson = MakeShared<FJsonObject>();
+	StatsJson->SetNumberField(TEXT("strength"), Round(Stats.Strength));
+	StatsJson->SetNumberField(TEXT("stamina"), Round(Stats.Stamina));
+	StatsJson->SetNumberField(TEXT("dexterity"), Round(Stats.Dexterity));
+	StatsJson->SetNumberField(TEXT("intelligence"), Round(Stats.Intelligence));
+	StatsJson->SetNumberField(TEXT("wisdom"), Round(Stats.Wisdom));
+	StatsJson->SetNumberField(TEXT("physicalResist"), Stats.PhysicalResist);
+	StatsJson->SetNumberField(TEXT("spellResist"), Stats.SpellResist);
+	StatsJson->SetNumberField(TEXT("speed"), Round(Stats.Speed));
+	Json->SetObjectField(TEXT("stats"), StatsJson);
+
+	TArray<TSharedPtr<FJsonValue>> InventoryJson;
+	for (int32 Index = 0; Index < PS->Inventory.Num(); ++Index)
+	{
+		const FValhallaInventorySlot& Slot = PS->Inventory[Index];
+		const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetNumberField(TEXT("slot"), Index);
+		Obj->SetStringField(TEXT("itemId"), Slot.ItemId.ToString());
+		Obj->SetStringField(TEXT("name"), ItemName(Slot.ItemId));
+		Obj->SetNumberField(TEXT("quantity"), Slot.Quantity);
+		InventoryJson.Add(MakeShared<FJsonValueObject>(Obj));
+	}
+	Json->SetArrayField(TEXT("inventory"), InventoryJson);
+
+	const TSharedRef<FJsonObject> EquipmentJson = MakeShared<FJsonObject>();
+	for (int64 Value = 1; Value <= static_cast<int64>(EValhallaEquipSlot::Ring); ++Value)
+	{
+		const EValhallaEquipSlot Slot = static_cast<EValhallaEquipSlot>(Value);
+		const FName ItemId = PS->GetEquipped(Slot);
+		if (!ItemId.IsNone())
+		{
+			EquipmentJson->SetStringField(EquipSlotKey(Slot), FString::Printf(TEXT("%s (%s)"), *ItemName(ItemId), *ItemId.ToString()));
+		}
+	}
+	Json->SetObjectField(TEXT("equipment"), EquipmentJson);
+
+	TArray<TSharedPtr<FJsonValue>> BuffsJson;
+	for (const FValhallaActiveBuff& Buff : PS->GetActiveBuffs())
+	{
+		const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("skillId"), Buff.SkillId.ToString());
+		Obj->SetNumberField(TEXT("secondsLeft"), Round(FMath::Max(0.0, Buff.ExpiresAt - Now)));
+		BuffsJson.Add(MakeShared<FJsonValueObject>(Obj));
+	}
+	Json->SetArrayField(TEXT("buffs"), BuffsJson);
+
+	OnComplete(MakeJsonResponse(Json, EHttpServerResponseCodes::Ok));
+	return true;
+}
+
+bool UValhallaAdminServer::HandleBroadcast(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+{
+	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
+
+	FString Text;
+	if (!GetRequiredString(Body, TEXT("text"), Text) || Text.TrimStartAndEnd().IsEmpty())
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("text required")));
+		return true;
+	}
+
+	FString ZoneId;
+	Body->TryGetStringField(TEXT("zoneId"), ZoneId);
+
+	FAdminContext Context;
+	if (!ResolveContext(this, Context, OnComplete))
+	{
+		return true;
+	}
+
+	const AValhallaGameState* GameState = Context.World->GetGameState<AValhallaGameState>();
+	const FValhallaChatMessage Line = MakeAdminLine(Text.TrimStartAndEnd().Left(200), GameState ? GameState->GetServerTime() : 0.0);
+
+	int32 Delivered = 0;
+	for (FConstPlayerControllerIterator It = Context.World->GetPlayerControllerIterator(); It; ++It)
+	{
+		AValhallaPlayerController* PC = Cast<AValhallaPlayerController>(It->Get());
+		const AValhallaPlayerState* PS = PC ? PC->GetPlayerState<AValhallaPlayerState>() : nullptr;
+		if (!PC || !PS || (!ZoneId.IsEmpty() && PS->ZoneId != FName(*ZoneId)))
+		{
+			continue;
+		}
+		PC->ClientChatMessage(Line);
+		++Delivered;
+	}
+
+	UE_LOG(LogValhallaAdmin, Log, TEXT("broadcast to %s: %d player(s): %s"),
+		ZoneId.IsEmpty() ? TEXT("everyone") : *ZoneId, Delivered, *Text);
+
+	OnComplete(MakeJsonResponse(MakeOkMessage(FString::Printf(TEXT("Delivered to %d player(s)"), Delivered)), EHttpServerResponseCodes::Ok));
+	return true;
+}
+
+bool UValhallaAdminServer::HandleSpawnPointAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+{
+	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
+
+	FString SpawnPointId, Action;
+	if (!GetRequiredString(Body, TEXT("spawnPointId"), SpawnPointId) || !GetRequiredString(Body, TEXT("action"), Action))
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("spawnPointId and action required")));
+		return true;
+	}
+
+	FAdminContext Context;
+	if (!ResolveContext(this, Context, OnComplete))
+	{
+		return true;
+	}
+
+	AValhallaNPCSpawner* Spawner = nullptr;
+	for (TActorIterator<AValhallaNPCSpawner> It(Context.World); It; ++It)
+	{
+		if (AdminActorId(*It) == SpawnPointId)
+		{
+			Spawner = *It;
+			break;
+		}
+	}
+	if (!Spawner)
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::NotFound, TEXT("Spawn point not found")));
+		return true;
+	}
+
+	if (Action == TEXT("respawn-now"))
+	{
+		const AValhallaNPC* Current = Spawner->GetSpawnedNPC();
+		if (Current && Current->IsAlive())
+		{
+			OnComplete(MakeErrorResponse(EHttpServerResponseCodes::Conflict, TEXT("Its NPC is alive")));
+			return true;
+		}
+		Spawner->RespawnNow();
+		OnComplete(MakeJsonResponse(MakeOkMessage(TEXT("Spawned")), EHttpServerResponseCodes::Ok));
+		return true;
+	}
+
+	if (Action == TEXT("set-respawn-seconds"))
+	{
+		double Seconds = 0.0;
+		if (!Body->TryGetNumberField(TEXT("seconds"), Seconds) || Seconds < 0.0)
+		{
+			OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("seconds >= 0 required (0 = template)")));
+			return true;
+		}
+		Spawner->RespawnSeconds = static_cast<float>(Seconds);
+		OnComplete(MakeJsonResponse(MakeOkMessage(FString::Printf(
+			TEXT("Respawn is now %.0f s for this session. To keep it, set Respawn Time Override on the spawn point in Unreal."),
+			Spawner->GetEffectiveRespawnSeconds())), EHttpServerResponseCodes::Ok));
+		return true;
+	}
+
+	OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, FString::Printf(TEXT("Unknown action: %s"), *Action)));
+	return true;
+}
+
 #endif // WITH_VALHALLA_ADMIN_API
+
+bool UValhallaAdminServer::HandleAccountAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+{
+	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
+
+	FString Action;
+	if (!GetRequiredString(Body, TEXT("action"), Action))
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("action required (ban, unban, list-bans)")));
+		return true;
+	}
+
+	FAdminContext Context;
+	if (!ResolveContext(this, Context, OnComplete))
+	{
+		return true;
+	}
+
+	UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(Context.World);
+	if (!Backend)
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::ServiceUnavail, TEXT("No account backend in this game instance")));
+		return true;
+	}
+
+	if (Action == TEXT("list-bans"))
+	{
+		Backend->ListBans([OnComplete](bool bOk, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			if (!bOk || !Json.IsValid())
+			{
+				OnComplete(MakeErrorResponse(BackendFailureCode(Status), FString::Printf(TEXT("Could not list bans: %s"), *Error)));
+				return;
+			}
+			OnComplete(MakeJsonResponse(Json.ToSharedRef(), EHttpServerResponseCodes::Ok));
+		});
+		return true;
+	}
+
+	FString Username;
+	double UserIdNumber = 0.0;
+	Body->TryGetStringField(TEXT("username"), Username);
+	Body->TryGetNumberField(TEXT("userId"), UserIdNumber);
+	Username = Username.TrimStartAndEnd();
+	const int32 UserId = static_cast<int32>(UserIdNumber);
+	if (Username.IsEmpty() && UserId <= 0)
+	{
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("username or userId required")));
+		return true;
+	}
+
+	if (Action == TEXT("ban"))
+	{
+		double Minutes = 0.0;
+		FString Reason;
+		Body->TryGetNumberField(TEXT("minutes"), Minutes);
+		Body->TryGetStringField(TEXT("reason"), Reason);
+		StartAccountBan(Context.World, UserId, Username, Minutes, Reason.TrimStartAndEnd().Left(200), OnComplete);
+		return true;
+	}
+
+	if (Action == TEXT("unban"))
+	{
+		Backend->UnbanAccount(UserId, Username, [OnComplete](bool bOk, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			if (!bOk)
+			{
+				OnComplete(MakeErrorResponse(BackendFailureCode(Status), FString::Printf(TEXT("Unban failed: %s"), *Error)));
+				return;
+			}
+			FString Account;
+			if (Json.IsValid())
+			{
+				Json->TryGetStringField(TEXT("username"), Account);
+			}
+			UE_LOG(LogValhallaAdmin, Log, TEXT("account unban: %s"), *Account);
+			OnComplete(MakeJsonResponse(MakeOkMessage(FString::Printf(TEXT("%s unbanned"), *Account)), EHttpServerResponseCodes::Ok));
+		});
+		return true;
+	}
+
+	OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, FString::Printf(TEXT("Unknown action: %s"), *Action)));
+	return true;
+}

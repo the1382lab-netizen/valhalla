@@ -339,6 +339,33 @@ float AValhallaCharacter::GetCameraWorldYaw() const
 	return CameraBoom ? static_cast<float>(CameraBoom->GetComponentRotation().Yaw) : -45.f;
 }
 
+void AValhallaCharacter::AddCameraOrbit(float DeltaYawDegrees, float DeltaPitchDegrees)
+{
+	if (!CameraBoom)
+	{
+		return;
+	}
+
+	// The boom uses an absolute rotation, so its relative rotation *is* its
+	// world rotation — the actor turning to face the cursor never drags it.
+	FRotator Rotation = CameraBoom->GetRelativeRotation();
+	Rotation.Yaw = FRotator::NormalizeAxis(Rotation.Yaw + DeltaYawDegrees);
+	Rotation.Pitch = FMath::Clamp(Rotation.Pitch + DeltaPitchDegrees, CameraPitchMin, CameraPitchMax);
+	Rotation.Roll = 0.f;
+	CameraBoom->SetRelativeRotation(Rotation);
+}
+
+void AValhallaCharacter::AddCameraZoom(float Steps)
+{
+	if (!CameraBoom || FMath::IsNearlyZero(Steps))
+	{
+		return;
+	}
+
+	CameraBoom->TargetArmLength = FMath::Clamp(
+		CameraBoom->TargetArmLength + Steps * CameraArmStep, CameraArmMin, CameraArmMax);
+}
+
 void AValhallaCharacter::ApplyClassAppearance()
 {
 	const AValhallaPlayerState* ValhallaPS = GetValhallaPlayerState();

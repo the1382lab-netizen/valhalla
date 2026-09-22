@@ -3,6 +3,7 @@
 #include "ValhallaGameMode.h"
 
 #include "EngineUtils.h"
+#include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameSession.h"
 #include "GameFramework/PlayerStart.h"
@@ -191,6 +192,12 @@ bool AValhallaGameMode::ReloadGameData(FValhallaDataReloadCounts& OutCounts)
 
 		Npc->ReapplyTemplate(*Template);
 		++OutCounts.NpcsUpdated;
+	}
+
+	// ── Clients: tell them to reload their own copy ──────────────────────
+	if (AValhallaGameState* ValhallaGS = GetGameState<AValhallaGameState>())
+	{
+		ValhallaGS->BumpDataVersion();
 	}
 
 	UE_LOG(LogValhallaGame, Log,
@@ -737,8 +744,22 @@ void AValhallaGameMode::SpawnLoadedPawn(APlayerController* NewPlayer, const FVal
 		const bool bLooksSaved = !Local.IsNearlyZero();
 		if (bLooksSaved)
 		{
-			const FVector Candidate = UValhallaAdminServer::FromZoneLocalCm(
+			FVector Candidate = UValhallaAdminServer::FromZoneLocalCm(
 				*Zone, Local.X, Local.Y, UValhallaAdminServer::PlacementZOffsetCm);
+
+			// Phase 8c: PlacementZOffsetCm puts the capsule *centre* 8 cm above
+			// the floor, i.e. half the capsule inside it, and SpawnActor's
+			// AdjustIfPossibleButDontSpawnIfColliding then refused most saved
+			// positions ("SpawnActor failed because of collision"). Stand the
+			// capsule on the floor instead.
+			if (const ACharacter* PawnDefaults = Cast<ACharacter>(GetDefaultPawnClassForController(NewPlayer)
+					? GetDefaultPawnClassForController(NewPlayer)->GetDefaultObject() : nullptr))
+			{
+				if (const UCapsuleComponent* Capsule = PawnDefaults->GetCapsuleComponent())
+				{
+					Candidate.Z += Capsule->GetScaledCapsuleHalfHeight();
+				}
+			}
 
 			if (Zone->Contains2D(Candidate))
 			{
@@ -765,6 +786,17 @@ void AValhallaGameMode::SpawnLoadedPawn(APlayerController* NewPlayer, const FVal
 		// Straight to the saved spot. ChoosePlayerStart is not consulted: the
 		// saved position *is* the answer, and a PlayerStart would override it.
 		RestartPlayerAtTransform(NewPlayer, FTransform(FRotator::ZeroRotator, Location));
+
+		// Phase 8c: a saved spot that is still blocked (a prop placed since,
+		// another capsule) must not leave the player bodiless; fall back to the
+		// zone's default spawn.
+		if (!NewPlayer->GetPawn())
+		{
+			UE_LOG(LogValhallaGame, Warning,
+				TEXT("character %d's saved position is blocked; using the default spawn."), Session->CharacterId);
+			bHavePosition = false;
+			RestartPlayer(NewPlayer);
+		}
 	}
 	else
 	{
@@ -1247,6 +1279,49 @@ void AValhallaGameMode::CheckRespawns(double Now)
 
 		It.RemoveCurrent();
 	}
+}
+
+TArray<APlayerController*> AValhallaGameMode::FindControllersForUser(int32 UserId) const
+{
+	TArray<APlayerController*> Result;
+	if (UserId <= 0)
+	{
+		return Result;
+	}
+	for (const TPair<TWeakObjectPtr<APlayerController>, FValhallaBackendSession>& Entry : BackendSessions)
+	{
+		if (APlayerController* PC = Entry.Key.Get())
+		{
+			if (Entry.Value.UserId == UserId)
+			{
+				Result.Add(PC);
+			}
+		}
+	}
+	return Result;
+}
+
+bool AValhallaGameMode::AdminResurrectInPlace(AValhallaPlayerState* ValhallaPS)
+{
+	AValhallaCharacter* Character = ValhallaPS ? Cast<AValhallaCharacter>(ValhallaPS->GetPawn()) : nullptr;
+	if (!ValhallaPS || !Character || ValhallaPS->IsAlive())
+	{
+		return false;
+	}
+
+	PendingRespawns.Remove(ValhallaPS);
+	ValhallaPS->RespawnWithFullPools();
+	Character->SetDeathPresentation(false);
+
+	FValhallaCombatEvent Event;
+	Event.Kind = EValhallaCombatEventKind::PlayerRespawned;
+	Event.Target = Character;
+	Event.Location = Character->GetActorLocation();
+	Event.RemainingHp = ValhallaPS->Hp;
+	UValhallaCombatLibrary::BroadcastCombatEvent(this, Event);
+
+	UE_LOG(LogValhallaCombat, Log, TEXT("playerRespawned %s in place by an admin"), *ValhallaPS->CharacterName);
+	return true;
 }
 
 void AValhallaGameMode::Logout(AController* Exiting)

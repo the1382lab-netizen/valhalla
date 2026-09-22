@@ -258,6 +258,15 @@ public:
 	 */
 	void CheckRespawns(double Now);
 
+	/**
+	 * Admin: bring a dead player back where they lie, with full pools, and
+	 * cancel their pending respawn. False if they are not dead.
+	 */
+	bool AdminResurrectInPlace(AValhallaPlayerState* ValhallaPS);
+
+	/** Admin: every connected controller logged into this account. */
+	TArray<APlayerController*> FindControllersForUser(int32 UserId) const;
+
 protected:
 	/** Server time in seconds at which each dead player comes back. */
 	TMap<TWeakObjectPtr<AValhallaPlayerState>, double> PendingRespawns;

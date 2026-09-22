@@ -244,6 +244,12 @@ void UValhallaPartySubsystem::Invite(AValhallaPlayerState* Inviter, const FStrin
 
 	SendSystemChat(Target, FString::Printf(TEXT("%s has invited you to a party. Type /accept to join."), *Inviter->CharacterName));
 	SendSystemChat(Inviter, FString::Printf(TEXT("Invite sent to %s."), *Target->CharacterName));
+
+	// Phase 8b: the invitee's HUD raises an Accept / Decline prompt from this.
+	if (AValhallaPlayerController* TargetController = Cast<AValhallaPlayerController>(Target->GetOwner()))
+	{
+		TargetController->ClientPartyInvite(Inviter->CharacterName);
+	}
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

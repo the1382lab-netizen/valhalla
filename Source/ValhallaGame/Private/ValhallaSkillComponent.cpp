@@ -2,6 +2,8 @@
 
 #include "ValhallaSkillComponent.h"
 
+#include "Components/CapsuleComponent.h"
+
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "ValhallaCharacter.h"
@@ -188,16 +190,21 @@ void UValhallaSkillComponent::CastFromActionBar(int32 Slot, AActor* Target, cons
 	}
 
 	// GameScene.ts:731 — an auto-attack skill on the bar toggles the loop rather
-	// than casting, and pressing it again while it is running stops it.
+	// than casting. Each auto-attack button is its own kind: pressing Auto Melee
+	// while it runs stops it, and pressing Auto Ranged while melee runs switches
+	// to ranged on the same target instead of stopping.
 	if (Skill->bIsAutoAttack)
 	{
-		if (bAutoAttacking)
+		// Same button on the same target (or no new target) stops; the same
+		// button with a different enemy selected switches to it.
+		if (bAutoAttacking && AutoAttackSkillId == SkillId && (!Target || Target == AutoAttackTargetActor))
 		{
 			ServerStopAutoAttack();
 		}
 		else
 		{
-			ServerStartAutoAttack(Target);
+			AActor* AttackTarget = Target ? Target : AutoAttackTargetActor.Get();
+			ServerStartAutoAttackWith(AttackTarget, SkillId);
 		}
 		return;
 	}
@@ -601,7 +608,10 @@ float UValhallaSkillComponent::GetAutoAttackIntervalMs() const
 	}
 
 	const FValhallaClassTemplate* ClassTemplate = Data->FindClass(PlayerState->ClassId);
-	const bool bRanged = ResolveAutoAttackSkillId() == SkillRangedAttack;
+	// The running loop's own skill when there is one — a ranger who chose Auto
+	// Melee swings at melee speed even with a bow in hand.
+	const FName ActiveSkill = (bAutoAttacking && !AutoAttackSkillId.IsNone()) ? AutoAttackSkillId : ResolveAutoAttackSkillId();
+	const bool bRanged = ActiveSkill == SkillRangedAttack;
 
 	// SkillSystem.ts:499 — `weapon?.attackSpeedMs ?? classTemplate?.baseXSpeedMs
 	// ?? <hard fallback>`, read right to left.
@@ -638,6 +648,53 @@ float UValhallaSkillComponent::GetAutoAttackIntervalMs() const
 
 void UValhallaSkillComponent::ServerStartAutoAttack_Implementation(AActor* Target)
 {
+	ServerStartAutoAttackWith_Implementation(Target, ResolveAutoAttackSkillId());
+}
+
+FString UValhallaSkillComponent::GetAutoAttackBlocker(FName SkillId) const
+{
+	const AValhallaPlayerState* PlayerState = GetValhallaPlayerState();
+	const UValhallaDataSubsystem* Data = GetData();
+	if (!PlayerState || !Data)
+	{
+		return TEXT("Not ready");
+	}
+
+	const FValhallaSkillTemplate* Skill = Data->FindSkill(SkillId);
+	if (!Skill || !Skill->bIsAutoAttack)
+	{
+		return TEXT("Not an auto-attack");
+	}
+
+	// A null classId means every class (melee_attack); otherwise it must match.
+	if (!Skill->ClassId.IsNone() && Skill->ClassId != PlayerState->ClassId)
+	{
+		return TEXT("Your class cannot use that attack");
+	}
+
+	if (SkillId == SkillRangedAttack && !Valhalla::Stats::HasRangedAttack(PlayerState->ClassId))
+	{
+		return TEXT("Your class has no ranged attack");
+	}
+
+	if (Skill->bRequiresWeapon)
+	{
+		const FValhallaItemTemplate* Weapon = PlayerState->GetEquippedWeapon();
+		if (!Weapon)
+		{
+			return TEXT("You need a weapon equipped");
+		}
+		if (SkillId == SkillRangedAttack && !Weapon->bIsRangedWeapon)
+		{
+			return TEXT("You need a ranged weapon equipped");
+		}
+	}
+
+	return FString();
+}
+
+void UValhallaSkillComponent::ServerStartAutoAttackWith_Implementation(AActor* Target, FName SkillId)
+{
 	const AValhallaPlayerState* PlayerState = GetValhallaPlayerState();
 	if (!PlayerState || !PlayerState->IsAlive())
 	{
@@ -651,6 +708,18 @@ void UValhallaSkillComponent::ServerStartAutoAttack_Implementation(AActor* Targe
 		return;
 	}
 
+	const FString Blocker = GetAutoAttackBlocker(SkillId);
+	if (!Blocker.IsEmpty())
+	{
+		SendSkillFailed(Blocker);
+		return;
+	}
+
+	StartAutoAttackInternal(Target, SkillId);
+}
+
+void UValhallaSkillComponent::StartAutoAttackInternal(AActor* Target, FName SkillId)
+{
 	// SkillSystem.ts:396 — starting an auto-attack drops any cast in progress.
 	if (!CastingSkillId.IsNone())
 	{
@@ -659,10 +728,10 @@ void UValhallaSkillComponent::ServerStartAutoAttack_Implementation(AActor* Targe
 
 	bAutoAttacking = true;
 	AutoAttackTargetActor = Target;
-	AutoAttackSkillId = ResolveAutoAttackSkillId();
+	AutoAttackSkillId = SkillId;
 
-	// SkillSystem.ts:405 — the first swing lands immediately, so right-clicking
-	// an enemy feels like attacking rather than like waiting.
+	// SkillSystem.ts:405 — the first swing lands immediately, so turning the
+	// attack on feels like attacking rather than like waiting.
 	NextAutoAttackAt = UValhallaCombatLibrary::GetServerTime(this);
 
 	FValhallaCombatEvent Event;
@@ -740,14 +809,26 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 	const bool bMagical = Valhalla::Stats::IsRangedMagic(PlayerState->ClassId);
 	const bool bRangedPhysical = AutoAttackSkillId == SkillRangedAttack;
 
-	double MaxRange = Valhalla::MeleeRange + Valhalla::PlayerCollisionRadius;
+	// Measured surface to surface, the way AValhallaNPC measures its own reach:
+	// 1.0's entities were points, 2.0's are capsules that cannot overlap. With
+	// only one radius added here, an NPC standing at *its* attack distance
+	// (30 cm + both radii) was always just outside the player's melee reach,
+	// and Auto Melee never landed on anything that stood still.
+	auto CapsuleRadiusOf = [](const AActor* Actor) -> double
+	{
+		const UCapsuleComponent* Capsule = Actor ? Actor->FindComponentByClass<UCapsuleComponent>() : nullptr;
+		return Capsule ? Capsule->GetScaledCapsuleRadius() : Valhalla::PlayerCollisionRadius;
+	};
+	const double CapsuleGap = CapsuleRadiusOf(Character) + CapsuleRadiusOf(Target);
+
+	double MaxRange = Valhalla::MeleeRange + CapsuleGap;
 	if (bRangedPhysical)
 	{
-		MaxRange = Skill->Range;
+		MaxRange = Skill->Range + CapsuleGap;
 	}
 	else if (bMagical)
 	{
-		MaxRange = MagicalAutoAttackRange;
+		MaxRange = MagicalAutoAttackRange + CapsuleGap;
 	}
 
 	// SkillSystem.ts:475 — out of range is a pause, not a stop. The player may

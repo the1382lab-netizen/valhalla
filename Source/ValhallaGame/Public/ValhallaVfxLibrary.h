@@ -166,8 +166,16 @@ public:
 	/** 0xRRGGBB as authored for sRGB, as a linear colour. */
 	static FLinearColor FromPackedColor(int32 Packed);
 
-	/** True for the two skills that put an `AValhallaSpellProjectile` in the air. */
+	/** True for the two skills that are drawn as a bolt (fireball, magic missile, or a data `projectile`). */
 	static bool IsProjectileSkill(const FValhallaSkillTemplate& Skill);
+
+	/**
+	 * Phase 8b: the subset of IsProjectileSkill whose hit is drawn by a real
+	 * `AValhallaSpellProjectile` detonating (its spellImpact event), so the cast
+	 * event must not draw a second impact on the target. Magic Missile is the
+	 * one bolt that never becomes an actor, so its cast event keeps the impact.
+	 */
+	static bool SpawnsProjectileActor(const FValhallaSkillTemplate& Skill);
 
 	/**
 	 * The attack cycle whoever is holding the weapon would swing.

@@ -111,6 +111,20 @@ namespace ValhallaAdminTests
 		Bag.Items.Add(Potions);
 		Grasslands.LootBags.Add(Bag);
 
+		FValhallaAdminSpawnPointInfo Point;
+		Point.Id = TEXT("ValhallaNPCSpawner_3");
+		Point.Label = TEXT("West field 1");
+		Point.NpcClass = TEXT("BP_NPC_TestEnemy");
+		Point.TemplateId = TEXT("npc_1771431708366");
+		Point.X = 640.4;
+		Point.Y = 1440.0;
+		Point.RespawnSeconds = 45.0;
+		Point.bRespawnOverride = true;
+		Point.SecondsUntilRespawn = 12.34;
+		Point.NpcId = TEXT("ValhallaNPC_2");
+		Point.bNpcAlive = false;
+		Grasslands.SpawnPoints.Add(Point);
+
 		Snapshot.Zones.Add(TEXT("grasslands"), Grasslands);
 
 		// A zone with nothing in it. 2.0 lists it; 1.0 would not have. The
@@ -205,7 +219,25 @@ bool FValhallaAdminStateJsonTest::RunTest(const FString& /*Parameters*/)
 	const TSharedPtr<FJsonObject>* Grasslands = GetObject(*this, *Zones, TEXT("grasslands"));
 	if (!Grasslands) { return false; }
 
-	CheckKeys(*this, *Grasslands, TEXT("a zone"), { TEXT("players"), TEXT("npcs"), TEXT("lootBags") });
+	CheckKeys(*this, *Grasslands, TEXT("a zone"), { TEXT("players"), TEXT("npcs"), TEXT("lootBags"), TEXT("spawnPoints") });
+
+	// ── A spawn point entry (2.0 only) ───────────────────────────────────
+	if (const TArray<TSharedPtr<FJsonValue>>* Points = GetArray(*this, *Grasslands, TEXT("spawnPoints")))
+	{
+		TestEqual(TEXT("one spawn point"), Points->Num(), 1);
+		if (Points->Num() == 1)
+		{
+			const TSharedPtr<FJsonObject>& PointObj = (*Points)[0]->AsObject();
+			CheckKeys(*this, PointObj, TEXT("a spawn point"),
+				{ TEXT("id"), TEXT("label"), TEXT("npcClass"), TEXT("templateId"), TEXT("x"), TEXT("y"),
+				  TEXT("respawnSeconds"), TEXT("respawnOverride"), TEXT("respawnIn"), TEXT("npcId"), TEXT("npcAlive") });
+			double PointValue = 0.0;
+			PointObj->TryGetNumberField(TEXT("x"), PointValue);
+			TestEqual(TEXT("spawn point x is rounded"), PointValue, 640.0);
+			PointObj->TryGetNumberField(TEXT("respawnIn"), PointValue);
+			TestEqual(TEXT("respawnIn keeps one decimal"), PointValue, 12.3);
+		}
+	}
 
 	// An empty zone must carry three empty *arrays*, not be an empty object:
 	// `zone.npcs.map(...)` on undefined is a thrown TypeError and a blank panel.
@@ -230,7 +262,9 @@ bool FValhallaAdminStateJsonTest::RunTest(const FString& /*Parameters*/)
 	CheckKeys(*this, PlayerObj, TEXT("a player"),
 		{ TEXT("sessionId"), TEXT("name"), TEXT("classId"), TEXT("level"),
 		  TEXT("x"), TEXT("y"), TEXT("hp"), TEXT("maxHp"),
-		  TEXT("mana"), TEXT("maxMana"), TEXT("alive") });
+		  TEXT("mana"), TEXT("maxMana"), TEXT("alive"),
+		  TEXT("zoneId"), TEXT("godMode"), TEXT("frozen"), TEXT("mutedSeconds"),
+		  TEXT("account"), TEXT("userId") });
 
 	// sessionId is a *string*, even though 2.0's is a number underneath.
 	// The dashboard uses it as an object key and posts it back verbatim.

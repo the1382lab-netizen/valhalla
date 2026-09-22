@@ -644,6 +644,7 @@ void FValhallaDataTables::Reset()
 	LootTables.Reset();
 	Zones.Reset();
 	UiConfig.Reset();
+	UIConfigTyped = FValhallaUIConfig();
 	FailedFiles.Reset();
 }
 
@@ -686,6 +687,43 @@ bool UValhallaDataSubsystem::LoadAll()
 		bSuccess ? TEXT("") : TEXT(" (some files failed — see errors above)"));
 
 	return bSuccess;
+}
+
+bool UValhallaDataSubsystem::ReloadUIConfig()
+{
+	const FString Path = GetUIConfigPath();
+
+	FString RawText;
+	TSharedPtr<FJsonObject> Root;
+	if (!FFileHelper::LoadFileToString(RawText, *Path))
+	{
+		UE_LOG(LogValhallaCore, Warning, TEXT("[ValhallaData] ReloadUIConfig: could not read '%s'."), *Path);
+		return false;
+	}
+
+	const TSharedRef<TJsonReader<TCHAR>> Reader = TJsonReaderFactory<TCHAR>::Create(RawText);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		// Keep the previous layout: a half-saved file mid-edit must not blank the HUD.
+		UE_LOG(LogValhallaCore, Warning, TEXT("[ValhallaData] ReloadUIConfig: '%s' is not valid JSON; keeping the old layout."), *Path);
+		return false;
+	}
+
+	Tables.UiConfig = Root;
+	FValhallaUIConfig::Parse(Root, Tables.UIConfigTyped);
+	UE_LOG(LogValhallaCore, Log, TEXT("[ValhallaData] ui-config.json reloaded (version %s)."), *Tables.UIConfigTyped.Version);
+	return true;
+}
+
+FString UValhallaDataSubsystem::GetUIConfigPath() const
+{
+	FString Root = LoadedDataRoot;
+	if (Root.IsEmpty())
+	{
+		const UValhallaDataSettings* Settings = UValhallaDataSettings::Get();
+		Root = Settings ? Settings->GetResolvedDataRoot() : UValhallaDataSettings::ResolveDataRoot(FString());
+	}
+	return FPaths::Combine(Root, TEXT("ui-config.json"));
 }
 
 bool UValhallaDataSubsystem::Reload()
@@ -827,6 +865,11 @@ bool UValhallaDataSubsystem::LoadTablesFromRoot(const FString& ResolvedDataRoot,
 	if (const TSharedPtr<FJsonObject> File = LoadJsonFile(ResolvedDataRoot, TEXT("ui-config.json")))
 	{
 		OutTables.UiConfig = File;
+		if (!FValhallaUIConfig::Parse(File, OutTables.UIConfigTyped))
+		{
+			UE_LOG(LogValhallaCore, Warning,
+				TEXT("[ValhallaData] ui-config.json is missing one or more of its seven sections; defaults fill the gaps."));
+		}
 	}
 	else
 	{

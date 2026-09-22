@@ -119,10 +119,24 @@ public:
 	/** How high above the ground the proxy sits, cm. Keeps the sphere out of the floor. */
 	static constexpr float GroundOffset = 24.f;
 
+	/**
+	 * The `Interact` trace channel (DefaultEngine.ini, ECC_GameTraceChannel2).
+	 * Only loot bags block it, so the loot click can never be eaten by an NPC,
+	 * a corpse, a prop or the player's own capsule standing in front of the bag.
+	 */
+	static constexpr ECollisionChannel InteractChannel = ECC_GameTraceChannel2;
+
+	/** Radius of the invisible click target around the bag, cm. Generous on purpose. */
+	static constexpr float ClickRadius = 55.f;
+
 private:
 	/** The grey-box body: a small brown sphere. Phase 4 gives it a real mesh. */
 	UPROPERTY(VisibleAnywhere, Category = "Valhalla|Loot")
 	TObjectPtr<UStaticMeshComponent> ProxyMesh;
+
+	/** The generous, invisible click target on the Interact channel. */
+	UPROPERTY(VisibleAnywhere, Category = "Valhalla|Loot")
+	TObjectPtr<USphereComponent> ClickTarget;
 
 	/** Tint for ProxyMesh, so the sphere is not whatever colour the kit shipped. */
 	UPROPERTY(Transient)

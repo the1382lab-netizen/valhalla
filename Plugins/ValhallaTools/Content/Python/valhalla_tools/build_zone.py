@@ -463,38 +463,22 @@ class ZoneBuilder(object):
         return actor
 
     def enemy_spawn(self, spawn_id, i, j, template_id, count, radius, label):
-        """An overlay enemy spawn.
+        """Kept so the zone builders still read as a description of the zone.
 
-        Deliberately *not* an actor: the spawner is created at BeginPlay by
-        `UValhallaZoneSubsystem::LoadOverlays` from the file this writes. Enemy
-        placement is data — editable in the Phase 6 editor without opening
-        Unreal, exactly as it was in 1.0 — and a spawner baked into the level
-        beside the one the overlay makes would double every group.
+        NPCs are no longer overlay data: every NPC comes from an NPC Spawn Point
+        (`AValhallaNPCSpawner`) placed in the zone's *gameplay* sublevel,
+        `L_<Zone>_Gameplay`, which this builder never touches — so rebuilding
+        the zone keeps every hand-placed spawn. The spawns this call used to
+        write were converted once by `npc_setup.migrate_overlay_spawns`; this
+        records the intent in the build notes and writes nothing.
         """
-        x, y = tile_xy(i, j)
-        self.overlay_points.append({
-            "id": spawn_id,
-            "type": "enemy_spawn",
-            "x": round(x, 1),
-            "y": round(y, 1),
-            "templateId": template_id,
-            "count": count,
-            "radius": radius,
-            "label": label,
-        })
+        self.notes.setdefault("legacySpawns", []).append(
+            [spawn_id, "enemy_spawn", template_id, count, radius, label])
 
     def npc_spawn(self, spawn_id, i, j, template_id, label):
-        x, y = tile_xy(i, j)
-        self.overlay_points.append({
-            "id": spawn_id,
-            "type": "npc_spawn",
-            "x": round(x, 1),
-            "y": round(y, 1),
-            "templateId": template_id,
-            "count": 1,
-            "radius": 0,
-            "label": label,
-        })
+        """See `enemy_spawn`: recorded in the notes, placed in Unreal instead."""
+        self.notes.setdefault("legacySpawns", []).append(
+            [spawn_id, "npc_spawn", template_id, 1, 0, label])
 
     # ── Lighting is the persistent level's job ──────────────────────────
     #

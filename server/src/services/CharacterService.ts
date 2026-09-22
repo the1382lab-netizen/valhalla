@@ -14,6 +14,7 @@ import {
   ZONE_REGISTRY,
   CLASS_TEMPLATES,
   ITEM_CATALOG,
+  DEFAULT_BODY_ID,
 } from '@valhalla/shared';
 import { DataManager } from '../systems/DataManager.js';
 
@@ -42,6 +43,8 @@ export interface LoadedCharacter {
   userId: number;
   name: string;
   classId: string;
+  /** Paperdoll base body, e.g. 'body_tan'. Falls back to the class default. */
+  bodyId: string;
   level: number;
   xp: number;
   hp: number;
@@ -69,6 +72,14 @@ export interface SaveCharacterData {
   actionBar: string[];
 }
 
+
+// ── Helper: default paperdoll body for a class ──────────────
+
+function defaultBodyId(classId: string): string {
+  const dm = (() => { try { return DataManager.instance; } catch { return null; } })();
+  const template = (dm?.classes[classId]) ?? CLASS_TEMPLATES[classId as ClassId];
+  return template?.bodyId || DEFAULT_BODY_ID;
+}
 
 // ── Helper: query single row ────────────────────────────────
 
@@ -145,9 +156,9 @@ export function createCharacter(userId: number, name: string, classId: string): 
 
   // Insert character
   db.run(
-    `INSERT INTO characters (user_id, name, class_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
-     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`,
-    [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now],
+    `INSERT INTO characters (user_id, name, class_id, body_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`,
+    [userId, trimmedName, classId, defaultBodyId(classId), stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now],
   );
 
   const charIdResult = db.exec('SELECT last_insert_rowid() as id');
@@ -253,6 +264,7 @@ export function loadCharacter(characterId: number, userId: number): LoadedCharac
     userId: char.user_id as number,
     name: char.name as string,
     classId: char.class_id as string,
+    bodyId: (char.body_id as string) || defaultBodyId(char.class_id as string),
     level: char.level as number,
     xp: char.xp as number,
     hp: char.hp as number,
@@ -265,6 +277,16 @@ export function loadCharacter(characterId: number, userId: number): LoadedCharac
     equipment,
     actionBar,
   };
+}
+
+/**
+ * Return the owning user id for a character, or null if the character does not
+ * exist. Used by the server-to-server routes, which are trusted and therefore
+ * check existence rather than ownership.
+ */
+export function getCharacterOwner(characterId: number): number | null {
+  const row = queryOne('SELECT user_id FROM characters WHERE id = ?', [characterId]);
+  return row ? (row.user_id as number) : null;
 }
 
 /**

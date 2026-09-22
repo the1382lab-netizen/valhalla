@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
-import { SkillCategory, SERVER_URL } from '@valhalla/shared';
+import { SkillCategory, SERVER_URL, DEFAULT_EQUIP_SPRITE_CONFIG } from '@valhalla/shared';
+import { PaperdollRegistry } from '../systems/PaperdollRegistry.js';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
 /**
  * BootScene — loads assets and transitions to LoginScene.
@@ -16,7 +17,11 @@ export class BootScene extends Phaser.Scene {
         super({ key: 'BootScene' });
     }
     preload() {
-        // We generate textures in create() instead of loading external files
+        // Fallback player sprite sheet: 4 rows (Up, Left, Down, Right) × 9 frames, 64×64 px
+        this.load.spritesheet('player_walk', 'assets/sprites/BODY_male_walking.png', {
+            frameWidth: 64,
+            frameHeight: 64,
+        });
     }
     async create() {
         // ── Load game data from server (editor JSON files) ──────
@@ -36,8 +41,18 @@ export class BootScene extends Phaser.Scene {
         this.generateNpcTexture();
         // ── Generate melee slash texture ─────────────────────────
         this.generateMeleeTexture();
+        // ── Generate loot bag texture ─────────────────────────────
+        this.generateLootBagTexture();
         // ── Generate skill icon textures ───────────────────────
         this.generateSkillIcons();
+        // ── Load per-class character sprite sheets ─────────────
+        await this.loadClassSprites();
+        // ── Define per-class player animations ───────────────
+        this.definePlayerAnimations();
+        // ── Preload equipment overlays & inventory icons ────────
+        await this.loadEquipmentAssets();
+        // ── Paperdoll layers (bodies + the item sheets the catalog uses) ──
+        await this.loadPaperdollAssets();
         // Transition to login screen
         this.scene.start('LoginScene');
     }
@@ -475,6 +490,292 @@ export class BootScene extends Phaser.Scene {
         gfx.strokePath();
         gfx.generateTexture('melee_slash', size, size);
         gfx.destroy();
+    }
+    generateLootBagTexture() {
+        const size = 28;
+        const gfx = this.add.graphics();
+        // Bag body — brown rounded sack shape
+        gfx.fillStyle(0x8B6914, 1);
+        gfx.fillRoundedRect(4, 8, size - 8, size - 10, 4);
+        // Bag top — darker cinch
+        gfx.fillStyle(0x6B4F10, 1);
+        gfx.fillRect(8, 6, size - 16, 5);
+        // Tie/knot
+        gfx.fillStyle(0x9E7B1A, 1);
+        gfx.fillCircle(size / 2, 6, 3);
+        // Highlight
+        gfx.fillStyle(0xB8942A, 0.5);
+        gfx.fillRoundedRect(7, 12, 6, 8, 2);
+        // Gold coin glint peeking out
+        gfx.fillStyle(0xFFD700, 0.8);
+        gfx.fillCircle(size / 2 + 3, 10, 2);
+        gfx.generateTexture('loot_bag', size, size);
+        gfx.destroy();
+    }
+    /**
+     * Preload equipment overlay sprite sheets and inventory icon images
+     * based on items in the data catalog. Returns a promise that resolves
+     * once all assets are loaded (or immediately if none are needed).
+     */
+    loadEquipmentAssets() {
+        const items = ClientDataManager.instance.items;
+        let hasAssets = false;
+        // Track which files we've already queued to avoid duplicates
+        const queuedSheets = new Set();
+        const queuedIcons = new Set();
+        // Helper: queue a sheet if not already loaded
+        const queueSheet = (filename) => {
+            if (!filename || queuedSheets.has(filename))
+                return;
+            queuedSheets.add(filename);
+            const config = DEFAULT_EQUIP_SPRITE_CONFIG;
+            this.load.spritesheet(`equip_sheet_${filename}`, `assets/sprites/equipment/${filename}`, { frameWidth: config.frameWidth, frameHeight: config.frameHeight });
+            hasAssets = true;
+        };
+        for (const itemId of Object.keys(items)) {
+            const item = items[itemId];
+            if (!item)
+                continue;
+            // Queue per-animation equipment overlay sheets
+            if (item.equipSpriteSheet)
+                queueSheet(item.equipSpriteSheet);
+            if (item.meleeSpriteSheet)
+                queueSheet(item.meleeSpriteSheet);
+            if (item.rangedSpriteSheet)
+                queueSheet(item.rangedSpriteSheet);
+            if (item.castSpriteSheet)
+                queueSheet(item.castSpriteSheet);
+            // Inventory icon
+            if (item.inventoryIcon && !queuedIcons.has(item.inventoryIcon)) {
+                queuedIcons.add(item.inventoryIcon);
+                this.load.image(`icon_${item.inventoryIcon}`, `assets/sprites/icons/${item.inventoryIcon}`);
+                hasAssets = true;
+            }
+        }
+        if (!hasAssets)
+            return Promise.resolve();
+        // Start the loader and return a promise that resolves when done
+        return new Promise((resolve) => {
+            this.load.once('complete', () => {
+                const directions = [
+                    ['up', 0], ['left', 1], ['down', 2], ['right', 3],
+                ];
+                const FRAMES_PER_ROW = DEFAULT_EQUIP_SPRITE_CONFIG.framesPerRow;
+                // Define animations for each loaded equipment sheet
+                for (const sheetFile of queuedSheets) {
+                    const textureKey = `equip_sheet_${sheetFile}`;
+                    if (!this.textures.exists(textureKey))
+                        continue;
+                    // Determine which animation type(s) this sheet is used for
+                    const animTypes = [];
+                    for (const item of Object.values(items)) {
+                        if (item.equipSpriteSheet === sheetFile) {
+                            animTypes.push('walk', 'idle');
+                            break;
+                        }
+                    }
+                    for (const item of Object.values(items)) {
+                        if (item.meleeSpriteSheet === sheetFile) {
+                            animTypes.push('melee');
+                            break;
+                        }
+                    }
+                    for (const item of Object.values(items)) {
+                        if (item.rangedSpriteSheet === sheetFile) {
+                            animTypes.push('ranged');
+                            break;
+                        }
+                    }
+                    for (const item of Object.values(items)) {
+                        if (item.castSpriteSheet === sheetFile) {
+                            animTypes.push('cast');
+                            break;
+                        }
+                    }
+                    // Each sheet is a standard 4-row layout (up, left, down, right)
+                    for (const [dir, dirIndex] of directions) {
+                        if (animTypes.includes('walk')) {
+                            this.anims.create({
+                                key: `${textureKey}_walk_${dir}`,
+                                frames: this.anims.generateFrameNumbers(textureKey, {
+                                    start: dirIndex * FRAMES_PER_ROW,
+                                    end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                                }),
+                                frameRate: 12,
+                                repeat: -1,
+                            });
+                        }
+                        if (animTypes.includes('idle')) {
+                            this.anims.create({
+                                key: `${textureKey}_idle_${dir}`,
+                                frames: [{ key: textureKey, frame: dirIndex * FRAMES_PER_ROW }],
+                                frameRate: 1,
+                                repeat: 0,
+                            });
+                        }
+                        if (animTypes.includes('melee')) {
+                            this.anims.create({
+                                key: `${textureKey}_melee_${dir}`,
+                                frames: this.anims.generateFrameNumbers(textureKey, {
+                                    start: dirIndex * FRAMES_PER_ROW,
+                                    end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                                }),
+                                frameRate: 14,
+                                repeat: 0,
+                            });
+                        }
+                        if (animTypes.includes('ranged')) {
+                            this.anims.create({
+                                key: `${textureKey}_ranged_${dir}`,
+                                frames: this.anims.generateFrameNumbers(textureKey, {
+                                    start: dirIndex * FRAMES_PER_ROW,
+                                    end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                                }),
+                                frameRate: 14,
+                                repeat: 0,
+                            });
+                        }
+                        if (animTypes.includes('cast')) {
+                            this.anims.create({
+                                key: `${textureKey}_cast_${dir}`,
+                                frames: this.anims.generateFrameNumbers(textureKey, {
+                                    start: dirIndex * FRAMES_PER_ROW,
+                                    end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                                }),
+                                frameRate: 10,
+                                repeat: -1,
+                            });
+                        }
+                    }
+                }
+                console.log(`[BootScene] Loaded ${queuedSheets.size} equipment sheets, ${queuedIcons.size} inventory icons`);
+                resolve();
+            });
+            this.load.start();
+        });
+    }
+    /**
+     * Load the paperdoll manifest, the base bodies, and only those item layers
+     * the item catalog actually references. Falls through silently when the
+     * manifest is absent, leaving the LPC path in charge.
+     */
+    async loadPaperdollAssets() {
+        const items = ClientDataManager.instance.items;
+        const needed = new Set();
+        for (const itemId of Object.keys(items)) {
+            const spriteId = items[itemId]?.spriteId;
+            if (spriteId)
+                needed.add(spriteId);
+        }
+        try {
+            await PaperdollRegistry.instance.load(this, needed);
+        }
+        catch (err) {
+            console.warn('[BootScene] paperdoll assets failed to load:', err);
+        }
+    }
+    /**
+     * Load per-class character sprite sheets (walk, melee, ranged, cast).
+     * Each class can have separate sprite sheets configured via the editor.
+     * Falls back to the preloaded `player_walk` texture.
+     */
+    loadClassSprites() {
+        const classes = ClientDataManager.instance.classes;
+        let hasAssets = false;
+        const queuedFiles = new Set();
+        // Animation type → class field name mapping
+        const animFields = ['walk', 'melee', 'ranged', 'cast'];
+        for (const classId of Object.keys(classes)) {
+            const cls = classes[classId];
+            if (!cls)
+                continue;
+            for (const animType of animFields) {
+                const field = `${animType}SpriteSheet`;
+                const filename = cls[field];
+                if (!filename)
+                    continue;
+                const textureKey = `class_${classId}_${animType}`;
+                if (queuedFiles.has(textureKey))
+                    continue;
+                queuedFiles.add(textureKey);
+                this.load.spritesheet(textureKey, `assets/sprites/characters/${filename}`, {
+                    frameWidth: 64,
+                    frameHeight: 64,
+                });
+                hasAssets = true;
+            }
+        }
+        if (!hasAssets)
+            return Promise.resolve();
+        return new Promise((resolve) => {
+            this.load.once('complete', () => {
+                console.log(`[BootScene] Loaded ${queuedFiles.size} class sprite sheets`);
+                resolve();
+            });
+            this.load.start();
+        });
+    }
+    /**
+     * Define per-class player animations.
+     * For each class, creates: {classId}_walk_{dir}, {classId}_idle_{dir},
+     * {classId}_melee_{dir}, {classId}_ranged_{dir}, {classId}_cast_{dir}.
+     * Falls back to `player_walk` texture when a class has no custom sheet.
+     */
+    definePlayerAnimations() {
+        const directions = [
+            ['up', 0],
+            ['left', 1],
+            ['down', 2],
+            ['right', 3],
+        ];
+        const FRAMES_PER_ROW = 9;
+        const classes = ClientDataManager.instance.classes;
+        // Animation types: [type, frameRate, repeat]
+        const animConfig = [
+            ['walk', 12, -1], // looping
+            ['melee', 14, 0], // play once
+            ['ranged', 14, 0], // play once
+            ['cast', 10, -1], // looping
+        ];
+        for (const classId of Object.keys(classes)) {
+            for (const [dir, dirIndex] of directions) {
+                // Walk + idle always created (from walk texture or fallback)
+                const walkTexture = this.textures.exists(`class_${classId}_walk`)
+                    ? `class_${classId}_walk` : 'player_walk';
+                this.anims.create({
+                    key: `${classId}_walk_${dir}`,
+                    frames: this.anims.generateFrameNumbers(walkTexture, {
+                        start: dirIndex * FRAMES_PER_ROW,
+                        end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                    }),
+                    frameRate: 12,
+                    repeat: -1,
+                });
+                this.anims.create({
+                    key: `${classId}_idle_${dir}`,
+                    frames: [{ key: walkTexture, frame: dirIndex * FRAMES_PER_ROW }],
+                    frameRate: 1,
+                    repeat: 0,
+                });
+                // Action animations (melee, ranged, cast)
+                for (const [animType, frameRate, repeat] of animConfig) {
+                    if (animType === 'walk')
+                        continue; // already handled above
+                    const classTexture = `class_${classId}_${animType}`;
+                    // Use class-specific texture if available, else fall back to walk texture
+                    const texture = this.textures.exists(classTexture) ? classTexture : walkTexture;
+                    this.anims.create({
+                        key: `${classId}_${animType}_${dir}`,
+                        frames: this.anims.generateFrameNumbers(texture, {
+                            start: dirIndex * FRAMES_PER_ROW,
+                            end: dirIndex * FRAMES_PER_ROW + FRAMES_PER_ROW - 1,
+                        }),
+                        frameRate,
+                        repeat,
+                    });
+                }
+            }
+        }
     }
 }
 //# sourceMappingURL=BootScene.js.map

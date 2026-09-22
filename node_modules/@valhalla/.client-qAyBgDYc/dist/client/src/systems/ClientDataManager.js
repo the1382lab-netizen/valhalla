@@ -53,16 +53,18 @@ export class ClientDataManager {
         dm._items = (loadedItems && Object.keys(loadedItems).length > 0)
             ? loadedItems
             : { ...ITEM_CATALOG };
-        // Skills
+        // Skills — seed with hardcoded catalog so system skills are always present
+        const baseSkills = { ...SKILL_CATALOG };
+        const baseClassSkills = { ...CLASS_SKILLS };
         const skillsJson = skillsRes.status === 'fulfilled' ? skillsRes.value : null;
         const loadedSkills = skillsJson ? loadSkillsFromJson(skillsJson) : null;
         if (loadedSkills && Object.keys(loadedSkills.skills).length > 0) {
-            dm._skills = loadedSkills.skills;
-            dm._classSkills = loadedSkills.classSkills;
+            dm._skills = { ...baseSkills, ...loadedSkills.skills };
+            dm._classSkills = { ...baseClassSkills, ...loadedSkills.classSkills };
         }
         else {
-            dm._skills = { ...SKILL_CATALOG };
-            dm._classSkills = { ...CLASS_SKILLS };
+            dm._skills = baseSkills;
+            dm._classSkills = baseClassSkills;
         }
         // Classes
         const classesJson = classesRes.status === 'fulfilled' ? classesRes.value : null;

@@ -1,0 +1,52 @@
+{
+  "version": "2.0",
+  "units": "cm",
+  "zoneId": "desert",
+  "spawnPoints": [
+    {
+      "id": "player_spawn_desert_0",
+      "type": "player_spawn",
+      "x": 608.0,
+      "y": 800.0,
+      "label": "Scorched Desert spawn 0"
+    },
+    {
+      "id": "player_spawn_desert_1",
+      "type": "player_spawn",
+      "x": 608.0,
+      "y": 992.0,
+      "label": "Scorched Desert spawn 1"
+    },
+    {
+      "id": "player_spawn_desert_2",
+      "type": "player_spawn",
+      "x": 800.0,
+      "y": 800.0,
+      "label": "Scorched Desert spawn 2"
+    },
+    {
+      "id": "player_spawn_desert_3",
+      "type": "player_spawn",
+      "x": 800.0,
+      "y": 992.0,
+      "label": "Scorched Desert spawn 3"
+    },
+    {
+      "id": "portal_to_grasslands",
+      "type": "portal",
+      "x": 96.0,
+      "y": 864.0,
+      "targetZone": "grasslands",
+      "targetEntry": "entry_from_desert",
+      "label": "Grasslands"
+    },
+    {
+      "id": "entry_from_grasslands",
+      "type": "zone_entry",
+      "x": 480.0,
+      "y": 864.0,
+      "fromZone": "grasslands",
+      "label": "From Grasslands"
+    }
+  ]
+}

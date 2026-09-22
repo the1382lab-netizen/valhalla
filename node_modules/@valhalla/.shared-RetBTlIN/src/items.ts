@@ -3,6 +3,9 @@
  * Follows the same pattern as classes.ts: enum IDs + Record lookup table.
  */
 
+import type { PaperdollSlot } from './paperdoll.js';
+import { WeaponStyle } from './paperdoll.js';
+
 import type { StatBlock } from './classes.js';
 
 // ── Constants ────────────────────────────────────────────────
@@ -61,12 +64,59 @@ export enum ItemId {
 
 export enum EquipSlotType {
   WEAPON = 'weapon',
+  OFFHAND = 'offhand',
   HELM = 'helm',
   CHEST = 'chest',
   LEGS = 'legs',
   BOOTS = 'boots',
+  GLOVES = 'gloves',
+  BACK = 'back',
   RING = 'ring',
 }
+
+/** Every equip slot, in the order the character panel lists them. */
+export const EQUIP_SLOTS: EquipSlotType[] = [
+  EquipSlotType.WEAPON, EquipSlotType.OFFHAND, EquipSlotType.HELM,
+  EquipSlotType.CHEST, EquipSlotType.LEGS, EquipSlotType.BOOTS,
+  EquipSlotType.GLOVES, EquipSlotType.BACK, EquipSlotType.RING,
+];
+
+/**
+ * Equip slot -> paperdoll layer slot. `ring` has no visual layer, and the
+ * weapon hand is called `mainhand` in the sprite pack.
+ */
+export const EQUIP_SLOT_TO_PAPERDOLL: Partial<Record<EquipSlotType, PaperdollSlot>> = {
+  [EquipSlotType.WEAPON]: 'mainhand',
+  [EquipSlotType.OFFHAND]: 'offhand',
+  [EquipSlotType.HELM]: 'helm',
+  [EquipSlotType.CHEST]: 'chest',
+  [EquipSlotType.LEGS]: 'legs',
+  [EquipSlotType.BOOTS]: 'boots',
+  [EquipSlotType.GLOVES]: 'gloves',
+  [EquipSlotType.BACK]: 'back',
+};
+
+/**
+ * Equip slot -> the PlayerState schema field holding it.
+ *
+ * One table, shared: the server reads and writes these fields, and the client
+ * rebuilds its equipment record from the synced schema using the same names.
+ * `as const` keeps the values as literal types, which is what lets
+ * `server/src/schema/PlayerState.ts` prove every one is a real
+ * `keyof PlayerState` — rename a schema field and the build breaks instead of
+ * a slot silently vanishing from the client.
+ */
+export const EQUIP_SLOT_FIELD = {
+  [EquipSlotType.WEAPON]:  'equipWeapon',
+  [EquipSlotType.OFFHAND]: 'equipOffhand',
+  [EquipSlotType.HELM]:    'equipHelm',
+  [EquipSlotType.CHEST]:   'equipChest',
+  [EquipSlotType.LEGS]:    'equipLegs',
+  [EquipSlotType.BOOTS]:   'equipBoots',
+  [EquipSlotType.GLOVES]:  'equipGloves',
+  [EquipSlotType.BACK]:    'equipBack',
+  [EquipSlotType.RING]:    'equipRing',
+} as const satisfies Record<EquipSlotType, string>;
 
 export enum ItemCategory {
   EQUIPMENT = 'equipment',
@@ -122,12 +172,51 @@ export interface ItemTemplate {
   maxStack: number;
   /** Stat bonuses when equipped (equipment only) */
   statBonuses?: Partial<StatBlock>;
-  /** Filename of equipment sprite sheet overlay (in assets/sprites/equipment/) */
+  /** Attack speed in ms when this weapon is equipped. Overrides class base attack speed. */
+  attackSpeedMs?: number;
+  /**
+   * Flat bonus added to the base damage constant before stat scaling.
+   * Stacks on top of BASE_MELEE_DAMAGE / BASE_RANGED_DAMAGE / BASE_SPELL_DAMAGE.
+   * Configurable per-item in the game editor.
+   */
+  attackDamage?: number;
+  /** Whether this is a ranged weapon (bow, crossbow). Enables ranged auto-attack when equipped. */
+  isRangedWeapon?: boolean;
+  /** Filename of walk/idle equipment sprite sheet overlay (in assets/sprites/equipment/) */
   equipSpriteSheet?: string;
+  /** Filename of melee animation equipment sprite sheet overlay */
+  meleeSpriteSheet?: string;
+  /** Filename of ranged animation equipment sprite sheet overlay */
+  rangedSpriteSheet?: string;
+  /** Filename of cast animation equipment sprite sheet overlay */
+  castSpriteSheet?: string;
   /** Sprite sheet layout config — defaults to matching the character body sheet */
   equipSpriteConfig?: EquipSpriteConfig;
   /** Filename of inventory icon image (in assets/sprites/icons/) */
   inventoryIcon?: string;
+
+  // ── Paperdoll (preferred over the LPC sheets above) ──────────────────
+  /**
+   * Layer id in `assets/sprites/paperdoll/manifest.json`, e.g.
+   * `chest_iron_plate`. When set, the client draws this item as a paperdoll
+   * layer and ignores the four LPC sheet fields.
+   */
+  spriteId?: string;
+
+  // ── Valhalla 2.0 (Unreal) art ────────────────────────────────────────
+  /**
+   * Art id of the equipment mesh in Unreal (`SK_<id>.glb` / `SM_<id>.glb` under
+   * `Import/Characters/Equipment/`). `FValhallaItemTemplate` resolves the mesh by
+   * `meshId` when set and falls back to `spriteId` otherwise, so this only needs
+   * filling in when the 2.0 mesh is named differently from the 1.0 paperdoll layer.
+   */
+  meshId?: string;
+  /**
+   * How a weapon reads, and therefore which attack cycle the character plays:
+   * sword/greatsword/mace -> `attack`, bow -> `shoot`, staff -> `cast`.
+   * Weapons only.
+   */
+  weaponStyle?: WeaponStyle;
 }
 
 /** A single inventory slot (shared interface, not Colyseus schema). */
@@ -150,6 +239,8 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { strength: 3 },
+    attackSpeedMs: 1600,
+    attackDamage: 5,
   },
   [ItemId.OAK_STAFF]: {
     id: ItemId.OAK_STAFF,
@@ -161,6 +252,8 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { intelligence: 3 },
+    attackSpeedMs: 2200,
+    attackDamage: 4,
   },
   [ItemId.SHORT_BOW]: {
     id: ItemId.SHORT_BOW,
@@ -172,6 +265,9 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { dexterity: 3 },
+    attackSpeedMs: 1800,
+    attackDamage: 4,
+    isRangedWeapon: true,
   },
   [ItemId.IRON_DAGGER]: {
     id: ItemId.IRON_DAGGER,
@@ -183,6 +279,8 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { dexterity: 2, strength: 1 },
+    attackSpeedMs: 1000,
+    attackDamage: 3,
   },
   [ItemId.BONE_TOTEM]: {
     id: ItemId.BONE_TOTEM,
@@ -194,6 +292,8 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { wisdom: 2, intelligence: 1 },
+    attackSpeedMs: 1800,
+    attackDamage: 4,
   },
   [ItemId.IRON_MACE]: {
     id: ItemId.IRON_MACE,
@@ -205,6 +305,8 @@ export const ITEM_CATALOG: Record<ItemId, ItemTemplate> = {
     stackable: false,
     maxStack: 1,
     statBonuses: { wisdom: 2, strength: 1 },
+    attackSpeedMs: 2000,
+    attackDamage: 6,
   },
 
   // ── Helms ─────────────────────────────────────────────

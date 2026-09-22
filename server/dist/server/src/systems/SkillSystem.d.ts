@@ -71,7 +71,31 @@ export interface HotTickResult {
     skillId: string;
     heal: number;
 }
-export type SkillSystemEvent = CastStartedResult | CastCompleteResult | CastFailedResult | CastInterruptedResult | BuffExpiredResult | DotTickResult | HotTickResult;
+export interface AutoAttackStartedResult {
+    type: 'autoAttackStarted';
+    playerId: string;
+    skillId: string;
+    targetId: string;
+}
+export interface AutoAttackStoppedResult {
+    type: 'autoAttackStopped';
+    playerId: string;
+}
+export interface AutoAttackHitResult {
+    type: 'autoAttackHit';
+    attackerId: string;
+    targetId: string;
+    damage: number;
+    damageType: 'physical' | 'magical';
+    isCrit: boolean;
+    isBlock: boolean;
+    isDodge: boolean;
+    isMiss: boolean;
+    npcDied?: boolean;
+    xpReward?: number;
+    skillId?: string;
+}
+export type SkillSystemEvent = CastStartedResult | CastCompleteResult | CastFailedResult | CastInterruptedResult | BuffExpiredResult | DotTickResult | HotTickResult | AutoAttackStartedResult | AutoAttackStoppedResult | AutoAttackHitResult;
 export declare class SkillSystem {
     private activeCasts;
     private dotTickTracker;
@@ -100,6 +124,22 @@ export declare class SkillSystem {
      * @param allNPCs           NPC map — allows timed skill completions to resolve NPC targets
      */
     update(allPlayers: PlayerMap, dt: number, now: number, spellProjectiles?: MapSchema<SpellProjectileState>, allNPCs?: NPCMap, npcDelegate?: NPCCombatDelegate, awardXPDelegate?: (playerId: string, amount: number) => void, isPartyMemberDelegate?: (a: string, b: string) => boolean): SkillSystemEvent[];
+    /**
+     * Start auto-attacking a target.
+     */
+    startAutoAttack(player: PlayerState, skillId: string, targetId: string, allPlayers: PlayerMap, allNPCs?: NPCMap, now?: number): SkillSystemEvent[];
+    /**
+     * Stop auto-attacking.
+     */
+    stopAutoAttack(player: PlayerState): SkillSystemEvent[];
+    /**
+     * Process all auto-attacking players. Called every server tick.
+     */
+    updateAutoAttacks(allPlayers: PlayerMap, allNPCs: NPCMap | undefined, npcDelegate: NPCCombatDelegate | undefined, now: number, isPartyMember?: (a: string, b: string) => boolean, awardXPDelegate?: (playerId: string, amount: number) => void): SkillSystemEvent[];
+    /**
+     * Execute a single auto-attack hit against a target (player or NPC).
+     */
+    private executeAutoAttackOnTarget;
     private validateCast;
     /**
      * Resolve a target ID against the player map and (optionally) the NPC map.

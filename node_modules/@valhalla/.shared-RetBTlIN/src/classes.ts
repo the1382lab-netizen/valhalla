@@ -56,7 +56,23 @@ export interface ClassTemplate {
   allowedArmor: ArmorType;
   baseSpeed: number;       // pixels per second
   canUseMana: boolean;
+  /** Base melee attack speed in ms when no weapon is equipped. Scaled by dexterity. */
+  baseMeleeAttackSpeedMs: number;
+  /** Base ranged attack speed in ms when no weapon is equipped. Only meaningful for Ranger. */
+  baseRangedAttackSpeedMs: number;
+  /** Line-of-sight vision range in UE units (cm) */
+  visionRange: number;
   startingItems?: StartingItem[];
+  /**
+   * Default paperdoll body for this class, e.g. `body_tan`. Overridden by the
+   * character's own `bodyId` once appearance selection exists.
+   */
+  bodyId?: string;
+  /** Character sprite sheets per animation type (filename in assets/sprites/characters/). */
+  walkSpriteSheet?: string;
+  meleeSpriteSheet?: string;
+  rangedSpriteSheet?: string;
+  castSpriteSheet?: string;
 }
 
 // ── Class Templates ────────────────────────────────────────
@@ -103,6 +119,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'plate',
     baseSpeed: 144,
     canUseMana: false,
+    baseMeleeAttackSpeedMs: 3600,
+    baseRangedAttackSpeedMs: 0,
+    visionRange: 1200,
     startingItems: [
       { itemId: 'iron_sword', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -149,6 +168,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'mail',
     baseSpeed: 152,
     canUseMana: true,
+    baseMeleeAttackSpeedMs: 4400,
+    baseRangedAttackSpeedMs: 0,
+    visionRange: 1200,
     startingItems: [
       { itemId: 'iron_mace', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -195,6 +217,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'leather',
     baseSpeed: 184,
     canUseMana: false,
+    baseMeleeAttackSpeedMs: 3000,
+    baseRangedAttackSpeedMs: 4000,
+    visionRange: 1800,
     startingItems: [
       { itemId: 'short_bow', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -241,6 +266,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'leather',
     baseSpeed: 168,
     canUseMana: false,
+    baseMeleeAttackSpeedMs: 2400,
+    baseRangedAttackSpeedMs: 0,
+    visionRange: 1350,
     startingItems: [
       { itemId: 'iron_dagger', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -287,6 +315,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'mail',
     baseSpeed: 152,
     canUseMana: true,
+    baseMeleeAttackSpeedMs: 4000,
+    baseRangedAttackSpeedMs: 0,
+    visionRange: 1200,
     startingItems: [
       { itemId: 'bone_totem', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -333,6 +364,9 @@ export const CLASS_TEMPLATES: Record<ClassId, ClassTemplate> = {
     allowedArmor: 'cloth',
     baseSpeed: 152,
     canUseMana: true,
+    baseMeleeAttackSpeedMs: 4800,
+    baseRangedAttackSpeedMs: 0,
+    visionRange: 1200,
     startingItems: [
       { itemId: 'oak_staff', quantity: 1, equipped: true },
       { itemId: 'health_potion', quantity: 5, equipped: false },

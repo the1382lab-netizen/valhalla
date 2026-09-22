@@ -99,33 +99,43 @@ export class DataManager {
         }
     }
     loadItems() {
+        // Always seed with hardcoded catalog so items defined there are always
+        // available even if missing from (or not yet saved to) the JSON file.
+        const baseItems = { ...ITEM_CATALOG };
         const json = this.loadJsonFile('items.json');
         if (json) {
             const loaded = loadItemsFromJson(json);
             if (loaded && Object.keys(loaded).length > 0) {
-                this._items = loaded;
+                // JSON takes precedence; hardcoded entries fill any gaps.
+                this._items = { ...baseItems, ...loaded };
                 this._loadedFromJson['items'] = true;
                 return;
             }
         }
-        // Fallback to hardcoded
-        this._items = { ...ITEM_CATALOG };
+        // Pure hardcoded fallback
+        this._items = baseItems;
         this._loadedFromJson['items'] = false;
     }
     loadSkills() {
+        // Always seed with hardcoded catalog so system skills (melee_attack,
+        // ranged_attack, etc.) are available even if missing from the JSON.
+        const baseSkills = { ...SKILL_CATALOG };
+        const baseClassSkills = { ...CLASS_SKILLS };
         const json = this.loadJsonFile('skills.json');
         if (json) {
             const loaded = loadSkillsFromJson(json);
             if (loaded && Object.keys(loaded.skills).length > 0) {
-                this._skills = loaded.skills;
-                this._classSkills = loaded.classSkills;
+                // JSON takes precedence; hardcoded entries fill any gaps.
+                this._skills = { ...baseSkills, ...loaded.skills };
+                // Per-class lists: JSON takes precedence per class.
+                this._classSkills = { ...baseClassSkills, ...loaded.classSkills };
                 this._loadedFromJson['skills'] = true;
                 return;
             }
         }
-        // Fallback to hardcoded
-        this._skills = { ...SKILL_CATALOG };
-        this._classSkills = { ...CLASS_SKILLS };
+        // Pure hardcoded fallback
+        this._skills = baseSkills;
+        this._classSkills = baseClassSkills;
         this._loadedFromJson['skills'] = false;
     }
     loadClasses() {

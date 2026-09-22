@@ -83,8 +83,19 @@ export declare function computeFireCooldown(baseCooldownMs: number, dexterity: n
 /**
  * Compute melee cooldown modified by dexterity.
  * Same formula as fire cooldown.
+ * @deprecated Use computeAutoAttackSpeed() for auto-attack system.
  */
 export declare function computeMeleeCooldown(baseCooldownMs: number, dexterity: number): number;
+/**
+ * Compute the effective auto-attack interval in ms, modified by dexterity.
+ * Uses the same diminishing-returns formula: max 40% reduction.
+ *
+ * @param baseMs  The base attack speed: from weapon.attackSpeedMs (if weapon equipped)
+ *                or class.baseMeleeAttackSpeedMs / class.baseRangedAttackSpeedMs (if not).
+ * @param dexterity  The attacker's dexterity stat.
+ * @returns Effective interval in ms between auto-attacks.
+ */
+export declare function computeAutoAttackSpeed(baseMs: number, dexterity: number): number;
 export declare const BASE_XP_PER_LEVEL = 100;
 export declare const XP_SCALING = 2;
 export declare const MAX_LEVEL = 25;

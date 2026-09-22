@@ -14,7 +14,7 @@ charactersRouter.use(authMiddleware);
 charactersRouter.get('/', (req, res) => {
     try {
         const chars = getCharactersByUser(req.userId);
-        res.json({ characters: chars });
+        res.json({ characters: chars, username: req.username ?? '' });
     }
     catch (err) {
         res.status(500).json({ error: err?.message || 'Failed to fetch characters.' });

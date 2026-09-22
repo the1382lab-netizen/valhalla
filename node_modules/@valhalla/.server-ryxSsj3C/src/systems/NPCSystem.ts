@@ -194,7 +194,7 @@ export class NPCSystem {
 
           // ── Attack if within range and off cooldown ──
           const attackRange = template.attackRange ?? 40;
-          const attackSpeed = template.attackSpeed ?? 1500;
+          const attackSpeed = template.attackSpeed ?? 3000;
           const baseDamage = template.damage ?? 5;
 
           if (dist <= attackRange && now >= data.lastAttackTime + attackSpeed) {

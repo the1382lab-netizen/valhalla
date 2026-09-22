@@ -54,6 +54,16 @@
       "y": 2480,
       "label": "Tough Guy",
       "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "spawn_grasslands_to_v2",
+      "type": "portal",
+      "x": 3648,
+      "y": 2432,
+      "label": "Eldmoor Grasslands",
+      "templateId": "grasslands_v2",
+      "width": 384,
+      "height": 384
     }
   ]
 }

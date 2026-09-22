@@ -27,12 +27,14 @@ export const PROJECTILE_SPEED = 400;        // pixels per second
 export const PROJECTILE_RADIUS = 6;
 export const PROJECTILE_MAX_RANGE = 600;    // pixels before despawning
 export const PROJECTILE_DAMAGE = 15;
+/** @deprecated Auto-attack system now uses weapon/class attack speed + dex scaling. */
 export const FIRE_COOLDOWN_MS = 300;        // minimum ms between shots
 export const INVULNERABILITY_MS = 500;      // i-frames after being hit
 export const RESPAWN_TIME_MS = 3000;        // ms before respawn
 export const MELEE_DAMAGE = 25;
 export const MELEE_RANGE = 60;              // pixels
 export const MELEE_ARC = Math.PI / 2;       // 90 degree arc
+/** @deprecated Auto-attack system now uses weapon/class attack speed + dex scaling. */
 export const MELEE_COOLDOWN_MS = 600;
 
 // ── Spell Projectiles ───────────────────────────────────────

@@ -12,6 +12,10 @@ import { ClassId } from './classes.js';
 // ── Enums ──────────────────────────────────────────────────
 
 export enum SkillId {
+  // Auto-attack skills (available to all / specific classes)
+  MELEE_ATTACK = 'melee_attack',
+  RANGED_ATTACK = 'ranged_attack',
+
   // Warrior (6)
   WARRIOR_SHIELD_BASH = 'warrior_shield_bash',
   WARRIOR_TAUNT = 'warrior_taunt',
@@ -94,7 +98,7 @@ export interface SkillTemplate {
   id: SkillId;
   name: string;
   description: string;
-  classId: ClassId;
+  classId: ClassId | null;
   levelRequired: number;
   resourceType: ResourceType;
   resourceCost: number;
@@ -124,12 +128,61 @@ export interface SkillTemplate {
   stackingMode?: 'replace' | 'stack' | 'extend';
   /** Max stacks for stackable buffs (only used when stackingMode === 'stack'). Default 1. */
   maxStacks?: number;
+  /** If true, this skill auto-repeats at the player's attack speed interval. */
+  isAutoAttack?: boolean;
+  /** If true, the skill cannot be used without a weapon equipped. */
+  requiresWeapon?: boolean;
   effectNotes: string;        // human-readable summary
 }
 
-// ── Skill Catalog (37 skills) ──────────────────────────────
+// ── Skill Catalog (39 skills) ──────────────────────────────
 
 export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
+  // ═══════════════════════════════════════════════════════════
+  // AUTO-ATTACK SKILLS — Available across classes
+  // ═══════════════════════════════════════════════════════════
+
+  [SkillId.MELEE_ATTACK]: {
+    id: SkillId.MELEE_ATTACK,
+    name: 'Melee Attack',
+    description: 'A basic melee strike. Auto-repeats at your attack speed.',
+    classId: null,             // available to all classes
+    levelRequired: 1,
+    resourceType: ResourceType.NONE,
+    resourceCost: 0,
+    castTimeMs: 0,
+    cooldownMs: 0,             // attack speed is handled by the auto-attack system
+    range: 60,                 // MELEE_RANGE
+    targetType: SkillTargetType.SINGLE_ENEMY,
+    category: SkillCategory.OFFENSIVE,
+    iconColor: 0xcccccc,
+    iconAbbrev: 'MA',
+    scalingStat: 'strength',
+    isAutoAttack: true,
+    effectNotes: 'Basic melee auto-attack. Speed scales with dexterity.',
+  },
+
+  [SkillId.RANGED_ATTACK]: {
+    id: SkillId.RANGED_ATTACK,
+    name: 'Ranged Attack',
+    description: 'Fire a ranged projectile. Requires a ranged weapon. Auto-repeats at your attack speed.',
+    classId: ClassId.RANGER,
+    levelRequired: 1,
+    resourceType: ResourceType.NONE,
+    resourceCost: 0,
+    castTimeMs: 0,
+    cooldownMs: 0,
+    range: 600,                // PROJECTILE_MAX_RANGE
+    targetType: SkillTargetType.SINGLE_ENEMY,
+    category: SkillCategory.OFFENSIVE,
+    iconColor: 0x44aa44,
+    iconAbbrev: 'RA',
+    scalingStat: 'dexterity',
+    isAutoAttack: true,
+    requiresWeapon: true,
+    effectNotes: 'Basic ranged auto-attack. Requires bow. Speed scales with dexterity.',
+  },
+
   // ═══════════════════════════════════════════════════════════
   // WARRIOR SKILLS (6) — Energy resource
   // ═══════════════════════════════════════════════════════════
@@ -930,6 +983,7 @@ export const SKILL_CATALOG: Record<SkillId, SkillTemplate> = {
 /** Maps each class to its skill list, ordered by level requirement. */
 export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
   [ClassId.WARRIOR]: [
+    SkillId.MELEE_ATTACK,
     SkillId.WARRIOR_SHIELD_BASH,
     SkillId.WARRIOR_TAUNT,
     SkillId.WARRIOR_CLEAVE,
@@ -938,6 +992,7 @@ export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
     SkillId.WARRIOR_SHIELD_WALL,
   ],
   [ClassId.CLERIC]: [
+    SkillId.MELEE_ATTACK,
     SkillId.CLERIC_MINOR_HEAL,
     SkillId.CLERIC_SMITE,
     SkillId.CLERIC_SHIELD_OF_FAITH,
@@ -947,6 +1002,8 @@ export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
     SkillId.CLERIC_RESURRECTION,
   ],
   [ClassId.RANGER]: [
+    SkillId.MELEE_ATTACK,
+    SkillId.RANGED_ATTACK,
     SkillId.RANGER_AIMED_SHOT,
     SkillId.RANGER_SERPENT_ARROW,
     SkillId.RANGER_TRAP,
@@ -955,6 +1012,7 @@ export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
     SkillId.RANGER_SNIPE,
   ],
   [ClassId.ROGUE]: [
+    SkillId.MELEE_ATTACK,
     SkillId.ROGUE_BACKSTAB,
     SkillId.ROGUE_POISON_BLADE,
     SkillId.ROGUE_STEALTH,
@@ -963,6 +1021,7 @@ export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
     SkillId.ROGUE_SHADOW_DANCE,
   ],
   [ClassId.SHAMAN]: [
+    SkillId.MELEE_ATTACK,
     SkillId.SHAMAN_LIGHTNING_BOLT,
     SkillId.SHAMAN_EARTH_SHIELD,
     SkillId.SHAMAN_HEX,
@@ -971,6 +1030,7 @@ export const CLASS_SKILLS: Record<ClassId, SkillId[]> = {
     SkillId.SHAMAN_BLOODLUST,
   ],
   [ClassId.WIZARD]: [
+    SkillId.MELEE_ATTACK,
     SkillId.WIZARD_FIREBALL,
     SkillId.WIZARD_MAGIC_MISSILE,
     SkillId.WIZARD_FROST_NOVA,

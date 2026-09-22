@@ -7,6 +7,10 @@
  */
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { ADMIN_RESULT_EVENT, AdminResult, postAdmin } from './adminApi';
+import {
+  ActionDialog, ActionDialogSpec, AdminPlayer, InspectDialog, PlayersPanel, buildPlayerMenu,
+} from './AdminPlayerTools';
 
 // ── Types ───────────────────────────────────────────────────
 
@@ -22,6 +26,25 @@ interface PlayerInfo {
   mana: number;
   maxMana: number;
   alive: boolean;
+  zoneId?: string;
+  godMode?: boolean;
+  frozen?: boolean;
+  mutedSeconds?: number;
+}
+
+/** An NPC Spawn Point placed in the Unreal level (2.0). */
+interface SpawnPointInfo {
+  id: string;
+  label: string;
+  npcClass: string;
+  templateId: string;
+  x: number;
+  y: number;
+  respawnSeconds: number;
+  respawnOverride: boolean;
+  respawnIn: number;
+  npcId: string;
+  npcAlive: boolean;
 }
 
 interface NPCInfo {
@@ -47,7 +70,7 @@ interface LootBagInfo {
 
 interface OverlaySpawnPoint {
   id: string;
-  type: 'player_spawn' | 'enemy_spawn' | 'portal' | 'zone_entry';
+  type: 'player_spawn' | 'enemy_spawn' | 'npc_spawn' | 'portal' | 'zone_entry';
   x: number;
   y: number;
   label?: string;
@@ -55,16 +78,30 @@ interface OverlaySpawnPoint {
   width?: number;
   height?: number;
   fromZone?: string;
+  targetZone?: string;
+  targetEntry?: string;
+  count?: number;
+  radius?: number;
 }
 
 interface OverlayData {
   spawnPoints: OverlaySpawnPoint[];
 }
 
+/** maps/thumbs/<zone>.json — the UE top-down capture metadata. */
+interface ThumbMeta {
+  originX: number;
+  originY: number;
+  sizeX: number;        // cm
+  sizeY: number;        // cm
+  pixelsPerCm: number;
+}
+
 interface ZoneData {
   players: PlayerInfo[];
   npcs: NPCInfo[];
   lootBags: LootBagInfo[];
+  spawnPoints?: SpawnPointInfo[];
 }
 
 interface ServerState {
@@ -95,6 +132,10 @@ const POLL_INTERVAL = 1500;
 const CANVAS_BG = '#0a0a18';
 const GRID_COLOR = 'rgba(60, 60, 100, 0.25)';
 const GRID_SIZE = 64;
+/** Grid spacing in cm for Valhalla 2.0 zones (5 m). */
+const GRID_SIZE_CM = 500;
+/** Portal / zone-entry box drawn in cm — the UE actor match tolerance. */
+const ACTOR_MATCH_CM = 128;
 
 // Entity colors
 const PLAYER_COLOR = '#44cc44';
@@ -118,15 +159,6 @@ async function fetchAdminState(): Promise<ServerState> {
   return res.json();
 }
 
-async function postAdmin(action: string, body: any): Promise<any> {
-  const res = await fetch(`/api/admin/${action}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  return res.json();
-}
-
 // ── Component ───────────────────────────────────────────────
 
 export const AdminDashboard: React.FC = () => {
@@ -137,6 +169,19 @@ export const AdminDashboard: React.FC = () => {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null);
   const [spawnDialog, setSpawnDialog] = useState<{ type: 'npc' | 'item'; worldX: number; worldY: number } | null>(null);
   const [teleportDialog, setTeleportDialog] = useState<{ sessionId: string; name: string } | null>(null);
+  /** Admin API the editor server proxies to (VALHALLA_ADMIN_URL). */
+  const [adminUrl, setAdminUrl] = useState<string>('');
+  const [reloadStatus, setReloadStatus] = useState<string | null>(null);
+  /** Last admin action result, shown as a toast for a few seconds. */
+  const [notice, setNotice] = useState<AdminResult | null>(null);
+  /** The open generic admin dialog (give item, set HP, mute, kick, …). */
+  const [actionDialog, setActionDialog] = useState<ActionDialogSpec | null>(null);
+  /** The player whose inspect window is open. */
+  const [inspectPlayer, setInspectPlayer] = useState<AdminPlayer | null>(null);
+  /** The player highlighted in the side list. */
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  /** Forces a re-render (and thus a fresh draw closure) when a capture finishes loading. */
+  const [thumbTick, setThumbTick] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -156,6 +201,9 @@ export const AdminDashboard: React.FC = () => {
 
   /** Cached overlay data per zoneId — fetched once on first visit, never evicted. */
   const overlayCache = useRef<Record<string, OverlayData>>({});
+  /** Capture metadata per zoneId; `null` means "checked, this zone has no capture". */
+  const thumbMetaCache = useRef<Record<string, ThumbMeta | null>>({});
+  const thumbImageCache = useRef<Record<string, HTMLImageElement>>({});
 
   // Access editor store for NPC templates and items
   const npcTemplates = useEditorStore(s => s.npcTemplates.data);
@@ -187,18 +235,81 @@ export const AdminDashboard: React.FC = () => {
     return () => { mounted = false; clearInterval(interval); };
   }, [selectedZone]);
 
-  // ── Overlay loading ─────────────────────────────────────
+  // ── Admin action results → toast ────────────────────────
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const onResult = (e: Event) => {
+      setNotice((e as CustomEvent<AdminResult>).detail);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setNotice(null), 6000);
+    };
+    window.addEventListener(ADMIN_RESULT_EVENT, onResult);
+    return () => { window.removeEventListener(ADMIN_RESULT_EVENT, onResult); if (timer) clearTimeout(timer); };
+  }, []);
+
+  // ── Editor server config (admin URL shown in the status bar) ────────────
+
+  useEffect(() => {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(c => setAdminUrl(c.adminUrl || ''))
+      .catch(() => {});
+  }, []);
+
+  /** Fit the whole zone capture into the canvas. */
+  const fitToCapture = useCallback((meta: ThumbMeta) => {
+    const container = containerRef.current;
+    if (!container) return;
+    const cw = container.clientWidth, ch = container.clientHeight;
+    if (!cw || !ch || !meta.sizeX || !meta.sizeY) return;
+    const z = Math.min(cw / meta.sizeX, ch / meta.sizeY) * 0.94;
+    zoomRef.current = z;
+    panRef.current = { x: (cw - meta.sizeX * z) / 2, y: (ch - meta.sizeY * z) / 2 };
+  }, []);
+
+  // ── Zone capture + overlay loading ──────────────────────
+  // A zone with a capture is a Valhalla 2.0 zone: world space is zone-local cm
+  // and its overlay comes from maps/overlays-2.0. Zones without one keep the
+  // 1.0 behaviour (world pixels, maps/overlays).
 
   useEffect(() => {
     if (!selectedZone) return;
-    if (overlayCache.current[selectedZone]) return; // already loaded
-    fetch(`/api/overlays/${selectedZone}-overlay.json`)
-      .then(r => r.ok ? r.json() : null)
-      .then((data: OverlayData | null) => {
-        if (data) overlayCache.current[selectedZone] = data;
-      })
-      .catch(() => {}); // silently fail if file not found
-  }, [selectedZone]);
+    const zone = selectedZone;
+    let cancelled = false;
+
+    (async () => {
+      let meta = thumbMetaCache.current[zone];
+      if (meta === undefined) {
+        try {
+          const res = await fetch(`/api/thumbs/${zone}.json`);
+          meta = res.ok ? await res.json() : null;
+        } catch {
+          meta = null;
+        }
+        if (cancelled) return;
+        thumbMetaCache.current[zone] = meta ?? null;
+        if (meta) {
+          const img = new Image();
+          img.onload = () => setThumbTick(t => t + 1);
+          img.src = `/api/thumbs/${zone}.png`;
+          thumbImageCache.current[zone] = img;
+        }
+      }
+      if (meta) fitToCapture(meta);
+
+      if (overlayCache.current[zone]) return;
+      try {
+        const url = meta ? `/api/overlays2/${zone}` : `/api/overlays/${zone}-overlay.json`;
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const data: OverlayData | null = await res.json();
+        if (data && !cancelled) overlayCache.current[zone] = data;
+      } catch { /* no overlay yet */ }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedZone, fitToCapture]);
 
   // ── World ↔ Screen coordinate conversion ────────────────
 
@@ -235,15 +346,39 @@ export const AdminDashboard: React.FC = () => {
     ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, w, h);
 
+    // ── Zone capture background (Valhalla 2.0) ──
+    // With a capture, world space is zone-local cm: 1 world unit = 1 cm, so the
+    // capture spans sizeX × sizeY world units from the zone origin (0,0).
+    const meta = selectedZone ? thumbMetaCache.current[selectedZone] : null;
+    const thumbImg = selectedZone ? thumbImageCache.current[selectedZone] : undefined;
+    const inCm = !!meta;
+
+    if (meta) {
+      const iw = meta.sizeX * zoom;
+      const ih = meta.sizeY * zoom;
+      if (thumbImg && thumbImg.complete && thumbImg.naturalWidth > 0) {
+        ctx.drawImage(thumbImg, pan.x, pan.y, iw, ih);
+      }
+      ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(pan.x, pan.y, iw, ih);
+    }
+
     if (!state || !selectedZone || !state.zones[selectedZone]) {
       // Draw "no data" message
-      ctx.fillStyle = '#666';
+      const offline = state?.online === false || state === null;
+      ctx.fillStyle = offline ? '#ff8888' : '#666';
       ctx.font = '16px sans-serif';
       ctx.textAlign = 'center';
       ctx.fillText(
-        state?.online === false ? 'Game server offline' : 'No zone data available',
-        w / 2, h / 2,
+        offline ? 'Valhalla 2.0 admin API offline' : 'No zone data available',
+        w / 2, h / 2 - 8,
       );
+      if (offline) {
+        ctx.fillStyle = '#997';
+        ctx.font = '12px monospace';
+        ctx.fillText(`${adminUrl || 'admin API'}/api/admin/state`, w / 2, h / 2 + 14);
+      }
       return;
     }
 
@@ -253,20 +388,22 @@ export const AdminDashboard: React.FC = () => {
     ctx.strokeStyle = GRID_COLOR;
     ctx.lineWidth = 1;
 
-    const gridStep = GRID_SIZE * zoom;
+    const gridStep = (inCm ? GRID_SIZE_CM : GRID_SIZE) * zoom;
     const startX = pan.x % gridStep;
     const startY = pan.y % gridStep;
 
-    ctx.beginPath();
-    for (let gx = startX; gx < w; gx += gridStep) {
-      ctx.moveTo(gx, 0);
-      ctx.lineTo(gx, h);
+    if (gridStep > 6) {
+      ctx.beginPath();
+      for (let gx = startX; gx < w; gx += gridStep) {
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, h);
+      }
+      for (let gy = startY; gy < h; gy += gridStep) {
+        ctx.moveTo(0, gy);
+        ctx.lineTo(w, gy);
+      }
+      ctx.stroke();
     }
-    for (let gy = startY; gy < h; gy += gridStep) {
-      ctx.moveTo(0, gy);
-      ctx.lineTo(w, gy);
-    }
-    ctx.stroke();
 
     // ── Origin crosshair ──
     const origin = worldToScreen(0, 0);
@@ -286,43 +423,42 @@ export const AdminDashboard: React.FC = () => {
       for (const sp of overlay.spawnPoints) {
         const s = worldToScreen(sp.x, sp.y);
 
-        if (sp.type === 'portal') {
-          const sw = (sp.width ?? 128) * zoom;
-          const sh = (sp.height ?? 128) * zoom;
-          ctx.fillStyle = PORTAL_COLOR;
-          ctx.fillRect(s.x, s.y, sw, sh);
-          ctx.strokeStyle = PORTAL_STROKE;
+        if (sp.type === 'portal' || sp.type === 'zone_entry') {
+          const isPortal = sp.type === 'portal';
+          // Overlay 2.0 points are a position in cm — drawn as the UE actor-match
+          // box; overlay 1.0 rectangles keep their own width/height in pixels.
+          const sw = (inCm ? ACTOR_MATCH_CM : (sp.width ?? (isPortal ? 128 : 64))) * zoom;
+          const sh = (inCm ? ACTOR_MATCH_CM : (sp.height ?? (isPortal ? 128 : 64))) * zoom;
+          const bx = inCm ? s.x - sw / 2 : s.x;
+          const by = inCm ? s.y - sh / 2 : s.y;
+          ctx.fillStyle = isPortal ? PORTAL_COLOR : ZONE_ENTRY_FILL;
+          ctx.fillRect(bx, by, sw, sh);
+          ctx.strokeStyle = isPortal ? PORTAL_STROKE : ZONE_ENTRY_STROKE;
           ctx.lineWidth = 1.5;
           ctx.setLineDash([5, 3]);
-          ctx.strokeRect(s.x, s.y, sw, sh);
+          ctx.strokeRect(bx, by, sw, sh);
           ctx.setLineDash([]);
           if (zoom > 0.15 && sp.label) {
-            ctx.fillStyle = 'rgba(180, 100, 255, 0.9)';
-            ctx.font = `bold ${Math.max(9, 11 * zoom)}px sans-serif`;
+            ctx.fillStyle = isPortal ? 'rgba(180, 100, 255, 0.9)' : 'rgba(80, 200, 255, 0.9)';
+            ctx.font = `${isPortal ? 'bold ' : ''}${Math.max(9, 11 * zoom)}px sans-serif`;
             ctx.textAlign = 'center';
-            ctx.fillText(`⬦ ${sp.label}`, s.x + sw / 2, s.y + sh / 2 + 4);
+            ctx.fillText(`${isPortal ? '⬦' : '↓'} ${sp.label}`, bx + sw / 2, by + sh / 2 + 4);
           }
 
-        } else if (sp.type === 'zone_entry') {
-          const sw = (sp.width ?? 64) * zoom;
-          const sh = (sp.height ?? 64) * zoom;
-          ctx.fillStyle = ZONE_ENTRY_FILL;
-          ctx.fillRect(s.x, s.y, sw, sh);
-          ctx.strokeStyle = ZONE_ENTRY_STROKE;
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([5, 3]);
-          ctx.strokeRect(s.x, s.y, sw, sh);
-          ctx.setLineDash([]);
-          if (zoom > 0.2 && sp.label) {
-            ctx.fillStyle = 'rgba(80, 200, 255, 0.9)';
-            ctx.font = `${Math.max(8, 10 * zoom)}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.fillText(`↓ ${sp.label}`, s.x + sw / 2, s.y + sh / 2 + 4);
-          }
-
-        } else if (sp.type === 'player_spawn' || sp.type === 'enemy_spawn') {
+        } else if (sp.type === 'player_spawn' || sp.type === 'enemy_spawn' || sp.type === 'npc_spawn') {
           const color = sp.type === 'player_spawn' ? SPAWN_PLAYER_COLOR : SPAWN_ENEMY_COLOR;
           const size = Math.max(5, 7 * zoom);
+          // Overlay 2.0 enemy spawns carry a wander radius in cm
+          if (sp.type === 'enemy_spawn' && sp.radius) {
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, sp.radius * zoom, 0, Math.PI * 2);
+            ctx.strokeStyle = color;
+            ctx.globalAlpha = 0.35;
+            ctx.setLineDash([3, 3]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+          }
           ctx.beginPath();
           ctx.moveTo(s.x, s.y - size);        // top
           ctx.lineTo(s.x + size, s.y);         // right
@@ -345,6 +481,31 @@ export const AdminDashboard: React.FC = () => {
             ctx.globalAlpha = 1;
           }
         }
+      }
+    }
+
+    // ── NPC Spawn Points (placed in Unreal) ──
+    // A hollow orange diamond; a countdown under it while its NPC is down.
+    for (const sp of zoneData.spawnPoints ?? []) {
+      const s = worldToScreen(sp.x, sp.y);
+      const r = Math.max(5, 8 * zoom);
+      const isHovered = hoveredEntity === `spawn_${sp.id}`;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - r);
+      ctx.lineTo(s.x + r, s.y);
+      ctx.lineTo(s.x, s.y + r);
+      ctx.lineTo(s.x - r, s.y);
+      ctx.closePath();
+      ctx.strokeStyle = SPAWN_ENEMY_COLOR;
+      ctx.lineWidth = isHovered ? 2.5 : 1.5;
+      ctx.globalAlpha = sp.npcAlive ? 0.55 : 1;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (!sp.npcAlive && sp.respawnIn > 0 && zoom > 0.15) {
+        ctx.fillStyle = SPAWN_ENEMY_COLOR;
+        ctx.font = `${Math.max(9, 10 * zoom)}px monospace`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`${Math.ceil(sp.respawnIn)}s`, s.x, s.y + r + 11);
       }
     }
 
@@ -468,7 +629,7 @@ export const AdminDashboard: React.FC = () => {
     drawLegendDot(NPC_ENEMY_COLOR, 'Enemy NPC');
     drawLegendDot(LOOT_COLOR, 'Loot Bag');
     drawLegendDot(SPAWN_PLAYER_COLOR, 'Player Spawn');
-    drawLegendDot(SPAWN_ENEMY_COLOR, 'Enemy Spawn');
+    drawLegendDot(SPAWN_ENEMY_COLOR, 'NPC Spawn Point');
     drawLegendDot('rgba(160, 80, 255, 0.8)', 'Portal');
     drawLegendDot('rgba(80, 200, 255, 0.8)', 'Zone Entry');
 
@@ -478,10 +639,10 @@ export const AdminDashboard: React.FC = () => {
     ctx.font = '10px monospace';
     ctx.textAlign = 'right';
     ctx.fillText(
-      `(${Math.round(cw.x)}, ${Math.round(cw.y)})   Zoom: ${(zoom * 100).toFixed(0)}%`,
+      `(${Math.round(cw.x)}, ${Math.round(cw.y)})${inCm ? ' cm' : ' px'}   Zoom: ${(zoom * 100).toFixed(0)}%`,
       w - 12, h - 12,
     );
-  }, [state, selectedZone, hoveredEntity, worldToScreen]);
+  }, [state, selectedZone, hoveredEntity, worldToScreen, adminUrl, thumbTick]);
 
   // ── Animation loop ──────────────────────────────────────
 
@@ -623,18 +784,39 @@ export const AdminDashboard: React.FC = () => {
       }
     }
 
+    if (!found) {
+      for (const sp of zoneData.spawnPoints ?? []) {
+        const dx = world.x - sp.x;
+        const dy = world.y - sp.y;
+        if (dx * dx + dy * dy < hitRadius * hitRadius) {
+          found = `spawn_${sp.id}`;
+          const timer = `${Math.round(sp.respawnSeconds)}s ${sp.respawnOverride ? '(spawn point override)' : '(template respawnMs)'}`;
+          const status = sp.npcAlive ? 'NPC up' : (sp.respawnIn > 0 ? `respawning in ${Math.ceil(sp.respawnIn)}s` : 'no NPC');
+          ttText = `NPC Spawn Point: ${sp.label}\n${sp.npcClass} · ${sp.templateId}\nRespawn: ${timer}\n${status}\nPos: ${sp.x}, ${sp.y}`;
+          break;
+        }
+      }
+    }
+
     // Check overlay spawn points / portals
     if (!found) {
       const overlay = overlayCache.current[selectedZone];
       if (overlay?.spawnPoints) {
         for (const sp of overlay.spawnPoints) {
+          const isCm = !!thumbMetaCache.current[selectedZone];
+          const unit = isCm ? 'cm' : 'px';
           if (sp.type === 'portal' || sp.type === 'zone_entry') {
-            const w = sp.width ?? 128;
-            const h = sp.height ?? 64;
-            if (world.x >= sp.x && world.x <= sp.x + w && world.y >= sp.y && world.y <= sp.y + h) {
+            const bw = isCm ? ACTOR_MATCH_CM : (sp.width ?? 128);
+            const bh = isCm ? ACTOR_MATCH_CM : (sp.height ?? 64);
+            const left = isCm ? sp.x - bw / 2 : sp.x;
+            const top = isCm ? sp.y - bh / 2 : sp.y;
+            if (world.x >= left && world.x <= left + bw && world.y >= top && world.y <= top + bh) {
               found = `overlay_${sp.id}`;
               const typeLabel = sp.type === 'portal' ? 'Portal' : 'Zone Entry';
-              ttText = `${typeLabel}: ${sp.label ?? sp.templateId ?? '?'}\nPos: ${sp.x}, ${sp.y}  Size: ${w}×${h}`;
+              const link = sp.type === 'portal'
+                ? (sp.targetZone ? `\n→ ${sp.targetZone}${sp.targetEntry ? ` / ${sp.targetEntry}` : ''}` : '')
+                : (sp.fromZone ? `\n← ${sp.fromZone}` : '');
+              ttText = `${typeLabel}: ${sp.label ?? sp.id}${link}\nPos: ${sp.x}, ${sp.y} ${unit}`;
               break;
             }
           } else {
@@ -642,8 +824,10 @@ export const AdminDashboard: React.FC = () => {
             const dy = world.y - sp.y;
             if (dx * dx + dy * dy < hitRadius * hitRadius) {
               found = `overlay_${sp.id}`;
-              const typeLabel = sp.type === 'player_spawn' ? 'Player Spawn' : 'Enemy Spawn';
-              ttText = `${typeLabel}${sp.label ? ': ' + sp.label : ''}\nPos: ${sp.x}, ${sp.y}`;
+              const typeLabel = sp.type === 'player_spawn' ? 'Player Spawn'
+                : sp.type === 'npc_spawn' ? 'NPC Spawn' : 'Enemy Spawn';
+              const pack = sp.count ? `\n${sp.count}× within ${sp.radius ?? 0} cm` : '';
+              ttText = `${typeLabel}${sp.label ? ': ' + sp.label : ''}${pack}\nPos: ${sp.x}, ${sp.y} ${unit}`;
               break;
             }
           }
@@ -666,6 +850,25 @@ export const AdminDashboard: React.FC = () => {
     if (containerRef.current) containerRef.current.style.cursor = '';
   }, []);
 
+  // ── Player admin menu (shared by the map and the player list) ──────
+
+  const playerMenuFor = useCallback((p: AdminPlayer): ContextMenuItem[] => {
+    const players: AdminPlayer[] = state?.zones
+      ? Object.entries(state.zones).flatMap(([zoneId, z]) => z.players.map(q => ({ ...q, zoneId: q.zoneId ?? zoneId })))
+      : [];
+    return buildPlayerMenu(p, {
+      allPlayers: players,
+      items: items || {},
+      openDialog: spec => setActionDialog(spec),
+      inspect: player => setInspectPlayer(player),
+      teleport: player => setTeleportDialog({ sessionId: player.sessionId, name: player.name }),
+    });
+  }, [state, items]);
+
+  const openPlayerMenuAt = useCallback((e: React.MouseEvent, p: AdminPlayer) => {
+    setContextMenu({ x: e.clientX, y: e.clientY, worldX: Math.round(p.x), worldY: Math.round(p.y), items: playerMenuFor(p) });
+  }, [playerMenuFor]);
+
   // ── Right-click context menu ────────────────────────────
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -683,22 +886,36 @@ export const AdminDashboard: React.FC = () => {
 
     const menuItems: ContextMenuItem[] = [];
 
-    // Check if clicking on a player
+    // Check if clicking on a player: the full admin menu.
     for (const p of zoneData.players) {
       const dx = world.x - p.x;
       const dy = world.y - p.y;
       if (dx * dx + dy * dy < hitRadius * hitRadius) {
+        menuItems.push(...playerMenuFor({ ...p, zoneId: p.zoneId ?? selectedZone }));
+        break;
+      }
+    }
+
+    // Check if clicking on an NPC Spawn Point
+    for (const sp of zoneData.spawnPoints ?? []) {
+      const dx = world.x - sp.x;
+      const dy = world.y - sp.y;
+      if (dx * dx + dy * dy < hitRadius * hitRadius) {
+        if (!sp.npcAlive) {
+          menuItems.push({
+            label: `Respawn ${sp.label} now`,
+            action: () => { postAdmin('spawn-point-action', { spawnPointId: sp.id, action: 'respawn-now' }, { label: `respawn ${sp.label}` }); },
+          });
+        }
         menuItems.push({
-          label: `Teleport ${p.name}...`,
-          action: () => setTeleportDialog({ sessionId: p.sessionId, name: p.name }),
-        });
-        menuItems.push({
-          label: `Kick ${p.name}`,
-          danger: true,
-          action: async () => {
-            await postAdmin('kick-player', { sessionId: p.sessionId });
-            setContextMenu(null);
-          },
+          label: `Set ${sp.label} respawn time (this session)…`,
+          action: () => setActionDialog({
+            title: `Respawn time for ${sp.label}`,
+            description: 'Applies until the server restarts. To keep it, set Respawn Time Override on the spawn point in Unreal (or respawnMs on the NPC template in the NPC editor). 0 = use the template.',
+            submitLabel: 'Apply',
+            fields: [{ key: 'seconds', label: 'Seconds', type: 'number', default: sp.respawnOverride ? sp.respawnSeconds : 0, min: 0 }],
+            onSubmit: v => postAdmin('spawn-point-action', { spawnPointId: sp.id, action: 'set-respawn-seconds', seconds: Number(v.seconds) || 0 }, { label: `respawn time ${sp.label}` }),
+          }),
         });
         break;
       }
@@ -762,21 +979,25 @@ export const AdminDashboard: React.FC = () => {
       worldY: Math.round(world.y),
       items: menuItems,
     });
-  }, [state, selectedZone, screenToWorld]);
+  }, [state, selectedZone, screenToWorld, playerMenuFor]);
 
   // Context menu is dismissed via a backdrop div rendered behind it (see JSX below).
 
   // ── Zone list ─────────────────────────────────────────
 
+  // The 2.0 server reports every zone it has (empty ones included), and it is
+  // the only authority on which zones exist: zones.json still lists 1.0 zones
+  // with no Unreal level, and anything spawned there is rejected. Fall back to
+  // zones.json only while the server is unreachable.
   const allZoneIds = new Set<string>();
-  if (state?.zones) {
+  if (state?.online && state.zones) {
     for (const zId of Object.keys(state.zones)) allZoneIds.add(zId);
-  }
-  // Also include zones from editor data even if empty on server
-  if (zones) {
+  } else if (zones) {
     for (const zId of Object.keys(zones)) allZoneIds.add(zId);
   }
   const zoneList = Array.from(allZoneIds).sort();
+  /** Zones with a capture are Valhalla 2.0 zones: every coordinate is zone-local cm. */
+  const unitLabel = selectedZone && thumbMetaCache.current[selectedZone] ? 'cm' : 'px';
 
   // ── Render ──────────────────────────────────────────────
 
@@ -796,9 +1017,20 @@ export const AdminDashboard: React.FC = () => {
             width: 8, height: 8, borderRadius: '50%',
             background: state?.online ? 'var(--success)' : 'var(--danger)',
           }} />
-          <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+          <span style={{ color: state?.online ? 'var(--text-secondary)' : 'var(--danger)', fontSize: 12 }}>
             {state?.online ? 'Server Online' : 'Server Offline'}
           </span>
+          <span
+            style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}
+            title="Valhalla 2.0 admin API (VALHALLA_ADMIN_URL on the editor server)"
+          >
+            {adminUrl || '…'}
+          </span>
+          {!state?.online && (
+            <span style={{ fontSize: 11, color: 'var(--danger)' }}>
+              — no response from {adminUrl || 'the admin API'}; start the UE dedicated server build with the admin API enabled
+            </span>
+          )}
         </div>
 
         <div style={{ width: 1, height: 20, background: 'var(--border-color)' }} />
@@ -819,6 +1051,53 @@ export const AdminDashboard: React.FC = () => {
         )}
 
         <div style={{ flex: 1 }} />
+
+        {/* Reload the UE server's JSON data (items, npc templates, …) */}
+        {reloadStatus && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{reloadStatus}</span>
+        )}
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '3px 10px', fontSize: 12 }}
+          title={`POST ${adminUrl || 'admin API'}/api/admin/reload-data`}
+          onClick={async () => {
+            setReloadStatus('reloading…');
+            try {
+              const res = await fetch('/api/admin/reload-data', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: '{}',
+              });
+              const body = await res.json().catch(() => ({}));
+              setReloadStatus(res.ok ? '✓ data reloaded' : `✗ ${body.error || `HTTP ${res.status}`}`);
+            } catch (err: any) {
+              setReloadStatus(`✗ ${err.message || 'request failed'}`);
+            }
+            setTimeout(() => setReloadStatus(null), 6000);
+          }}
+        >
+          ⟳ Reload data
+        </button>
+        <button
+          className="btn btn-ghost"
+          style={{ padding: '3px 10px', fontSize: 12 }}
+          title="Send a system message to every player, or to one zone"
+          disabled={!state?.online}
+          onClick={() => setActionDialog({
+            title: 'Broadcast a message',
+            submitLabel: 'Send',
+            fields: [
+              { key: 'text', label: 'Message (shown as [Admin])', type: 'textarea' },
+              { key: 'zoneId', label: 'To', type: 'select', options: [
+                { value: '', label: 'Everyone' },
+                ...Object.keys(state?.zones ?? {}).sort().map(z => ({ value: z, label: `Zone: ${(zones as any)?.[z]?.name || z}` })),
+              ] },
+            ],
+            onSubmit: v => postAdmin('broadcast', { text: v.text, ...(v.zoneId ? { zoneId: v.zoneId } : {}) }),
+          })}
+        >
+          Broadcast…
+        </button>
 
         {/* Zone tabs */}
         <div style={{ display: 'flex', gap: 2 }}>
@@ -861,7 +1140,8 @@ export const AdminDashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Canvas area */}
+      {/* Canvas area + player list */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
       <div
         ref={containerRef}
         style={{ flex: 1, position: 'relative', overflow: 'hidden' }}
@@ -876,6 +1156,23 @@ export const AdminDashboard: React.FC = () => {
           onContextMenu={handleContextMenu}
           style={{ display: 'block', width: '100%', height: '100%' }}
         />
+
+        {/* Admin action result */}
+        {notice && (
+          <div
+            onClick={() => setNotice(null)}
+            style={{
+              position: 'absolute', top: 10, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 20, cursor: 'pointer',
+              background: notice.ok ? 'rgba(20, 60, 30, 0.95)' : 'rgba(80, 20, 20, 0.95)',
+              border: `1px solid ${notice.ok ? 'var(--success)' : 'var(--danger)'}`,
+              borderRadius: 4, padding: '6px 12px', fontSize: 12,
+              color: 'var(--text-primary)', maxWidth: '70%',
+            }}
+          >
+            {notice.ok ? '✓' : '✗'} {notice.action}: {notice.message}
+          </div>
+        )}
 
         {/* Tooltip */}
         {tooltip && (
@@ -922,12 +1219,12 @@ export const AdminDashboard: React.FC = () => {
               }}
             >
               <div style={{ padding: '4px 10px', fontSize: 10, color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)', marginBottom: 2 }}>
-                ({contextMenu.worldX}, {contextMenu.worldY})
+                ({contextMenu.worldX}, {contextMenu.worldY}) {unitLabel}
               </div>
               {contextMenu.items.map((item, i) => (
                 <div
                   key={i}
-                  onClick={() => item.action()}
+                  onClick={() => { setContextMenu(null); item.action(); }}
                   style={{
                     padding: '6px 10px',
                     cursor: 'pointer',
@@ -946,6 +1243,34 @@ export const AdminDashboard: React.FC = () => {
         )}
       </div>
 
+      {state?.online && (
+        <PlayersPanel
+          zones={state.zones}
+          zoneNames={Object.fromEntries(Object.keys(state.zones).map(z => [z, (zones as any)?.[z]?.name || z]))}
+          selectedSessionId={selectedPlayerId}
+          onSelect={(zoneId, p) => {
+            setSelectedPlayerId(p.sessionId);
+            setSelectedZone(zoneId);
+            // Centre the map on them.
+            const container = containerRef.current;
+            if (container) {
+              panRef.current = {
+                x: container.clientWidth / 2 - p.x * zoomRef.current,
+                y: container.clientHeight / 2 - p.y * zoomRef.current,
+              };
+            }
+          }}
+          onMenu={openPlayerMenuAt}
+        />
+      )}
+      </div>
+
+      {/* Generic admin action dialog */}
+      {actionDialog && <ActionDialog spec={actionDialog} onClose={() => setActionDialog(null)} />}
+
+      {/* Player inspect window */}
+      {inspectPlayer && <InspectDialog player={inspectPlayer} onClose={() => setInspectPlayer(null)} />}
+
       {/* Spawn NPC / Drop Item dialog */}
       {spawnDialog && (
         <SpawnDialog
@@ -953,6 +1278,7 @@ export const AdminDashboard: React.FC = () => {
           worldX={spawnDialog.worldX}
           worldY={spawnDialog.worldY}
           zoneId={selectedZone || ''}
+          units={unitLabel}
           npcTemplates={npcTemplates}
           items={items}
           onClose={() => setSpawnDialog(null)}
@@ -979,10 +1305,12 @@ const SpawnDialog: React.FC<{
   worldX: number;
   worldY: number;
   zoneId: string;
+  /** 'cm' for Valhalla 2.0 zones (what the UE admin API expects), 'px' for 1.0. */
+  units: string;
   npcTemplates: Record<string, any>;
   items: Record<string, any>;
   onClose: () => void;
-}> = ({ type, worldX, worldY, zoneId, npcTemplates, items, onClose }) => {
+}> = ({ type, worldX, worldY, zoneId, units, npcTemplates, items, onClose }) => {
   const [selectedId, setSelectedId] = useState('');
   const [quantity, setQuantity] = useState(1);
   const [filter, setFilter] = useState('');
@@ -1019,7 +1347,7 @@ const SpawnDialog: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <h3 style={{ margin: 0, fontSize: 14, color: 'var(--text-primary)' }}>
-          {type === 'npc' ? 'Spawn NPC' : 'Drop Item'} at ({worldX}, {worldY})
+          {type === 'npc' ? 'Spawn NPC' : 'Drop Item'} at ({worldX}, {worldY}) {units}
         </h3>
 
         <input
@@ -1099,14 +1427,35 @@ const TeleportDialog: React.FC<{
   const [targetZone, setTargetZone] = useState('');
   const [x, setX] = useState(0);
   const [y, setY] = useState(0);
+  const [units, setUnits] = useState<'cm' | 'px'>('px');
 
-  // Set defaults from zone spawn
+  // Default to the target zone's first overlay 2.0 player spawn (cm); fall back
+  // to the 1.0 zones.json defaultSpawn (world pixels) when the zone has none.
   useEffect(() => {
-    if (targetZone && (zones as any)?.[targetZone]?.defaultSpawn) {
-      const spawn = (zones as any)[targetZone].defaultSpawn;
-      setX(spawn.x);
-      setY(spawn.y);
-    }
+    if (!targetZone) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/overlays2/${targetZone}`);
+        if (res.ok) {
+          const ov = await res.json();
+          const spawn = (ov.spawnPoints || []).find((sp: any) => sp.type === 'player_spawn');
+          if (spawn && !cancelled) {
+            setX(Math.round(spawn.x));
+            setY(Math.round(spawn.y));
+            setUnits('cm');
+            return;
+          }
+        }
+      } catch { /* fall through to the 1.0 default */ }
+      const fallback = (zones as any)?.[targetZone]?.defaultSpawn;
+      if (fallback && !cancelled) {
+        setX(fallback.x);
+        setY(fallback.y);
+        setUnits('px');
+      }
+    })();
+    return () => { cancelled = true; };
   }, [targetZone, zones]);
 
   const handleSubmit = async () => {
@@ -1153,7 +1502,7 @@ const TeleportDialog: React.FC<{
 
         <div className="form-row">
           <div className="form-group">
-            <label className="form-label">X</label>
+            <label className="form-label">X ({units})</label>
             <input
               className="form-input"
               type="number"
@@ -1162,7 +1511,7 @@ const TeleportDialog: React.FC<{
             />
           </div>
           <div className="form-group">
-            <label className="form-label">Y</label>
+            <label className="form-label">Y ({units})</label>
             <input
               className="form-input"
               type="number"

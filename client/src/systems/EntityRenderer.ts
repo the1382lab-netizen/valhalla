@@ -7,18 +7,148 @@ import {
   isoToOrtho,
   ORTHO_TILE_SIZE,
   DEFAULT_EQUIP_SPRITE_CONFIG,
+  EQUIP_SLOT_TO_PAPERDOLL,
+  dirFromOrthoVector,
+  paperdollAnimKey,
+  paperdollTextureKey,
+  paperdollFrame,
 } from '@valhalla/shared';
+import type { EquipSlotType, PaperdollAnim, PaperdollDir } from '@valhalla/shared';
 import { ClientDataManager } from './ClientDataManager.js';
+import { PaperdollRegistry, parsePaperdollAnimKey } from './PaperdollRegistry.js';
 
 export const ENTITY_DEPTH_BASE = 600_000;
 export const NAMEPLATE_DEPTH   = 800_000;
 export const UI_DEPTH_BASE     = 1_000_000;
+
+
+// ── Character sprite helpers ─────────────────────────────────
+//
+// Two sprite systems coexist: the original LPC sheets (64x64, 9 frames, four
+// cardinal directions) and the paperdoll pack (64x64, 20 frames, eight screen
+// directions, one sheet per equipment layer). The game speaks the paperdoll
+// vocabulary everywhere; these helpers translate down to LPC when a character
+// has no paperdoll body.
+
+/** Cycle names: paperdoll -> LPC. */
+const LPC_ANIM: Record<PaperdollAnim, string> = {
+  idle: 'idle', walk: 'walk', attack: 'melee', shoot: 'ranged', cast: 'cast',
+};
+
+/** Facings: paperdoll -> LPC, vertical axis winning diagonals as before. */
+const LPC_DIR: Record<PaperdollDir, string> = {
+  s: 'down', se: 'down', sw: 'down',
+  n: 'up', ne: 'up', nw: 'up',
+  e: 'right', w: 'left',
+};
+
+/**
+ * Vertical offset from a sprite's origin to just above its head.
+ *
+ * LPC sprites use Phaser's centred origin; paperdoll sprites are anchored at
+ * the feet so they stand on the tile they occupy. Anything that floats above a
+ * character (nameplate, HP bar) has to read the origin rather than assume one.
+ */
+export function headroom(sprite: Phaser.GameObjects.Sprite): number {
+  return sprite.displayHeight * sprite.originY + 12;
+}
+
+/**
+ * Normalise an animation name to a paperdoll cycle.
+ *
+ * Combat still speaks the old LPC words in places ('melee', 'ranged'); this is
+ * the single boundary where they become cycles, so no call site has to be
+ * hunted down and renamed.
+ */
+export function toPaperdollAnim(name: string): PaperdollAnim {
+  switch (name) {
+    case 'melee': return 'attack';
+    case 'ranged': return 'shoot';
+    case 'idle': case 'walk': case 'attack': case 'shoot': case 'cast':
+      return name;
+    default: return 'attack';
+  }
+}
+
+/** True when this sprite is drawn from the paperdoll pack. */
+export function isPaperdollSprite(sprite: Phaser.GameObjects.Sprite): boolean {
+  return sprite.texture.key.startsWith('pd_');
+}
+
+/** The paperdoll layer id behind a sprite, e.g. `pd_body_tan` -> `body_tan`. */
+export function paperdollLayerOf(sprite: Phaser.GameObjects.Sprite): string {
+  return sprite.texture.key.slice(3);
+}
+
+/**
+ * Base character sprite. Uses the paperdoll body when the pack is loaded and
+ * the body exists, otherwise the class LPC sheet, otherwise the fallback body.
+ */
+export function createCharacterSprite(
+  scene: Phaser.Scene,
+  x: number, y: number,
+  classId: string,
+  bodyId?: string,
+): Phaser.GameObjects.Sprite {
+  const pd = PaperdollRegistry.instance;
+  if (pd.ready) {
+    const resolved = pd.resolveBody(bodyId || ClientDataManager.instance.getClass(classId)?.bodyId);
+    if (resolved && scene.textures.exists(paperdollTextureKey(resolved))) {
+      const sprite = scene.add.sprite(
+        x, y, paperdollTextureKey(resolved), paperdollFrame('idle', 's', 0),
+      );
+      sprite.setOrigin(pd.originX, pd.originY);
+      return sprite;
+    }
+  }
+  const walkTexture = scene.textures.exists(`class_${classId}_walk`)
+    ? `class_${classId}_walk` : 'player_walk';
+  // Frame 18 = row 2 (down), col 0 = idle facing down
+  return scene.add.sprite(x, y, walkTexture, 18);
+}
+
+/**
+ * The animation key for a character sprite, in whichever system it belongs to.
+ * Returns null when the animation does not exist, so callers can skip the play.
+ */
+export function characterAnimKey(
+  scene: Phaser.Scene,
+  sprite: Phaser.GameObjects.Sprite,
+  classId: string,
+  anim: PaperdollAnim,
+  dir: PaperdollDir,
+): string | null {
+  const key = isPaperdollSprite(sprite)
+    ? paperdollAnimKey(paperdollLayerOf(sprite), anim, dir)
+    : `${classId}_${LPC_ANIM[anim]}_${LPC_DIR[dir]}`;
+  return scene.anims.exists(key) ? key : null;
+}
+
+/** Play a cycle on a character sprite. No-op when that animation is missing. */
+export function playCharacterAnim(
+  scene: Phaser.Scene,
+  sprite: Phaser.GameObjects.Sprite,
+  classId: string,
+  anim: PaperdollAnim,
+  dir: PaperdollDir,
+  ignoreIfPlaying = true,
+): void {
+  const key = characterAnimKey(scene, sprite, classId, anim, dir);
+  if (!key) return;
+  if (sprite.anims.getName() !== key || !sprite.anims.isPlaying) {
+    sprite.play(key, ignoreIfPlaying);
+  }
+}
 
 /** Equipment overlay sprites layered on top of the character. */
 interface EquipmentOverlay {
   slot: string;      // equip slot key (e.g. 'weapon', 'helm')
   itemId: string;    // the item ID that produced this overlay
   sprite: Phaser.GameObjects.Sprite;
+  /** Paperdoll layer id when this overlay is a paperdoll layer, else undefined. */
+  layerId?: string;
+  /** Paperdoll composite slot ('mainhand', 'chest', ...), else undefined. */
+  pdSlot?: string;
 }
 
 interface RemotePlayerData {
@@ -40,6 +170,7 @@ interface RemotePlayerData {
   level: number;
   characterName: string;
   lastDir: string;
+  isPlayingActionAnim: boolean;
 }
 
 /** Lightweight buff descriptor received from the server's NpcBuffInfo schema. */
@@ -136,6 +267,8 @@ export class EntityRenderer {
   public onPlayerClick?: (sessionId: string) => void;
   /** Called when an NPC sprite is left-clicked. */
   public onNpcClick?: (npcId: string) => void;
+  /** Called when an NPC sprite is right-clicked. */
+  public onNpcRightClick?: (npcId: string) => void;
   /** Called when a loot bag sprite is clicked (button: 0=left, 2=right). */
   public onBagClick?: (bagId: string, button: number) => void;
 
@@ -145,11 +278,10 @@ export class EntityRenderer {
 
   // ── Remote Players ────────────────────────────────────────
 
-  addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1, characterName: string = ''): void {
+  addRemotePlayer(sessionId: string, x: number, y: number, classId: string = 'warrior', level: number = 1, characterName: string = '', bodyId: string = ''): void {
     // Convert ortho world coords to ISO screen coords
     const isoPos = orthoToIso(x, y);
-    // Use sprite sheet — frame 18 = row 2 (down), col 0 = idle facing down
-    const sprite = this.scene.add.sprite(isoPos.x, isoPos.y, 'player_walk', 18);
+    const sprite = createCharacterSprite(this.scene, isoPos.x, isoPos.y, classId, bodyId);
     sprite.setDepth(ENTITY_DEPTH_BASE);
     sprite.rotation = 0;
 
@@ -167,7 +299,7 @@ export class EntityRenderer {
     const nameBg = this.scene.add.graphics();
     nameBg.setDepth(NAMEPLATE_DEPTH);
 
-    const nameText = this.scene.add.text(isoPos.x, isoPos.y - 44, labelText, {
+    const nameText = this.scene.add.text(isoPos.x, isoPos.y - headroom(sprite), labelText, {
       fontSize: '12px',
       fontStyle: 'bold',
       color: '#ffffff',
@@ -198,7 +330,8 @@ export class EntityRenderer {
       classId,
       level,
       characterName,
-      lastDir: 'down',
+      lastDir: 's',
+      isPlayingActionAnim: false,
     });
   }
 
@@ -270,48 +403,90 @@ export class EntityRenderer {
     baseSprite: Phaser.GameObjects.Sprite,
   ): void {
     const dm = ClientDataManager.instance;
+    const pd = PaperdollRegistry.instance;
 
-    // Build set of desired overlays: slot → itemId (only items with sprite sheets)
-    const desired = new Map<string, string>();
+    // Which slots want an overlay, and which layer id (if any) draws it
+    const desired = new Map<string, { itemId: string; layerId?: string; pdSlot?: string }>();
     for (const [slot, itemId] of Object.entries(equipment)) {
       if (!itemId) continue;
       const item = dm.getItem(itemId);
-      if (item?.equipSpriteSheet) {
-        desired.set(slot, itemId);
+      if (!item) continue;
+
+      // Paperdoll wins when the item declares a layer and the pack has it
+      if (pd.ready && item.spriteId && pd.getItem(item.spriteId)
+          && this.scene.textures.exists(paperdollTextureKey(item.spriteId))) {
+        const pdSlot = EQUIP_SLOT_TO_PAPERDOLL[slot as EquipSlotType];
+        if (pdSlot) {
+          desired.set(slot, { itemId, layerId: item.spriteId, pdSlot });
+          continue;
+        }
+      }
+      // Otherwise fall back to the LPC overlay sheets
+      if (item.equipSpriteSheet || item.meleeSpriteSheet || item.rangedSpriteSheet || item.castSpriteSheet) {
+        desired.set(slot, { itemId });
       }
     }
 
-    // Remove overlays that are no longer needed or changed item
+    // Drop overlays whose slot emptied or whose item changed
     for (let i = overlays.length - 1; i >= 0; i--) {
       const ov = overlays[i];
-      const wantedItemId = desired.get(ov.slot);
-      if (wantedItemId !== ov.itemId) {
+      const want = desired.get(ov.slot);
+      if (!want || want.itemId !== ov.itemId || want.layerId !== ov.layerId) {
         ov.sprite.destroy();
         overlays.splice(i, 1);
       }
     }
 
-    // Add overlays for newly equipped items
+    // Create the new ones
     const existingSlots = new Set(overlays.map(o => o.slot));
-    for (const [slot, itemId] of desired) {
+    for (const [slot, want] of desired) {
       if (existingSlots.has(slot)) continue;
-      const item = dm.getItem(itemId);
-      if (!item?.equipSpriteSheet) continue;
 
-      const textureKey = `equip_sheet_${item.equipSpriteSheet}`;
+      if (want.layerId) {
+        const textureKey = paperdollTextureKey(want.layerId);
+        const overlay = this.scene.add.sprite(
+          baseSprite.x, baseSprite.y, textureKey, paperdollFrame('idle', 's', 0),
+        );
+        overlay.setOrigin(baseSprite.originX, baseSprite.originY);
+        overlay.setDepth(baseSprite.depth + pd.depthOffsetFor('s', want.pdSlot!));
+        overlays.push({ slot, itemId: want.itemId, sprite: overlay, layerId: want.layerId, pdSlot: want.pdSlot });
+        continue;
+      }
+
+      const item = dm.getItem(want.itemId);
+      if (!item) continue;
+      const initialSheet = item.equipSpriteSheet || item.meleeSpriteSheet || item.rangedSpriteSheet || item.castSpriteSheet;
+      if (!initialSheet) continue;
+      const textureKey = `equip_sheet_${initialSheet}`;
       if (!this.scene.textures.exists(textureKey)) continue;
 
       const config = item.equipSpriteConfig ?? DEFAULT_EQUIP_SPRITE_CONFIG;
       // Start on frame 18 (row 2 = down, col 0) to match the base sprite idle-down
       const startFrame = Math.min(2 * config.framesPerRow, config.framesPerRow * config.rows - 1);
       const overlay = this.scene.add.sprite(baseSprite.x, baseSprite.y, textureKey, startFrame);
-      overlay.setDepth(baseSprite.depth + 1);
-      overlays.push({ slot, itemId, sprite: overlay });
+      overlay.setDepth(baseSprite.depth + 0.5);
+      overlays.push({ slot, itemId: want.itemId, sprite: overlay });
     }
   }
 
   /**
+   * Extract the animation type and direction from a class-prefixed animation key.
+   * e.g. "warrior_melee_down" → { animType: "melee", dir: "down" }
+   * e.g. "warrior_idle_up" → { animType: "idle", dir: "up" }
+   */
+  private parseAnimKey(animKey: string): { animType: string; dir: string } | null {
+    // Paperdoll: pd_{layerId}_{anim}_{dir}, layer ids contain underscores
+    const pd = parsePaperdollAnimKey(animKey);
+    if (pd) return { animType: pd.anim, dir: pd.dir };
+    // LPC: {classId}_{animType}_{dir}
+    const match = animKey.match(/^[^_]+_(\w+)_(up|down|left|right)$/);
+    if (match) return { animType: match[1], dir: match[2] };
+    return null;
+  }
+
+  /**
    * Sync overlay sprite positions, animations, and visibility with a base sprite.
+   * Each overlay can have different sprite sheets per animation type.
    * Called each frame from the update loop and externally for the local player.
    */
   updateOverlayPositions(
@@ -319,29 +494,82 @@ export class EntityRenderer {
     baseSprite: Phaser.GameObjects.Sprite,
   ): void {
     const currentAnimKey = baseSprite.anims.getName();
+    const parsed = currentAnimKey ? this.parseAnimKey(currentAnimKey) : null;
+    const pd = PaperdollRegistry.instance;
+
     for (const ov of overlays) {
       ov.sprite.x = baseSprite.x;
       ov.sprite.y = baseSprite.y;
-      ov.sprite.setDepth(baseSprite.depth + 1);
-      ov.sprite.setVisible(baseSprite.visible);
 
-      // Play matching animation on the overlay if available
+      if (!parsed) {
+        ov.sprite.setDepth(baseSprite.depth + 0.5);
+        ov.sprite.setVisible(baseSprite.visible);
+        continue;
+      }
+
+      // ── Paperdoll layer ──
+      if (ov.layerId && ov.pdSlot) {
+        const dir = parsed.dir as PaperdollDir;
+        // Composite order is per-direction; only `back` actually moves, but
+        // reading it from the manifest keeps the client honest either way.
+        ov.sprite.setDepth(baseSprite.depth + pd.depthOffsetFor(dir, ov.pdSlot));
+        const key = paperdollAnimKey(ov.layerId, parsed.animType as PaperdollAnim, dir);
+        if (!this.scene.anims.exists(key)) { ov.sprite.setVisible(false); continue; }
+        ov.sprite.setVisible(baseSprite.visible);
+        if (ov.sprite.anims.getName() !== key || !ov.sprite.anims.isPlaying) {
+          ov.sprite.play(key, true);
+        }
+        // Lock the layer to the body's frame so they never drift apart
+        const bodyFrame = baseSprite.anims.currentFrame;
+        const anim = ov.sprite.anims.currentAnim;
+        if (bodyFrame && anim) {
+          ov.sprite.anims.setCurrentFrame(anim.frames[bodyFrame.index] ?? anim.frames[0]);
+        }
+        continue;
+      }
+
+      // ── LPC overlay sheet ──
+      ov.sprite.setDepth(baseSprite.depth + 0.5);
       const item = ClientDataManager.instance.getItem(ov.itemId);
-      if (!item?.equipSpriteSheet) continue;
-      const textureKey = `equip_sheet_${item.equipSpriteSheet}`;
-      // Map base anim key (e.g. "walk_down") → overlay anim key
-      const overlayAnimKey = currentAnimKey ? `${textureKey}_${currentAnimKey}` : null;
+      if (!item) { ov.sprite.setVisible(false); continue; }
+
+      let sheetFile: string | undefined;
+      const at = parsed.animType;
+      if (at === 'walk' || at === 'idle') {
+        sheetFile = item.equipSpriteSheet;
+      } else if (at === 'melee' || at === 'attack') {
+        sheetFile = item.meleeSpriteSheet;
+      } else if (at === 'ranged' || at === 'shoot') {
+        sheetFile = item.rangedSpriteSheet;
+      } else if (at === 'cast') {
+        sheetFile = item.castSpriteSheet;
+      }
+
+      if (!sheetFile) {
+        // No sheet for this animation type — hide overlay
+        ov.sprite.setVisible(false);
+        continue;
+      }
+
+      ov.sprite.setVisible(baseSprite.visible);
+      const textureKey = `equip_sheet_${sheetFile}`;
+      const overlayAnimKey = `${textureKey}_${at}_${parsed.dir}`;
+
       if (overlayAnimKey && this.scene.anims.exists(overlayAnimKey)) {
+        if (ov.sprite.texture.key !== textureKey) {
+          ov.sprite.setTexture(textureKey);
+        }
         if (ov.sprite.anims.getName() !== overlayAnimKey || !ov.sprite.anims.isPlaying) {
           ov.sprite.play(overlayAnimKey, true);
         }
-        // Sync frame timing with base sprite
         if (baseSprite.anims.currentFrame) {
           ov.sprite.anims.setCurrentFrame(
             ov.sprite.anims.currentAnim!.frames[baseSprite.anims.currentFrame.index] ??
             ov.sprite.anims.currentAnim!.frames[0]
           );
         }
+      } else {
+        ov.sprite.setVisible(false);
       }
     }
   }
@@ -364,10 +592,14 @@ export class EntityRenderer {
     sprite.setDepth(ENTITY_DEPTH_BASE);
     sprite.setTint(spriteColor || 0xff4444);
 
-    // Make sprite clickable for targeting
+    // Make sprite clickable for targeting (left) and ranged attack (right)
     sprite.setInteractive({ useHandCursor: false });
-    sprite.on('pointerdown', () => {
-      this.onNpcClick?.(id);
+    sprite.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (pointer.rightButtonDown()) {
+        this.onNpcRightClick?.(id);
+      } else {
+        this.onNpcClick?.(id);
+      }
     });
 
     // Scale sprite by spriteSize (1 = default 24px, 2 = double, etc.)
@@ -382,7 +614,7 @@ export class EntityRenderer {
     const nameBg = this.scene.add.graphics();
     nameBg.setDepth(NAMEPLATE_DEPTH);
 
-    const nameText = this.scene.add.text(isoPos.x, isoPos.y - 44, labelText, {
+    const nameText = this.scene.add.text(isoPos.x, isoPos.y - headroom(sprite), labelText, {
       fontSize: '12px',
       fontStyle: 'bold',
       color: nameColor,
@@ -761,13 +993,13 @@ export class EntityRenderer {
 
   // ── HP Bar Drawing ────────────────────────────────────────
 
-  private drawHpBar(gfx: Phaser.GameObjects.Graphics, x: number, y: number, hp: number, maxHp: number): void {
+  private drawHpBar(gfx: Phaser.GameObjects.Graphics, x: number, y: number, hp: number, maxHp: number, top?: number): void {
     gfx.clear();
 
     const barWidth = 40;
     const barHeight = 5;
     const barX = x - barWidth / 2;
-    const barY = y - 34;
+    const barY = top ?? (y - 34);
 
     // Background (dark)
     gfx.fillStyle(0x000000, 0.6);
@@ -808,47 +1040,50 @@ export class EntityRenderer {
       data.sprite.y = isoPos.y;
       data.sprite.rotation = 0;
 
-      // Directional animation based on raw ortho movement delta
+      // Directional animation: only walk while actively interpolating toward a new position.
+      // Once t >= 1 the sprite has reached its destination — show idle even if the last
+      // known delta was non-zero (which would otherwise keep the walk animation running
+      // indefinitely after the player stops moving).
       const dx = data.targetX - data.previousX;
       const dy = data.targetY - data.previousY;
-      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) {
-        // Moving — map ortho delta directly to sprite direction
-        // Vertical axis takes priority for diagonals
-        let dir: string;
-        if (Math.abs(dy) >= Math.abs(dx)) {
-          dir = dy < 0 ? 'up' : 'down';
-        } else {
-          dir = dx < 0 ? 'left' : 'right';
-        }
-        data.lastDir = dir;
-        if (data.sprite.anims.getName() !== `walk_${dir}` || !data.sprite.anims.isPlaying) {
-          data.sprite.play(`walk_${dir}`, true);
-        }
+      const isMoving = t < 1 && (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5);
+
+      // If playing an action animation, movement cancels it
+      if (data.isPlayingActionAnim && isMoving) {
+        data.isPlayingActionAnim = false;
+      }
+
+      if (data.isPlayingActionAnim) {
+        // Let the action animation play through without interruption
+      } else if (isMoving) {
+        // Facing comes from the same helper the local player uses, so what a
+        // player sees themselves doing matches what everyone else sees.
+        const dir = dirFromOrthoVector(dx, dy);
+        if (dir) data.lastDir = dir;
+        playCharacterAnim(this.scene, data.sprite, data.classId, 'walk', data.lastDir as PaperdollDir);
       } else {
-        // Idle
-        const idleKey = `idle_${data.lastDir}`;
-        if (data.sprite.anims.getName() !== idleKey || !data.sprite.anims.isPlaying) {
-          data.sprite.play(idleKey, true);
-        }
+        // Idle — either at destination or no meaningful movement delta
+        playCharacterAnim(this.scene, data.sprite, data.classId, 'idle', data.lastDir as PaperdollDir);
       }
 
       // Dynamic depth based on ortho position
       data.sprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(orthoX / ORTHO_TILE_SIZE) + Math.floor(orthoY / ORTHO_TILE_SIZE));
 
       data.nameText.x = data.sprite.x;
-      data.nameText.y = data.sprite.y - 44;
+      const head = data.sprite.y - headroom(data.sprite);
+      data.nameText.y = head;
 
       // Draw nameplate background
       data.nameBg.clear();
       const textW = data.nameText.width;
       const textH = data.nameText.height;
       const bgX = data.sprite.x - textW / 2 - 4;
-      const bgY = data.sprite.y - 44 - textH - 1;
+      const bgY = head - textH - 1;
       data.nameBg.fillStyle(0x000000, 0.5);
       data.nameBg.fillRoundedRect(bgX, bgY, textW + 8, textH + 4, 3);
 
       // Draw HP bar
-      this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp);
+      this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp, head + 10);
 
       // Sync equipment overlays
       this.updateOverlayPositions(data.overlays, data.sprite);
@@ -878,19 +1113,20 @@ export class EntityRenderer {
       data.sprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(orthoX / ORTHO_TILE_SIZE) + Math.floor(orthoY / ORTHO_TILE_SIZE));
 
       data.nameText.x = data.sprite.x;
-      data.nameText.y = data.sprite.y - 44;
+      const head = data.sprite.y - headroom(data.sprite);
+      data.nameText.y = head;
 
       // Draw nameplate background
       data.nameBg.clear();
       const npcTextW = data.nameText.width;
       const npcTextH = data.nameText.height;
       const npcBgX = data.sprite.x - npcTextW / 2 - 4;
-      const npcBgY = data.sprite.y - 44 - npcTextH - 1;
+      const npcBgY = head - npcTextH - 1;
       data.nameBg.fillStyle(0x000000, 0.5);
       data.nameBg.fillRoundedRect(npcBgX, npcBgY, npcTextW + 8, npcTextH + 4, 3);
 
       // Draw HP bar
-      this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp);
+      this.drawHpBar(data.hpBar, data.sprite.x, data.sprite.y, data.hp, data.maxHp, head + 10);
     });
 
     // Projectiles — interpolate positions in ortho space, convert to ISO
@@ -934,6 +1170,41 @@ export class EntityRenderer {
     const data = this.remotePlayers.get(sessionId);
     if (!data) return null;
     return { x: data.sprite.x, y: data.sprite.y };
+  }
+
+  /**
+   * Play an action animation (melee, ranged, cast) on a remote player.
+   * animType: 'melee' | 'ranged' | 'cast'
+   * direction: optional override; defaults to the player's current lastDir.
+   */
+  playRemoteActionAnim(sessionId: string, animType: string, direction?: string): void {
+    const data = this.remotePlayers.get(sessionId);
+    if (!data) return;
+
+    const dir = (direction ?? data.lastDir) as PaperdollDir;
+    const anim = toPaperdollAnim(animType);
+    const animKey = characterAnimKey(this.scene, data.sprite, data.classId, anim, dir);
+    if (!animKey) return;
+
+    data.isPlayingActionAnim = true;
+    data.sprite.play(animKey, true);
+
+    if (anim === 'attack' || anim === 'shoot') {
+      // One-shot: return to idle when done
+      data.sprite.once('animationcomplete', () => {
+        data.isPlayingActionAnim = false;
+        playCharacterAnim(this.scene, data.sprite, data.classId, 'idle', data.lastDir as PaperdollDir, true);
+      });
+    }
+    // 'cast' loops indefinitely — stopped by movement or stopRemoteActionAnim()
+  }
+
+  /** Stop a looping action animation (e.g. cast) on a remote player. */
+  stopRemoteActionAnim(sessionId: string): void {
+    const data = this.remotePlayers.get(sessionId);
+    if (!data || !data.isPlayingActionAnim) return;
+    data.isPlayingActionAnim = false;
+    playCharacterAnim(this.scene, data.sprite, data.classId, 'idle', data.lastDir as PaperdollDir, true);
   }
 
   // ── Target Info Getters (for the targeting nameplate) ─────

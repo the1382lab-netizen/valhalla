@@ -39,7 +39,10 @@
       },
       "allowedArmor": "plate",
       "baseSpeed": 110,
-      "canUseMana": false
+      "canUseMana": false,
+      "baseMeleeAttackSpeedMs": 3600,
+      "baseRangedAttackSpeedMs": 0,
+      "visionRange": 1200
     },
     "cleric": {
       "id": "cleric",
@@ -79,7 +82,10 @@
       },
       "allowedArmor": "mail",
       "baseSpeed": 122,
-      "canUseMana": true
+      "canUseMana": true,
+      "baseMeleeAttackSpeedMs": 4400,
+      "baseRangedAttackSpeedMs": 0,
+      "visionRange": 1200
     },
     "ranger": {
       "id": "ranger",
@@ -119,7 +125,10 @@
       },
       "allowedArmor": "leather",
       "baseSpeed": 147,
-      "canUseMana": false
+      "canUseMana": false,
+      "baseMeleeAttackSpeedMs": 3000,
+      "baseRangedAttackSpeedMs": 4000,
+      "visionRange": 1800
     },
     "rogue": {
       "id": "rogue",
@@ -160,6 +169,9 @@
       "allowedArmor": "leather",
       "baseSpeed": 134,
       "canUseMana": false,
+      "baseMeleeAttackSpeedMs": 2400,
+      "baseRangedAttackSpeedMs": 0,
+      "visionRange": 1350,
       "startingItems": [
         {
           "itemId": "iron_dagger",
@@ -216,7 +228,10 @@
       },
       "allowedArmor": "mail",
       "baseSpeed": 122,
-      "canUseMana": true
+      "canUseMana": true,
+      "baseMeleeAttackSpeedMs": 4000,
+      "baseRangedAttackSpeedMs": 0,
+      "visionRange": 1200
     },
     "wizard": {
       "id": "wizard",
@@ -257,6 +272,9 @@
       "allowedArmor": "cloth",
       "baseSpeed": 122,
       "canUseMana": true,
+      "baseMeleeAttackSpeedMs": 4800,
+      "baseRangedAttackSpeedMs": 0,
+      "visionRange": 1200,
       "startingItems": [
         {
           "itemId": "cloth_hood",

@@ -1,0 +1,979 @@
+{
+ "version": 2,
+ "cell": 64,
+ "originX": 0.5,
+ "originY": 0.9167,
+ "directions": [
+  "s",
+  "se",
+  "e",
+  "ne",
+  "n",
+  "nw",
+  "w",
+  "sw"
+ ],
+ "animations": [
+  {
+   "name": "idle",
+   "start": 0,
+   "frames": 2
+  },
+  {
+   "name": "walk",
+   "start": 2,
+   "frames": 6
+  },
+  {
+   "name": "attack",
+   "start": 8,
+   "frames": 4
+  },
+  {
+   "name": "shoot",
+   "start": 12,
+   "frames": 4
+  },
+  {
+   "name": "cast",
+   "start": 16,
+   "frames": 4
+  }
+ ],
+ "slots": [
+  "back",
+  "legs",
+  "boots",
+  "chest",
+  "gloves",
+  "helm",
+  "offhand",
+  "mainhand"
+ ],
+ "layerOrder": {
+  "s": [
+   "back",
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "se": [
+   "back",
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "e": [
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "back",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "ne": [
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "back",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "n": [
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "back",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "nw": [
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "back",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "w": [
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "back",
+   "helm",
+   "offhand",
+   "mainhand"
+  ],
+  "sw": [
+   "back",
+   "body",
+   "legs",
+   "boots",
+   "chest",
+   "gloves",
+   "helm",
+   "offhand",
+   "mainhand"
+  ]
+ },
+ "bodies": [
+  {
+   "id": "body_fair",
+   "label": "Fair",
+   "sheet": "bodies/body_fair.png",
+   "atlas": "bodies/body_fair.json"
+  },
+  {
+   "id": "body_tan",
+   "label": "Tan",
+   "sheet": "bodies/body_tan.png",
+   "atlas": "bodies/body_tan.json"
+  },
+  {
+   "id": "body_olive",
+   "label": "Olive",
+   "sheet": "bodies/body_olive.png",
+   "atlas": "bodies/body_olive.json"
+  },
+  {
+   "id": "body_dark",
+   "label": "Dark",
+   "sheet": "bodies/body_dark.png",
+   "atlas": "bodies/body_dark.json"
+  },
+  {
+   "id": "body_elder",
+   "label": "Elder",
+   "sheet": "bodies/body_elder.png",
+   "atlas": "bodies/body_elder.json"
+  }
+ ],
+ "items": [
+  {
+   "id": "helm_iron_open",
+   "slot": "helm",
+   "label": "Open Iron Helm",
+   "style": "open",
+   "sheet": "items/helm_iron_open.png",
+   "atlas": "items/helm_iron_open.json",
+   "icon": "helm_iron_open.png"
+  },
+  {
+   "id": "helm_iron_full",
+   "slot": "helm",
+   "label": "Iron Great Helm",
+   "style": "full",
+   "sheet": "items/helm_iron_full.png",
+   "atlas": "items/helm_iron_full.json",
+   "icon": "helm_iron_full.png"
+  },
+  {
+   "id": "helm_valhalla_horned",
+   "slot": "helm",
+   "label": "Horned Helm of Valhalla",
+   "style": "horned",
+   "sheet": "items/helm_valhalla_horned.png",
+   "atlas": "items/helm_valhalla_horned.json",
+   "icon": "helm_valhalla_horned.png"
+  },
+  {
+   "id": "hood_scout",
+   "slot": "helm",
+   "label": "Scout's Hood",
+   "style": "hood",
+   "sheet": "items/hood_scout.png",
+   "atlas": "items/hood_scout.json",
+   "icon": "hood_scout.png"
+  },
+  {
+   "id": "hood_warden",
+   "slot": "helm",
+   "label": "Warden's Hood",
+   "style": "hood",
+   "sheet": "items/hood_warden.png",
+   "atlas": "items/hood_warden.json",
+   "icon": "hood_warden.png"
+  },
+  {
+   "id": "hat_adept",
+   "slot": "helm",
+   "label": "Adept's Hat",
+   "style": "hat",
+   "sheet": "items/hat_adept.png",
+   "atlas": "items/hat_adept.json",
+   "icon": "hat_adept.png"
+  },
+  {
+   "id": "hat_archmage",
+   "slot": "helm",
+   "label": "Archmage's Hat",
+   "style": "hat",
+   "sheet": "items/hat_archmage.png",
+   "atlas": "items/hat_archmage.json",
+   "icon": "hat_archmage.png"
+  },
+  {
+   "id": "hood_priest",
+   "slot": "helm",
+   "label": "Priest's Hood",
+   "style": "hood",
+   "sheet": "items/hood_priest.png",
+   "atlas": "items/hood_priest.json",
+   "icon": "hood_priest.png"
+  },
+  {
+   "id": "mitre_high_cleric",
+   "slot": "helm",
+   "label": "High Cleric's Mitre",
+   "style": "mitre",
+   "sheet": "items/mitre_high_cleric.png",
+   "atlas": "items/mitre_high_cleric.json",
+   "icon": "mitre_high_cleric.png"
+  },
+  {
+   "id": "circlet_apprentice",
+   "slot": "helm",
+   "label": "Apprentice's Circlet",
+   "style": "circlet",
+   "sheet": "items/circlet_apprentice.png",
+   "atlas": "items/circlet_apprentice.json",
+   "icon": "circlet_apprentice.png"
+  },
+  {
+   "id": "chest_rusted_mail",
+   "slot": "chest",
+   "label": "Rusted Mail",
+   "style": null,
+   "sheet": "items/chest_rusted_mail.png",
+   "atlas": "items/chest_rusted_mail.json",
+   "icon": "chest_rusted_mail.png"
+  },
+  {
+   "id": "chest_iron_plate",
+   "slot": "chest",
+   "label": "Iron Plate",
+   "style": null,
+   "sheet": "items/chest_iron_plate.png",
+   "atlas": "items/chest_iron_plate.json",
+   "icon": "chest_iron_plate.png"
+  },
+  {
+   "id": "chest_valhalla_plate",
+   "slot": "chest",
+   "label": "Valhalla Plate",
+   "style": null,
+   "sheet": "items/chest_valhalla_plate.png",
+   "atlas": "items/chest_valhalla_plate.json",
+   "icon": "chest_valhalla_plate.png"
+  },
+  {
+   "id": "chest_travelers_jerkin",
+   "slot": "chest",
+   "label": "Traveler's Jerkin",
+   "style": null,
+   "sheet": "items/chest_travelers_jerkin.png",
+   "atlas": "items/chest_travelers_jerkin.json",
+   "icon": "chest_travelers_jerkin.png"
+  },
+  {
+   "id": "chest_scouts_hide",
+   "slot": "chest",
+   "label": "Scout's Hide",
+   "style": null,
+   "sheet": "items/chest_scouts_hide.png",
+   "atlas": "items/chest_scouts_hide.json",
+   "icon": "chest_scouts_hide.png"
+  },
+  {
+   "id": "chest_wardens_garb",
+   "slot": "chest",
+   "label": "Warden's Garb",
+   "style": null,
+   "sheet": "items/chest_wardens_garb.png",
+   "atlas": "items/chest_wardens_garb.json",
+   "icon": "chest_wardens_garb.png"
+  },
+  {
+   "id": "chest_apprentice_robe",
+   "slot": "chest",
+   "label": "Apprentice Robe",
+   "style": null,
+   "sheet": "items/chest_apprentice_robe.png",
+   "atlas": "items/chest_apprentice_robe.json",
+   "icon": "chest_apprentice_robe.png"
+  },
+  {
+   "id": "chest_adept_robe",
+   "slot": "chest",
+   "label": "Adept Robe",
+   "style": null,
+   "sheet": "items/chest_adept_robe.png",
+   "atlas": "items/chest_adept_robe.json",
+   "icon": "chest_adept_robe.png"
+  },
+  {
+   "id": "chest_archmage_robe",
+   "slot": "chest",
+   "label": "Archmage Robe",
+   "style": null,
+   "sheet": "items/chest_archmage_robe.png",
+   "atlas": "items/chest_archmage_robe.json",
+   "icon": "chest_archmage_robe.png"
+  },
+  {
+   "id": "chest_acolyte_vestment",
+   "slot": "chest",
+   "label": "Acolyte Vestment",
+   "style": null,
+   "sheet": "items/chest_acolyte_vestment.png",
+   "atlas": "items/chest_acolyte_vestment.json",
+   "icon": "chest_acolyte_vestment.png"
+  },
+  {
+   "id": "chest_priests_chain",
+   "slot": "chest",
+   "label": "Priest's Chain",
+   "style": null,
+   "sheet": "items/chest_priests_chain.png",
+   "atlas": "items/chest_priests_chain.json",
+   "icon": "chest_priests_chain.png"
+  },
+  {
+   "id": "chest_high_cleric",
+   "slot": "chest",
+   "label": "High Cleric Regalia",
+   "style": null,
+   "sheet": "items/chest_high_cleric.png",
+   "atlas": "items/chest_high_cleric.json",
+   "icon": "chest_high_cleric.png"
+  },
+  {
+   "id": "legs_rusted_mail",
+   "slot": "legs",
+   "label": "Rusted Leggings",
+   "style": "pants",
+   "sheet": "items/legs_rusted_mail.png",
+   "atlas": "items/legs_rusted_mail.json",
+   "icon": "legs_rusted_mail.png"
+  },
+  {
+   "id": "legs_iron_plate",
+   "slot": "legs",
+   "label": "Iron Greaves",
+   "style": "pants",
+   "sheet": "items/legs_iron_plate.png",
+   "atlas": "items/legs_iron_plate.json",
+   "icon": "legs_iron_plate.png"
+  },
+  {
+   "id": "legs_valhalla",
+   "slot": "legs",
+   "label": "Valhalla Greaves",
+   "style": "pants",
+   "sheet": "items/legs_valhalla.png",
+   "atlas": "items/legs_valhalla.json",
+   "icon": "legs_valhalla.png"
+  },
+  {
+   "id": "legs_travelers",
+   "slot": "legs",
+   "label": "Traveler's Trousers",
+   "style": "pants",
+   "sheet": "items/legs_travelers.png",
+   "atlas": "items/legs_travelers.json",
+   "icon": "legs_travelers.png"
+  },
+  {
+   "id": "legs_scouts",
+   "slot": "legs",
+   "label": "Scout's Leggings",
+   "style": "pants",
+   "sheet": "items/legs_scouts.png",
+   "atlas": "items/legs_scouts.json",
+   "icon": "legs_scouts.png"
+  },
+  {
+   "id": "legs_wardens",
+   "slot": "legs",
+   "label": "Warden's Leggings",
+   "style": "pants",
+   "sheet": "items/legs_wardens.png",
+   "atlas": "items/legs_wardens.json",
+   "icon": "legs_wardens.png"
+  },
+  {
+   "id": "legs_apprentice_robe",
+   "slot": "legs",
+   "label": "Apprentice Skirts",
+   "style": "robe",
+   "sheet": "items/legs_apprentice_robe.png",
+   "atlas": "items/legs_apprentice_robe.json",
+   "icon": "legs_apprentice_robe.png"
+  },
+  {
+   "id": "legs_adept_robe",
+   "slot": "legs",
+   "label": "Adept Skirts",
+   "style": "robe",
+   "sheet": "items/legs_adept_robe.png",
+   "atlas": "items/legs_adept_robe.json",
+   "icon": "legs_adept_robe.png"
+  },
+  {
+   "id": "legs_archmage_robe",
+   "slot": "legs",
+   "label": "Archmage Skirts",
+   "style": "robe",
+   "sheet": "items/legs_archmage_robe.png",
+   "atlas": "items/legs_archmage_robe.json",
+   "icon": "legs_archmage_robe.png"
+  },
+  {
+   "id": "legs_acolyte_robe",
+   "slot": "legs",
+   "label": "Acolyte Skirts",
+   "style": "robe",
+   "sheet": "items/legs_acolyte_robe.png",
+   "atlas": "items/legs_acolyte_robe.json",
+   "icon": "legs_acolyte_robe.png"
+  },
+  {
+   "id": "legs_priests",
+   "slot": "legs",
+   "label": "Priest's Leggings",
+   "style": "pants",
+   "sheet": "items/legs_priests.png",
+   "atlas": "items/legs_priests.json",
+   "icon": "legs_priests.png"
+  },
+  {
+   "id": "legs_high_cleric_robe",
+   "slot": "legs",
+   "label": "High Cleric Skirts",
+   "style": "robe",
+   "sheet": "items/legs_high_cleric_robe.png",
+   "atlas": "items/legs_high_cleric_robe.json",
+   "icon": "legs_high_cleric_robe.png"
+  },
+  {
+   "id": "gloves_worn_leather",
+   "slot": "gloves",
+   "label": "Worn Leather Gloves",
+   "style": null,
+   "sheet": "items/gloves_worn_leather.png",
+   "atlas": "items/gloves_worn_leather.json",
+   "icon": "gloves_worn_leather.png"
+  },
+  {
+   "id": "gloves_iron_gauntlets",
+   "slot": "gloves",
+   "label": "Iron Gauntlets",
+   "style": null,
+   "sheet": "items/gloves_iron_gauntlets.png",
+   "atlas": "items/gloves_iron_gauntlets.json",
+   "icon": "gloves_iron_gauntlets.png"
+  },
+  {
+   "id": "gloves_valhalla_gauntlets",
+   "slot": "gloves",
+   "label": "Valhalla Gauntlets",
+   "style": null,
+   "sheet": "items/gloves_valhalla_gauntlets.png",
+   "atlas": "items/gloves_valhalla_gauntlets.json",
+   "icon": "gloves_valhalla_gauntlets.png"
+  },
+  {
+   "id": "gloves_ranger_bracers",
+   "slot": "gloves",
+   "label": "Ranger's Bracers",
+   "style": null,
+   "sheet": "items/gloves_ranger_bracers.png",
+   "atlas": "items/gloves_ranger_bracers.json",
+   "icon": "gloves_ranger_bracers.png"
+  },
+  {
+   "id": "gloves_cloth_wraps",
+   "slot": "gloves",
+   "label": "Cloth Wraps",
+   "style": null,
+   "sheet": "items/gloves_cloth_wraps.png",
+   "atlas": "items/gloves_cloth_wraps.json",
+   "icon": "gloves_cloth_wraps.png"
+  },
+  {
+   "id": "gloves_blessed",
+   "slot": "gloves",
+   "label": "Blessed Gloves",
+   "style": null,
+   "sheet": "items/gloves_blessed.png",
+   "atlas": "items/gloves_blessed.json",
+   "icon": "gloves_blessed.png"
+  },
+  {
+   "id": "boots_worn",
+   "slot": "boots",
+   "label": "Worn Boots",
+   "style": null,
+   "sheet": "items/boots_worn.png",
+   "atlas": "items/boots_worn.json",
+   "icon": "boots_worn.png"
+  },
+  {
+   "id": "boots_iron_sabatons",
+   "slot": "boots",
+   "label": "Iron Sabatons",
+   "style": null,
+   "sheet": "items/boots_iron_sabatons.png",
+   "atlas": "items/boots_iron_sabatons.json",
+   "icon": "boots_iron_sabatons.png"
+  },
+  {
+   "id": "boots_valhalla_sabatons",
+   "slot": "boots",
+   "label": "Valhalla Sabatons",
+   "style": null,
+   "sheet": "items/boots_valhalla_sabatons.png",
+   "atlas": "items/boots_valhalla_sabatons.json",
+   "icon": "boots_valhalla_sabatons.png"
+  },
+  {
+   "id": "boots_ranger",
+   "slot": "boots",
+   "label": "Ranger's Boots",
+   "style": null,
+   "sheet": "items/boots_ranger.png",
+   "atlas": "items/boots_ranger.json",
+   "icon": "boots_ranger.png"
+  },
+  {
+   "id": "boots_cloth_slippers",
+   "slot": "boots",
+   "label": "Cloth Slippers",
+   "style": null,
+   "sheet": "items/boots_cloth_slippers.png",
+   "atlas": "items/boots_cloth_slippers.json",
+   "icon": "boots_cloth_slippers.png"
+  },
+  {
+   "id": "boots_blessed",
+   "slot": "boots",
+   "label": "Blessed Boots",
+   "style": null,
+   "sheet": "items/boots_blessed.png",
+   "atlas": "items/boots_blessed.json",
+   "icon": "boots_blessed.png"
+  },
+  {
+   "id": "sword_iron",
+   "slot": "mainhand",
+   "label": "Iron Sword",
+   "style": "sword",
+   "sheet": "items/sword_iron.png",
+   "atlas": "items/sword_iron.json",
+   "icon": "sword_iron.png"
+  },
+  {
+   "id": "sword_steel",
+   "slot": "mainhand",
+   "label": "Steel Sword",
+   "style": "sword",
+   "sheet": "items/sword_steel.png",
+   "atlas": "items/sword_steel.json",
+   "icon": "sword_steel.png"
+  },
+  {
+   "id": "greatsword_valhalla",
+   "slot": "mainhand",
+   "label": "Valhalla Greatsword",
+   "style": "greatsword",
+   "sheet": "items/greatsword_valhalla.png",
+   "atlas": "items/greatsword_valhalla.json",
+   "icon": "greatsword_valhalla.png"
+  },
+  {
+   "id": "bow_hunting",
+   "slot": "mainhand",
+   "label": "Hunting Bow",
+   "style": "bow",
+   "sheet": "items/bow_hunting.png",
+   "atlas": "items/bow_hunting.json",
+   "icon": "bow_hunting.png"
+  },
+  {
+   "id": "bow_scouts",
+   "slot": "mainhand",
+   "label": "Scout's Bow",
+   "style": "bow",
+   "sheet": "items/bow_scouts.png",
+   "atlas": "items/bow_scouts.json",
+   "icon": "bow_scouts.png"
+  },
+  {
+   "id": "bow_warden_longbow",
+   "slot": "mainhand",
+   "label": "Warden's Longbow",
+   "style": "bow",
+   "sheet": "items/bow_warden_longbow.png",
+   "atlas": "items/bow_warden_longbow.json",
+   "icon": "bow_warden_longbow.png"
+  },
+  {
+   "id": "staff_apprentice",
+   "slot": "mainhand",
+   "label": "Apprentice Staff",
+   "style": "staff",
+   "sheet": "items/staff_apprentice.png",
+   "atlas": "items/staff_apprentice.json",
+   "icon": "staff_apprentice.png"
+  },
+  {
+   "id": "staff_adept",
+   "slot": "mainhand",
+   "label": "Adept Staff",
+   "style": "staff",
+   "sheet": "items/staff_adept.png",
+   "atlas": "items/staff_adept.json",
+   "icon": "staff_adept.png"
+  },
+  {
+   "id": "staff_archmage",
+   "slot": "mainhand",
+   "label": "Archmage Staff",
+   "style": "staff",
+   "sheet": "items/staff_archmage.png",
+   "atlas": "items/staff_archmage.json",
+   "icon": "staff_archmage.png"
+  },
+  {
+   "id": "mace_wooden",
+   "slot": "mainhand",
+   "label": "Wooden Mace",
+   "style": "mace",
+   "sheet": "items/mace_wooden.png",
+   "atlas": "items/mace_wooden.json",
+   "icon": "mace_wooden.png"
+  },
+  {
+   "id": "mace_priests",
+   "slot": "mainhand",
+   "label": "Priest's Mace",
+   "style": "mace",
+   "sheet": "items/mace_priests.png",
+   "atlas": "items/mace_priests.json",
+   "icon": "mace_priests.png"
+  },
+  {
+   "id": "mace_radiant",
+   "slot": "mainhand",
+   "label": "Radiant Mace",
+   "style": "mace",
+   "sheet": "items/mace_radiant.png",
+   "atlas": "items/mace_radiant.json",
+   "icon": "mace_radiant.png"
+  },
+  {
+   "id": "shield_buckler_iron",
+   "slot": "offhand",
+   "label": "Iron Buckler",
+   "style": "buckler",
+   "sheet": "items/shield_buckler_iron.png",
+   "atlas": "items/shield_buckler_iron.json",
+   "icon": "shield_buckler_iron.png"
+  },
+  {
+   "id": "shield_kite_iron",
+   "slot": "offhand",
+   "label": "Iron Kite Shield",
+   "style": "kite",
+   "sheet": "items/shield_kite_iron.png",
+   "atlas": "items/shield_kite_iron.json",
+   "icon": "shield_kite_iron.png"
+  },
+  {
+   "id": "shield_tower_valhalla",
+   "slot": "offhand",
+   "label": "Valhalla Tower Shield",
+   "style": "tower",
+   "sheet": "items/shield_tower_valhalla.png",
+   "atlas": "items/shield_tower_valhalla.json",
+   "icon": "shield_tower_valhalla.png"
+  },
+  {
+   "id": "shield_buckler_priest",
+   "slot": "offhand",
+   "label": "Priest's Buckler",
+   "style": "buckler",
+   "sheet": "items/shield_buckler_priest.png",
+   "atlas": "items/shield_buckler_priest.json",
+   "icon": "shield_buckler_priest.png"
+  },
+  {
+   "id": "shield_kite_blessed",
+   "slot": "offhand",
+   "label": "Blessed Kite Shield",
+   "style": "kite",
+   "sheet": "items/shield_kite_blessed.png",
+   "atlas": "items/shield_kite_blessed.json",
+   "icon": "shield_kite_blessed.png"
+  },
+  {
+   "id": "cape_valhalla",
+   "slot": "back",
+   "label": "Valhalla Cape",
+   "style": "cape",
+   "sheet": "items/cape_valhalla.png",
+   "atlas": "items/cape_valhalla.json",
+   "icon": "cape_valhalla.png"
+  },
+  {
+   "id": "cloak_warden",
+   "slot": "back",
+   "label": "Warden's Cloak",
+   "style": "cloak",
+   "sheet": "items/cloak_warden.png",
+   "atlas": "items/cloak_warden.json",
+   "icon": "cloak_warden.png"
+  },
+  {
+   "id": "mantle_archmage",
+   "slot": "back",
+   "label": "Archmage Mantle",
+   "style": "cloak",
+   "sheet": "items/mantle_archmage.png",
+   "atlas": "items/mantle_archmage.json",
+   "icon": "mantle_archmage.png"
+  },
+  {
+   "id": "mantle_high_cleric",
+   "slot": "back",
+   "label": "High Cleric Mantle",
+   "style": "cloak",
+   "sheet": "items/mantle_high_cleric.png",
+   "atlas": "items/mantle_high_cleric.json",
+   "icon": "mantle_high_cleric.png"
+  },
+  {
+   "id": "quiver_rangers",
+   "slot": "back",
+   "label": "Ranger's Quiver",
+   "style": "quiver",
+   "sheet": "items/quiver_rangers.png",
+   "atlas": "items/quiver_rangers.json",
+   "icon": "quiver_rangers.png"
+  }
+ ],
+ "presets": [
+  {
+   "id": "warrior_01_rusted_mail",
+   "label": "Rusted Mail",
+   "cls": "warrior",
+   "tier": 1,
+   "body": "body_tan",
+   "slots": {
+    "helm": "helm_iron_open",
+    "chest": "chest_rusted_mail",
+    "legs": "legs_rusted_mail",
+    "gloves": "gloves_worn_leather",
+    "boots": "boots_worn",
+    "mainhand": "sword_iron",
+    "offhand": "shield_buckler_iron"
+   }
+  },
+  {
+   "id": "warrior_02_iron_plate",
+   "label": "Iron Plate",
+   "cls": "warrior",
+   "tier": 2,
+   "body": "body_tan",
+   "slots": {
+    "helm": "helm_iron_full",
+    "chest": "chest_iron_plate",
+    "legs": "legs_iron_plate",
+    "gloves": "gloves_iron_gauntlets",
+    "boots": "boots_iron_sabatons",
+    "mainhand": "sword_steel",
+    "offhand": "shield_kite_iron"
+   }
+  },
+  {
+   "id": "warrior_03_valhalla_plate",
+   "label": "Valhalla Plate",
+   "cls": "warrior",
+   "tier": 3,
+   "body": "body_tan",
+   "slots": {
+    "helm": "helm_valhalla_horned",
+    "chest": "chest_valhalla_plate",
+    "legs": "legs_valhalla",
+    "gloves": "gloves_valhalla_gauntlets",
+    "boots": "boots_valhalla_sabatons",
+    "mainhand": "greatsword_valhalla",
+    "offhand": "shield_tower_valhalla",
+    "back": "cape_valhalla"
+   }
+  },
+  {
+   "id": "ranger_01_travelers_leathers",
+   "label": "Traveler's Leathers",
+   "cls": "ranger",
+   "tier": 1,
+   "body": "body_fair",
+   "slots": {
+    "chest": "chest_travelers_jerkin",
+    "legs": "legs_travelers",
+    "gloves": "gloves_ranger_bracers",
+    "boots": "boots_ranger",
+    "mainhand": "bow_hunting",
+    "back": "quiver_rangers"
+   }
+  },
+  {
+   "id": "ranger_02_scouts_hide",
+   "label": "Scout's Hide",
+   "cls": "ranger",
+   "tier": 2,
+   "body": "body_fair",
+   "slots": {
+    "helm": "hood_scout",
+    "chest": "chest_scouts_hide",
+    "legs": "legs_scouts",
+    "gloves": "gloves_ranger_bracers",
+    "boots": "boots_ranger",
+    "mainhand": "bow_scouts",
+    "back": "quiver_rangers"
+   }
+  },
+  {
+   "id": "ranger_03_wardens_garb",
+   "label": "Warden's Garb",
+   "cls": "ranger",
+   "tier": 3,
+   "body": "body_fair",
+   "slots": {
+    "helm": "hood_warden",
+    "chest": "chest_wardens_garb",
+    "legs": "legs_wardens",
+    "gloves": "gloves_ranger_bracers",
+    "boots": "boots_ranger",
+    "mainhand": "bow_warden_longbow",
+    "back": "cloak_warden"
+   }
+  },
+  {
+   "id": "wizard_01_apprentice_robe",
+   "label": "Apprentice Robe",
+   "cls": "wizard",
+   "tier": 1,
+   "body": "body_fair",
+   "slots": {
+    "chest": "chest_apprentice_robe",
+    "legs": "legs_apprentice_robe",
+    "gloves": "gloves_cloth_wraps",
+    "boots": "boots_cloth_slippers",
+    "mainhand": "staff_apprentice"
+   }
+  },
+  {
+   "id": "wizard_02_adept_robe",
+   "label": "Adept Robe",
+   "cls": "wizard",
+   "tier": 2,
+   "body": "body_fair",
+   "slots": {
+    "helm": "hat_adept",
+    "chest": "chest_adept_robe",
+    "legs": "legs_adept_robe",
+    "gloves": "gloves_cloth_wraps",
+    "boots": "boots_cloth_slippers",
+    "mainhand": "staff_adept"
+   }
+  },
+  {
+   "id": "wizard_03_archmage_robe",
+   "label": "Archmage Robe",
+   "cls": "wizard",
+   "tier": 3,
+   "body": "body_elder",
+   "slots": {
+    "helm": "hat_archmage",
+    "chest": "chest_archmage_robe",
+    "legs": "legs_archmage_robe",
+    "gloves": "gloves_cloth_wraps",
+    "boots": "boots_cloth_slippers",
+    "mainhand": "staff_archmage",
+    "back": "mantle_archmage"
+   }
+  },
+  {
+   "id": "cleric_01_acolyte_vestments",
+   "label": "Acolyte Vestments",
+   "cls": "cleric",
+   "tier": 1,
+   "body": "body_fair",
+   "slots": {
+    "chest": "chest_acolyte_vestment",
+    "legs": "legs_acolyte_robe",
+    "gloves": "gloves_cloth_wraps",
+    "boots": "boots_cloth_slippers",
+    "mainhand": "mace_wooden"
+   }
+  },
+  {
+   "id": "cleric_02_priests_chain",
+   "label": "Priest's Chain",
+   "cls": "cleric",
+   "tier": 2,
+   "body": "body_fair",
+   "slots": {
+    "helm": "hood_priest",
+    "chest": "chest_priests_chain",
+    "legs": "legs_priests",
+    "gloves": "gloves_blessed",
+    "boots": "boots_blessed",
+    "mainhand": "mace_priests",
+    "offhand": "shield_buckler_priest"
+   }
+  },
+  {
+   "id": "cleric_03_high_cleric_regalia",
+   "label": "High Cleric Regalia",
+   "cls": "cleric",
+   "tier": 3,
+   "body": "body_fair",
+   "slots": {
+    "helm": "mitre_high_cleric",
+    "chest": "chest_high_cleric",
+    "legs": "legs_high_cleric_robe",
+    "gloves": "gloves_blessed",
+    "boots": "boots_blessed",
+    "mainhand": "mace_radiant",
+    "offhand": "shield_kite_blessed",
+    "back": "mantle_high_cleric"
+   }
+  }
+ ]
+}

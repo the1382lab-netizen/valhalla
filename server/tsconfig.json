@@ -10,5 +10,5 @@
       "@valhalla/shared": ["../shared/src/index.ts"]
     }
   },
-  "include": ["src", "../shared/src"]
+  "include": ["src", "scripts", "../shared/src"]
 }

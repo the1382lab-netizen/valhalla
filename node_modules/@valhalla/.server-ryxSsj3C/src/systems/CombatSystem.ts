@@ -4,6 +4,7 @@ import { ProjectileState } from '../schema/ProjectileState.js';
 import { NPCState } from '../schema/NPCState.js';
 import { CollisionSystem } from './CollisionSystem.js';
 import type { NPCSystem } from './NPCSystem.js';
+import { DataManager } from './DataManager.js';
 import {
   PROJECTILE_SPEED,
   PROJECTILE_RADIUS,
@@ -67,13 +68,15 @@ export class CombatSystem {
 
     // Compute projectile damage based on class type
     const classId = player.classId as ClassId;
+    const weaponItem = player.equipWeapon ? DataManager.instance.getItem(player.equipWeapon) : undefined;
+    const weaponAttackDamage = weaponItem?.attackDamage ?? 0;
     let damage: number;
     let damageType: DamageType;
     if (isRangedMagic(classId)) {
-      damage = computeSpellDamage(stats?.intelligence ?? 10, BASE_SPELL_DAMAGE);
+      damage = computeSpellDamage(stats?.intelligence ?? 10, BASE_SPELL_DAMAGE + weaponAttackDamage);
       damageType = 'magical';
     } else {
-      damage = computePhysicalDamage(stats?.strength ?? 10, BASE_RANGED_DAMAGE);
+      damage = computePhysicalDamage(stats?.strength ?? 10, BASE_RANGED_DAMAGE + weaponAttackDamage);
       damageType = 'physical';
     }
 
@@ -125,8 +128,9 @@ export class CombatSystem {
       data: { attackerId: attacker.id, angle: attacker.aimAngle },
     });
 
-    // Compute melee damage from strength
-    const rawDamage = computePhysicalDamage(stats?.strength ?? 10, BASE_MELEE_DAMAGE);
+    // Compute melee damage from strength + equipped weapon's attack damage bonus
+    const meleeWeapon = attacker.equipWeapon ? DataManager.instance.getItem(attacker.equipWeapon) : undefined;
+    const rawDamage = computePhysicalDamage(stats?.strength ?? 10, BASE_MELEE_DAMAGE + (meleeWeapon?.attackDamage ?? 0));
 
     // Check all players in range and within the arc
     players.forEach((target, targetId) => {

@@ -53,6 +53,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'plate',
         baseSpeed: 144,
         canUseMana: false,
+        baseMeleeAttackSpeedMs: 3600,
+        baseRangedAttackSpeedMs: 0,
         startingItems: [
             { itemId: 'iron_sword', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -98,6 +100,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'mail',
         baseSpeed: 152,
         canUseMana: true,
+        baseMeleeAttackSpeedMs: 4400,
+        baseRangedAttackSpeedMs: 0,
         startingItems: [
             { itemId: 'iron_mace', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -143,6 +147,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'leather',
         baseSpeed: 184,
         canUseMana: false,
+        baseMeleeAttackSpeedMs: 3000,
+        baseRangedAttackSpeedMs: 4000,
         startingItems: [
             { itemId: 'short_bow', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -188,6 +194,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'leather',
         baseSpeed: 168,
         canUseMana: false,
+        baseMeleeAttackSpeedMs: 2400,
+        baseRangedAttackSpeedMs: 0,
         startingItems: [
             { itemId: 'iron_dagger', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -233,6 +241,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'mail',
         baseSpeed: 152,
         canUseMana: true,
+        baseMeleeAttackSpeedMs: 4000,
+        baseRangedAttackSpeedMs: 0,
         startingItems: [
             { itemId: 'bone_totem', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },
@@ -278,6 +288,8 @@ export const CLASS_TEMPLATES = {
         allowedArmor: 'cloth',
         baseSpeed: 152,
         canUseMana: true,
+        baseMeleeAttackSpeedMs: 4800,
+        baseRangedAttackSpeedMs: 0,
         startingItems: [
             { itemId: 'oak_staff', quantity: 1, equipped: true },
             { itemId: 'health_potion', quantity: 5, equipped: false },

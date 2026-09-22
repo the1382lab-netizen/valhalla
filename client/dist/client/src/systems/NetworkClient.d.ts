@@ -1,4 +1,4 @@
-import { InputPayload, MapDataPayload, ChatMessagePayload, SpellImpactPayload } from '@valhalla/shared';
+import { InputPayload, MapDataPayload, ChatMessagePayload, SpellImpactPayload, PartyMemberInfo } from '@valhalla/shared';
 /** @deprecated Use MapDataPayload instead */
 export interface CollisionGridData {
     grid: number[];
@@ -103,7 +103,15 @@ export declare class NetworkClient {
     onActionBarData: ((data: {
         slots: string[];
     }) => void) | null;
+    onLootBagAdd: ((bag: any, bagId: string) => void) | null;
+    onLootBagRemove: ((bagId: string) => void) | null;
+    onLootBagChange: ((bag: any, bagId: string) => void) | null;
+    onLootSuccess: ((bagId: string) => void) | null;
+    private localPlayerRef;
     onChatMessage: ((data: ChatMessagePayload) => void) | null;
+    onLevelUp: ((newLevel: number) => void) | null;
+    onXpGained: ((amount: number) => void) | null;
+    onPartyUpdate: ((members: PartyMemberInfo[]) => void) | null;
     constructor();
     get sessionId(): string | undefined;
     connect(options?: {
@@ -118,7 +126,21 @@ export declare class NetworkClient {
     sendCastSkill(skillId: string, targetId?: string, groundX?: number, groundY?: number): void;
     sendCancelCast(): void;
     sendSetActionBar(slots: string[]): void;
+    /**
+     * Force-rebuild inventoryItems from the live Colyseus schema and fire
+     * onInventoryChange. Call this when you need a guaranteed UI refresh and
+     * can't rely on nested-schema onChange callbacks (e.g. after looting).
+     */
+    refreshInventory(): void;
+    sendLootItem(bagId: string, slotIndex: number, quantity: number): void;
+    sendLootAll(bagId: string): void;
     sendChatMessage(channel: 'general' | 'world' | 'whisper', message: string, targetName?: string): void;
-    disconnect(): void;
+    sendStartAutoAttack(skillId: string, targetId: string): void;
+    sendStopAutoAttack(): void;
+    sendPartyInvite(targetName: string): void;
+    sendPartyAccept(): void;
+    sendPartyDecline(): void;
+    sendPartyLeave(): void;
+    disconnect(): Promise<void>;
 }
 //# sourceMappingURL=NetworkClient.d.ts.map

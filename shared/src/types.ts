@@ -9,10 +9,23 @@ export interface InputPayload {
   aimAngle: number;
   /** Monotonically increasing input sequence number */
   seq: number;
-  /** Fire a ranged projectile */
-  fire: boolean;
-  /** Melee attack */
-  melee: boolean;
+}
+
+// ── Auto-Attack Payloads ───────────────────────────────────
+export interface StartAutoAttackPayload {
+  skillId: string;     // SkillId.MELEE_ATTACK or SkillId.RANGED_ATTACK
+  targetId: string;    // session ID of target (player or NPC)
+}
+
+export interface AutoAttackHitPayload {
+  attackerId: string;
+  targetId: string;
+  damage: number;
+  damageType: 'physical' | 'magical';
+  isCrit: boolean;
+  isBlock: boolean;
+  isDodge: boolean;
+  isMiss: boolean;
 }
 
 // ── Player State (mirrored in Colyseus schema) ─────────────
@@ -130,6 +143,16 @@ export enum MessageType {
   LOOT_ALL = 'lootAll',
   // Server → client confirmation: refresh loot panel + inventory immediately
   LOOT_SUCCESS = 'lootSuccess',
+
+  // ── Auto-Attack ──
+  START_AUTO_ATTACK = 'startAutoAttack',
+  STOP_AUTO_ATTACK = 'stopAutoAttack',
+  AUTO_ATTACK_HIT = 'autoAttackHit',
+  AUTO_ATTACK_STARTED = 'autoAttackStarted',
+  AUTO_ATTACK_STOPPED = 'autoAttackStopped',
+
+  // ── XP ──
+  XP_GAINED = 'xpGained',
 
   // ── Party ──
   PARTY_INVITE = 'partyInvite',

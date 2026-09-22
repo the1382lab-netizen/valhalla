@@ -49,7 +49,7 @@ const server = defineServer({
         app.get('/api/assets/sprites/:subfolder', (req, res) => {
             const subfolder = req.params.subfolder;
             // Only allow known subfolders to prevent directory traversal
-            if (!['equipment', 'icons'].includes(subfolder)) {
+            if (!['equipment', 'icons', 'characters'].includes(subfolder)) {
                 res.status(400).json({ error: 'Invalid subfolder' });
                 return;
             }

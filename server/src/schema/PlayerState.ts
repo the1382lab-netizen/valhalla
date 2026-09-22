@@ -1,5 +1,5 @@
 import { Schema, ArraySchema, defineTypes } from '@colyseus/schema';
-import { PLAYER_MAX_HP, SkillId } from '@valhalla/shared';
+import { PLAYER_MAX_HP, SkillId, EquipSlotType, EQUIP_SLOT_FIELD } from '@valhalla/shared';
 import type { ResolvedStats } from '@valhalla/shared';
 
 // ── Active Buff (server-only tracking) ─────────────────────
@@ -58,23 +58,43 @@ export class PlayerState extends Schema {
   castingStartedAt: number = 0;
   castingDurationMs: number = 0;
 
+  // ── Appearance (synced) ──────────────────────────────
+  /** Paperdoll base body, e.g. 'body_tan'. */
+  bodyId: string = '';
+
   // ── Equipment (synced) — empty string = nothing equipped ──
   equipWeapon: string = '';
+  equipOffhand: string = '';
   equipHelm: string = '';
   equipChest: string = '';
   equipLegs: string = '';
   equipBoots: string = '';
+  equipGloves: string = '';
+  equipBack: string = '';
   equipRing: string = '';
 
   // ── Inventory (synced) ───────────────────────────────
   inventory: ArraySchema<InventorySlotState> = new ArraySchema<InventorySlotState>();
 
+  // ── Auto-Attack State (synced) ────────────────────────
+  /** Whether auto-attack is currently active */
+  autoAttackActive: boolean = false;
+  /** Which auto-attack skill is running (melee_attack or ranged_attack) */
+  autoAttackSkillId: string = '';
+  /** Session ID of the auto-attack target */
+  autoAttackTargetId: string = '';
+
   // ── Server-only (not synced) ──────────────────────────
   inputSeq: number = 0;
+  /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
   fireCooldown: number = 0;
+  /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
   meleeCooldown: number = 0;
   invulnerableUntil: number = 0;
   respawnAt: number = 0;
+
+  /** Timestamp of next allowed auto-attack swing (server-only) */
+  nextAutoAttackAt: number = 0;
 
   // ── Skill Server-only State ───────────────────────────
   /** Skill cooldowns: skillId → timestamp when cooldown expires */
@@ -114,12 +134,19 @@ defineTypes(PlayerState, {
   castingSkillId: 'string',
   castingStartedAt: 'float64',
   castingDurationMs: 'uint16',
+  autoAttackActive: 'boolean',
+  autoAttackSkillId: 'string',
+  autoAttackTargetId: 'string',
   inputSeq: 'uint32',
+  bodyId: 'string',
   equipWeapon: 'string',
+  equipOffhand: 'string',
   equipHelm: 'string',
   equipChest: 'string',
   equipLegs: 'string',
   equipBoots: 'string',
+  equipGloves: 'string',
+  equipBack: 'string',
   equipRing: 'string',
   inventory: [InventorySlotState],
 });
@@ -147,4 +174,36 @@ export function applyShieldAbsorption(player: PlayerState, incomingDamage: numbe
   }
 
   return Math.max(0, incomingDamage - absorbed);
+}
+
+// ── Equipment slot <-> PlayerState field ─────────────────────
+//
+// The table lives in shared as `EQUIP_SLOT_FIELD` so the client builds its
+// equipment record from the same names. This annotation is the safety net:
+// because the shared map is `as const`, assigning it to `keyof PlayerState`
+// only compiles if every field name really exists on the schema. A new slot is
+// one edit in shared plus its `defineTypes` entry above.
+
+export const PLAYER_EQUIP_FIELD: Record<EquipSlotType, keyof PlayerState> = EQUIP_SLOT_FIELD;
+
+/** Read the equipped itemId for a slot. Empty string = nothing equipped. */
+export function getEquipped(player: PlayerState, slot: EquipSlotType): string {
+  const field = PLAYER_EQUIP_FIELD[slot];
+  return field ? ((player[field] as unknown as string) ?? '') : '';
+}
+
+/** Set the equipped itemId for a slot. */
+export function setEquipped(player: PlayerState, slot: EquipSlotType, itemId: string): void {
+  const field = PLAYER_EQUIP_FIELD[slot];
+  if (field) (player as unknown as Record<string, string>)[field as string] = itemId;
+}
+
+/** Every non-empty equipped slot, for persistence. */
+export function equippedEntries(player: PlayerState): { slotType: EquipSlotType; itemId: string }[] {
+  const out: { slotType: EquipSlotType; itemId: string }[] = [];
+  for (const slot of Object.keys(PLAYER_EQUIP_FIELD) as EquipSlotType[]) {
+    const itemId = getEquipped(player, slot);
+    if (itemId) out.push({ slotType: slot, itemId });
+  }
+  return out;
 }

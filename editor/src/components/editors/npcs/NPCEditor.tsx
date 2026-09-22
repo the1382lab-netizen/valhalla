@@ -436,16 +436,21 @@ export const NPCEditor: React.FC = () => {
 
               <div className="form-row">
                 <div className="form-group">
-                  <label className="form-label">Respawn (ms)</label>
+                  <label className="form-label">Respawn time (seconds)</label>
                   <input
                     className="form-input"
                     type="number"
-                    min="0"
-                    value={selectedNpc.respawnMs}
-                    onChange={(e) => handleUpdateNpc({ respawnMs: parseInt(e.target.value, 10) || 60000 })}
+                    min="1"
+                    step="1"
+                    value={Math.round((selectedNpc.respawnMs || 0) / 1000)}
+                    onChange={(e) => {
+                      const seconds = parseFloat(e.target.value);
+                      handleUpdateNpc({ respawnMs: Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds * 1000) : 60000 });
+                    }}
                   />
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                    {(selectedNpc.respawnMs / 1000).toFixed(1)}s
+                    From death to the next spawn (EverQuest-style). The default for every NPC Spawn Point
+                    using this template; a spawn point in Unreal can override it (Respawn Time Override).
                   </div>
                 </div>
 

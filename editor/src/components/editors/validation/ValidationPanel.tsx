@@ -19,6 +19,15 @@ export const ValidationPanel: React.FC = () => {
   const [issues, setIssues] = useState<ValidationIssue[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  /** Valid Valhalla 2.0 art ids (UE equipment meshes). Empty = list unavailable → rule skipped. */
+  const [meshIds, setMeshIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch('/api/assets/mesh-ids')
+      .then(r => r.json())
+      .then(data => setMeshIds(data.ids || []))
+      .catch(() => setMeshIds([]));
+  }, []);
 
   const validate = () => {
     setIsRunning(true);
@@ -49,6 +58,27 @@ export const ValidationPanel: React.FC = () => {
           id: itemId,
           message: `Item "${item.name || itemId}" missing category`,
         });
+      }
+
+      // ── Valhalla 2.0 art: UE resolves meshId ?? spriteId against the
+      // equipment import folder. Skipped when the art id list is unavailable.
+      if (meshIds.length > 0 && item.category === 'equipment') {
+        const artId: string | undefined = item.meshId || item.spriteId;
+        if (!artId) {
+          foundIssues.push({
+            severity: 'warning',
+            category: 'items',
+            id: itemId,
+            message: `Equipment "${item.name || itemId}" has no meshId or spriteId — Unreal has no mesh to show`,
+          });
+        } else if (!meshIds.includes(artId)) {
+          foundIssues.push({
+            severity: 'warning',
+            category: 'items',
+            id: itemId,
+            message: `Equipment "${item.name || itemId}" art id "${artId}" (${item.meshId ? 'meshId' : 'spriteId'}) is not one of the ${meshIds.length} meshes in Import/Characters/Equipment`,
+          });
+        }
       }
     });
 
@@ -185,6 +215,23 @@ export const ValidationPanel: React.FC = () => {
             message: `Class "${cls.name || classId}" blockRating not in [0,1]: ${cls.baseStats.blockRating}`,
           });
         }
+      }
+
+      // Validate vision range (line-of-sight distance in UE units / cm)
+      if (cls.visionRange === undefined || cls.visionRange === null || cls.visionRange <= 0) {
+        foundIssues.push({
+          severity: 'error',
+          category: 'classes',
+          id: classId,
+          message: `Class "${cls.name || classId}" has missing or non-positive visionRange (${cls.visionRange})`,
+        });
+      } else if (cls.visionRange > 3000) {
+        foundIssues.push({
+          severity: 'warning',
+          category: 'classes',
+          id: classId,
+          message: `Class "${cls.name || classId}" visionRange is unusually large: ${cls.visionRange} cm`,
+        });
       }
 
       // Validate per-level stats
@@ -357,7 +404,7 @@ export const ValidationPanel: React.FC = () => {
 
   useEffect(() => {
     validate();
-  }, [items, skillsData, classesData, npcTemplates, lootTables, zones]);
+  }, [items, skillsData, classesData, npcTemplates, lootTables, zones, meshIds]);
 
   const issuesByCategory = useMemo(() => {
     const grouped: Record<string, ValidationIssue[]> = {

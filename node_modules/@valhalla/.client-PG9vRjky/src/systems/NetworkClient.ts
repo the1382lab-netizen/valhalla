@@ -1,4 +1,5 @@
 import { Client, Room, Callbacks } from '@colyseus/sdk';
+import { EQUIP_SLOTS, EQUIP_SLOT_FIELD } from '@valhalla/shared';
 import { SERVER_URL, ROOM_NAME, InputPayload, MessageType, MapDataPayload, ChatMessagePayload, SpellImpactPayload, PartyMemberInfo, PartyUpdatePayload } from '@valhalla/shared';
 
 /** @deprecated Use MapDataPayload instead */
@@ -112,6 +113,9 @@ export class NetworkClient {
 
   // Level-up callback
   onLevelUp: ((newLevel: number) => void) | null = null;
+
+  // XP gained callback
+  onXpGained: ((amount: number) => void) | null = null;
 
   // Party callbacks
   onPartyUpdate: ((members: PartyMemberInfo[]) => void) | null = null;
@@ -242,6 +246,10 @@ export class NetworkClient {
         this.onLevelUp?.(data.level);
       });
 
+      this.room.onMessage(MessageType.XP_GAINED, (data: { amount: number }) => {
+        this.onXpGained?.(data.amount);
+      });
+
       // Party update
       this.room.onMessage(MessageType.PARTY_UPDATE, (data: PartyUpdatePayload) => {
         this.onPartyUpdate?.(data.members);
@@ -268,14 +276,14 @@ export class NetworkClient {
         } : null;
 
         const fireEquipmentChange = isLocal ? () => {
-          this.onEquipmentChange?.({
-            weapon: player.equipWeapon ?? '',
-            helm: player.equipHelm ?? '',
-            chest: player.equipChest ?? '',
-            legs: player.equipLegs ?? '',
-            boots: player.equipBoots ?? '',
-            ring: player.equipRing ?? '',
-          });
+          // Field names come from the shared EQUIP_SLOT_FIELD table the server
+          // schema is checked against, so a new slot needs no edit here.
+          const equipment: Record<string, string> = {};
+          for (const slot of EQUIP_SLOTS) {
+            const field = EQUIP_SLOT_FIELD[slot];
+            equipment[slot] = (player as unknown as Record<string, string>)[field] ?? '';
+          }
+          this.onEquipmentChange?.(equipment);
         } : null;
 
         callbacks.onChange(player, () => {
@@ -457,12 +465,27 @@ export class NetworkClient {
     this.room?.send(MessageType.CHAT_MESSAGE, { channel, message, targetName });
   }
 
+  sendStartAutoAttack(skillId: string, targetId: string): void {
+    this.room?.send(MessageType.START_AUTO_ATTACK, { skillId, targetId });
+  }
+
+  sendStopAutoAttack(): void {
+    this.room?.send(MessageType.STOP_AUTO_ATTACK, {});
+  }
+
   sendPartyInvite(targetName: string): void { this.room?.send(MessageType.PARTY_INVITE, { targetName }); }
   sendPartyAccept(): void { this.room?.send(MessageType.PARTY_ACCEPT, {}); }
   sendPartyDecline(): void { this.room?.send(MessageType.PARTY_DECLINE, {}); }
   sendPartyLeave(): void { this.room?.send(MessageType.PARTY_LEAVE, {}); }
 
-  disconnect(): void {
-    this.room?.leave();
+  async disconnect(): Promise<void> {
+    if (this.room) {
+      try {
+        await this.room.leave();
+      } catch {
+        // Ignore errors — server may have already closed the connection
+      }
+      this.room = null;
+    }
   }
 }

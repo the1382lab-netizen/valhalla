@@ -20,12 +20,14 @@ export declare const PROJECTILE_SPEED = 400;
 export declare const PROJECTILE_RADIUS = 6;
 export declare const PROJECTILE_MAX_RANGE = 600;
 export declare const PROJECTILE_DAMAGE = 15;
+/** @deprecated Auto-attack system now uses weapon/class attack speed + dex scaling. */
 export declare const FIRE_COOLDOWN_MS = 300;
 export declare const INVULNERABILITY_MS = 500;
 export declare const RESPAWN_TIME_MS = 3000;
 export declare const MELEE_DAMAGE = 25;
 export declare const MELEE_RANGE = 60;
 export declare const MELEE_ARC: number;
+/** @deprecated Auto-attack system now uses weapon/class attack speed + dex scaling. */
 export declare const MELEE_COOLDOWN_MS = 600;
 /** Travel speed of the Fireball projectile (px/s) */
 export declare const FIREBALL_PROJECTILE_SPEED = 350;

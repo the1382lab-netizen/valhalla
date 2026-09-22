@@ -12,7 +12,21 @@ import {
   SkillTemplate,
   ResourceType,
   ClassId,
+  MELEE_RANGE,
+  PLAYER_COLLISION_RADIUS,
+  INVULNERABILITY_MS,
+  RESPAWN_TIME_MS,
+  computeAutoAttackSpeed,
+  computePhysicalDamage,
+  BASE_MELEE_DAMAGE,
+  BASE_RANGED_DAMAGE,
+  rollHit,
+  rollDodge,
+  rollBlock,
+  rollCrit,
+  applyDefenseReduction,
 } from '@valhalla/shared';
+import { applyShieldAbsorption } from '../schema/PlayerState.js';
 import { PlayerState } from '../schema/PlayerState.js';
 import { NPCState } from '../schema/NPCState.js';
 import { executeSkillEffect, SkillEvent, SkillEffectContext } from './SkillEffectHandler.js';
@@ -90,6 +104,33 @@ export interface HotTickResult {
   heal: number;
 }
 
+export interface AutoAttackStartedResult {
+  type: 'autoAttackStarted';
+  playerId: string;
+  skillId: string;
+  targetId: string;
+}
+
+export interface AutoAttackStoppedResult {
+  type: 'autoAttackStopped';
+  playerId: string;
+}
+
+export interface AutoAttackHitResult {
+  type: 'autoAttackHit';
+  attackerId: string;
+  targetId: string;
+  damage: number;
+  damageType: 'physical' | 'magical';
+  isCrit: boolean;
+  isBlock: boolean;
+  isDodge: boolean;
+  isMiss: boolean;
+  npcDied?: boolean;
+  xpReward?: number;
+  skillId?: string;
+}
+
 export type SkillSystemEvent =
   | CastStartedResult
   | CastCompleteResult
@@ -97,7 +138,10 @@ export type SkillSystemEvent =
   | CastInterruptedResult
   | BuffExpiredResult
   | DotTickResult
-  | HotTickResult;
+  | HotTickResult
+  | AutoAttackStartedResult
+  | AutoAttackStoppedResult
+  | AutoAttackHitResult;
 
 // ── Tracking cast-in-progress (server-only) ────────────────
 
@@ -300,6 +344,341 @@ export class SkillSystem {
     return events;
   }
 
+  // ── Auto-Attack System ───────────────────────────────────
+
+  /**
+   * Start auto-attacking a target.
+   */
+  startAutoAttack(
+    player: PlayerState,
+    skillId: string,
+    targetId: string,
+    allPlayers: PlayerMap,
+    allNPCs?: NPCMap,
+    now: number = Date.now(),
+  ): SkillSystemEvent[] {
+    const events: SkillSystemEvent[] = [];
+    const skill = DataManager.instance.getSkill(skillId);
+    if (!skill || !skill.isAutoAttack) {
+      return [{ type: 'castFailed', casterId: player.id, reason: 'Invalid auto-attack skill' }];
+    }
+    if (!player.alive) {
+      return [{ type: 'castFailed', casterId: player.id, reason: 'You are dead' }];
+    }
+
+    // Class check: MELEE_ATTACK has classId null (all classes), RANGED_ATTACK has classId RANGER
+    if (skill.classId !== null) {
+      const classSkills = DataManager.instance.getClassSkills(player.classId);
+      if (!classSkills.includes(skillId)) {
+        return [{ type: 'castFailed', casterId: player.id, reason: 'Your class cannot use this skill' }];
+      }
+    }
+
+    // Weapon requirement check (ranged attack requires a ranged weapon)
+    if (skill.requiresWeapon) {
+      const weaponId = player.equipWeapon;
+      if (!weaponId) {
+        return [{ type: 'castFailed', casterId: player.id, reason: 'Requires a weapon' }];
+      }
+      const weapon = DataManager.instance.getItem(weaponId);
+      if (!weapon || !weapon.isRangedWeapon) {
+        return [{ type: 'castFailed', casterId: player.id, reason: 'Requires a ranged weapon' }];
+      }
+    }
+
+    // Validate target exists and is alive
+    const target = this.resolveTarget(targetId, allPlayers, allNPCs);
+    if (!target || !target.alive) {
+      return [{ type: 'castFailed', casterId: player.id, reason: 'Invalid target' }];
+    }
+
+    // Cancel any active cast
+    if (this.activeCasts.has(player.id)) {
+      const castEvents = this.cancelCast(player, now);
+      events.push(...castEvents);
+    }
+
+    // Set auto-attack state
+    player.autoAttackActive = true;
+    player.autoAttackSkillId = skillId;
+    player.autoAttackTargetId = targetId;
+    player.nextAutoAttackAt = now; // attack immediately on first activation
+
+    events.push({
+      type: 'autoAttackStarted',
+      playerId: player.id,
+      skillId,
+      targetId,
+    });
+
+    return events;
+  }
+
+  /**
+   * Stop auto-attacking.
+   */
+  stopAutoAttack(player: PlayerState): SkillSystemEvent[] {
+    if (!player.autoAttackActive) return [];
+
+    player.autoAttackActive = false;
+    player.autoAttackSkillId = '';
+    player.autoAttackTargetId = '';
+    player.nextAutoAttackAt = 0;
+
+    return [{ type: 'autoAttackStopped', playerId: player.id }];
+  }
+
+  /**
+   * Process all auto-attacking players. Called every server tick.
+   */
+  updateAutoAttacks(
+    allPlayers: PlayerMap,
+    allNPCs: NPCMap | undefined,
+    npcDelegate: NPCCombatDelegate | undefined,
+    now: number,
+    isPartyMember?: (a: string, b: string) => boolean,
+    awardXPDelegate?: (playerId: string, amount: number) => void,
+  ): SkillSystemEvent[] {
+    const events: SkillSystemEvent[] = [];
+
+    allPlayers.forEach((player, _playerId) => {
+      if (!player.autoAttackActive) return;
+      if (!player.alive) {
+        events.push(...this.stopAutoAttack(player));
+        return;
+      }
+
+      const skill = DataManager.instance.getSkill(player.autoAttackSkillId);
+      if (!skill) {
+        events.push(...this.stopAutoAttack(player));
+        return;
+      }
+
+      // Resolve target
+      const target = this.resolveTarget(player.autoAttackTargetId, allPlayers, allNPCs);
+      if (!target || !target.alive) {
+        events.push(...this.stopAutoAttack(player));
+        return;
+      }
+
+      // Check same zone
+      if (target.zoneId !== player.zoneId) {
+        events.push(...this.stopAutoAttack(player));
+        return;
+      }
+
+      // Check range
+      const dx = target.x - player.x;
+      const dy = target.y - player.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const maxRange = skill.id === SkillId.RANGED_ATTACK ? skill.range : MELEE_RANGE + PLAYER_COLLISION_RADIUS;
+      if (dist > maxRange) {
+        // Out of range — don't stop, but don't attack (player may move back in range)
+        return;
+      }
+
+      // Pause auto-attack while the player is mid-cast.
+      // Reset the timer so the attack fires immediately when the cast completes.
+      if (player.castingSkillId) {
+        player.nextAutoAttackAt = now;
+        return;
+      }
+
+      // Check timing
+      if (now < player.nextAutoAttackAt) return;
+
+      // Compute attack speed
+      const classTemplate = DataManager.instance.classes[player.classId];
+      const stats = player.stats;
+      const dex = stats?.dexterity ?? 10;
+
+      let baseAttackSpeedMs: number;
+      const weaponId = player.equipWeapon;
+      const weapon = weaponId ? DataManager.instance.getItem(weaponId) : undefined;
+
+      if (skill.id === SkillId.RANGED_ATTACK) {
+        // Ranged: use weapon attack speed (weapon is required)
+        baseAttackSpeedMs = weapon?.attackSpeedMs ?? classTemplate?.baseRangedAttackSpeedMs ?? 2000;
+      } else {
+        // Melee: use weapon speed if available, otherwise class base
+        baseAttackSpeedMs = weapon?.attackSpeedMs ?? classTemplate?.baseMeleeAttackSpeedMs ?? 1800;
+      }
+
+      const effectiveSpeed = computeAutoAttackSpeed(baseAttackSpeedMs, dex);
+
+      // Auto-face the target
+      player.aimAngle = Math.atan2(dy, dx);
+
+      // Include weapon's flat attack damage bonus in the base damage constant
+      const weaponAttackDamage = weapon?.attackDamage ?? 0;
+
+      // Execute the attack
+      if (skill.id === SkillId.RANGED_ATTACK) {
+        // ── Ranged instant-hit ──
+        const rawDamage = computePhysicalDamage(stats?.strength ?? 10, BASE_RANGED_DAMAGE + weaponAttackDamage);
+        const hitEvents = this.executeAutoAttackOnTarget(
+          player, target, rawDamage, 'physical', dex,
+          stats?.critChance ?? 0.05, stats?.critDamage ?? 0.5,
+          now, allPlayers, allNPCs, npcDelegate, isPartyMember, awardXPDelegate,
+        );
+        events.push(...hitEvents);
+      } else {
+        // ── Melee attack ──
+        const rawDamage = computePhysicalDamage(stats?.strength ?? 10, BASE_MELEE_DAMAGE + weaponAttackDamage);
+        const hitEvents = this.executeAutoAttackOnTarget(
+          player, target, rawDamage, 'physical', dex,
+          stats?.critChance ?? 0.05, stats?.critDamage ?? 0.5,
+          now, allPlayers, allNPCs, npcDelegate, isPartyMember, awardXPDelegate,
+        );
+        events.push(...hitEvents);
+      }
+
+      // Set next attack time
+      player.nextAutoAttackAt = now + effectiveSpeed;
+    });
+
+    return events;
+  }
+
+  /**
+   * Execute a single auto-attack hit against a target (player or NPC).
+   */
+  private executeAutoAttackOnTarget(
+    attacker: PlayerState,
+    target: PlayerState | NPCState,
+    rawDamage: number,
+    damageType: 'physical' | 'magical',
+    attackerDex: number,
+    attackerCritChance: number,
+    attackerCritDamage: number,
+    now: number,
+    allPlayers: PlayerMap,
+    allNPCs?: NPCMap,
+    npcDelegate?: NPCCombatDelegate,
+    isPartyMember?: (a: string, b: string) => boolean,
+    awardXPDelegate?: (playerId: string, amount: number) => void,
+  ): SkillSystemEvent[] {
+    const events: SkillSystemEvent[] = [];
+
+    // Check if target is a player (has invulnerableUntil) or NPC
+    const isPlayerTarget = allPlayers.get(target.id) !== undefined;
+
+    if (isPlayerTarget) {
+      const playerTarget = target as PlayerState;
+
+      // Party check — no friendly fire
+      if (isPartyMember?.(attacker.id, playerTarget.id)) return events;
+
+      // Invulnerability check
+      if (now < playerTarget.invulnerableUntil) return events;
+
+      // 1. Hit roll
+      if (!rollHit(attackerDex)) {
+        events.push({
+          type: 'autoAttackHit',
+          attackerId: attacker.id,
+          targetId: playerTarget.id,
+          damage: 0,
+          damageType,
+          isCrit: false,
+          isBlock: false,
+          isDodge: false,
+          isMiss: true,
+        });
+        return events;
+      }
+
+      // 2. Dodge roll
+      const tStats = playerTarget.stats;
+      if (rollDodge(tStats?.dodgeRating ?? 0)) {
+        events.push({
+          type: 'autoAttackHit',
+          attackerId: attacker.id,
+          targetId: playerTarget.id,
+          damage: 0,
+          damageType,
+          isCrit: false,
+          isBlock: false,
+          isDodge: true,
+          isMiss: false,
+        });
+        return events;
+      }
+
+      // 3. Crit roll
+      const crit = rollCrit(attackerCritChance, attackerCritDamage);
+      let damage = rawDamage * crit.multiplier;
+
+      // 4. Block roll
+      let blocked = false;
+      if (rollBlock(tStats?.blockRating ?? 0)) {
+        damage *= 0.5;
+        blocked = true;
+      }
+
+      // 5. Defense reduction
+      const defense = damageType === 'physical'
+        ? (tStats?.physicalDefense ?? 0)
+        : (tStats?.spellResist ?? 0);
+      damage = applyDefenseReduction(damage, defense);
+      damage = Math.max(1, Math.floor(damage));
+
+      // Apply shield absorption
+      damage = applyShieldAbsorption(playerTarget, damage);
+
+      // Apply damage
+      playerTarget.hp -= damage;
+      playerTarget.invulnerableUntil = now + INVULNERABILITY_MS;
+
+      events.push({
+        type: 'autoAttackHit',
+        attackerId: attacker.id,
+        targetId: playerTarget.id,
+        damage,
+        damageType,
+        isCrit: crit.isCrit,
+        isBlock: blocked,
+        isDodge: false,
+        isMiss: false,
+      });
+
+      // Death check
+      if (playerTarget.hp <= 0) {
+        playerTarget.hp = 0;
+        playerTarget.alive = false;
+        playerTarget.respawnAt = now + RESPAWN_TIME_MS;
+        // Stop auto-attack on the now-dead target
+        // (will be caught next tick by alive check)
+      }
+    } else {
+      // NPC target
+      if (!npcDelegate) return events;
+      const npcTarget = target as NPCState;
+      const { died, xpReward } = npcDelegate.damageNPC(npcTarget.id, rawDamage, attacker.id, now);
+
+      events.push({
+        type: 'autoAttackHit',
+        attackerId: attacker.id,
+        targetId: npcTarget.id,
+        damage: rawDamage,
+        damageType,
+        isCrit: false,
+        isBlock: false,
+        isDodge: false,
+        isMiss: false,
+        skillId: attacker.autoAttackSkillId,
+        npcDied: died,
+        xpReward: died ? xpReward : 0,
+      });
+
+      if (died && awardXPDelegate) {
+        awardXPDelegate(attacker.id, xpReward);
+      }
+    }
+
+    return events;
+  }
+
   // ── Private Methods ──────────────────────────────────────
 
   private validateCast(
@@ -315,10 +694,12 @@ export class SkillSystem {
     // Alive check
     if (!caster.alive) return 'You are dead';
 
-    // Class check
-    const classSkills = DataManager.instance.getClassSkills(caster.classId);
-    if (!classSkills || !classSkills.includes(skill.id)) {
-      return 'Your class cannot use this skill';
+    // Class check — skills with classId: null are available to all classes
+    if (skill.classId !== null) {
+      const classSkills = DataManager.instance.getClassSkills(caster.classId);
+      if (!classSkills || !classSkills.includes(skill.id)) {
+        return 'Your class cannot use this skill';
+      }
     }
 
     // Level check

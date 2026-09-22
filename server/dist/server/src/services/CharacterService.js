@@ -3,8 +3,19 @@
  * Uses raw sql.js queries (no ORM).
  */
 import { getDb, saveToDisk } from '../db/index.js';
-import { ALL_CLASS_IDS, computeDerivedStats, EquipSlotType, MAX_CHARACTERS_PER_USER, ZoneId, ZONE_REGISTRY, CLASS_TEMPLATES, ITEM_CATALOG, } from '@valhalla/shared';
+import { ALL_CLASS_IDS, computeDerivedStats, EquipSlotType, MAX_CHARACTERS_PER_USER, ZoneId, ZONE_REGISTRY, CLASS_TEMPLATES, ITEM_CATALOG, DEFAULT_BODY_ID, } from '@valhalla/shared';
 import { DataManager } from '../systems/DataManager.js';
+// ── Helper: default paperdoll body for a class ──────────────
+function defaultBodyId(classId) {
+    const dm = (() => { try {
+        return DataManager.instance;
+    }
+    catch {
+        return null;
+    } })();
+    const template = (dm?.classes[classId]) ?? CLASS_TEMPLATES[classId];
+    return template?.bodyId || DEFAULT_BODY_ID;
+}
 // ── Helper: query single row ────────────────────────────────
 function queryOne(sql, params = []) {
     const db = getDb();
@@ -76,8 +87,8 @@ export function createCharacter(userId, name, classId) {
     const spawnX = startZone.defaultSpawn.x;
     const spawnY = startZone.defaultSpawn.y;
     // Insert character
-    db.run(`INSERT INTO characters (user_id, name, class_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
-     VALUES (?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`, [userId, trimmedName, classId, stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now]);
+    db.run(`INSERT INTO characters (user_id, name, class_id, body_id, level, xp, hp, mana, position_x, position_y, zone_id, alive, created_at, updated_at)
+     VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?, ?, ?, 1, ?, ?)`, [userId, trimmedName, classId, defaultBodyId(classId), stats.maxHp, stats.maxMana, spawnX, spawnY, ZoneId.GRASSLANDS, now, now]);
     const charIdResult = db.exec('SELECT last_insert_rowid() as id');
     const charId = charIdResult[0].values[0][0];
     // Insert starting items from the class template (data-driven; falls back to hardcoded CLASS_TEMPLATES)
@@ -151,6 +162,7 @@ export function loadCharacter(characterId, userId) {
         userId: char.user_id,
         name: char.name,
         classId: char.class_id,
+        bodyId: char.body_id || defaultBodyId(char.class_id),
         level: char.level,
         xp: char.xp,
         hp: char.hp,

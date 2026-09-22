@@ -2,13 +2,37 @@ import Phaser from 'phaser';
 import { NetworkClient, } from '../systems/NetworkClient.js';
 import { InputManager } from '../systems/InputManager.js';
 import { EntityRenderer } from '../systems/EntityRenderer.js';
-import { PLAYER_COLLISION_RADIUS, RESPAWN_TIME_MS, normalise, RARITY_COLORS, INVENTORY_MAX_SLOTS, computeDerivedStats, xpRequiredForLevel, ACTION_BAR_SLOTS, } from '@valhalla/shared';
+import { PLAYER_COLLISION_RADIUS, RESPAWN_TIME_MS, normalise, RARITY_COLORS, INVENTORY_MAX_SLOTS, computeDerivedStats, xpRequiredForLevel, SkillId, ACTION_BAR_SLOTS, orthoToIso, isoToOrtho, tileToIso, LOOT_BAG_PICKUP_RANGE, dirFromOrthoVector, dirFromScreenVector, EQUIP_SLOTS, } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
+import { AuthClient } from '../systems/AuthClient.js';
+import { ENTITY_DEPTH_BASE, UI_DEPTH_BASE, createCharacterSprite, characterAnimKey, playCharacterAnim, toPaperdollAnim } from '../systems/EntityRenderer.js';
 /**
  * Main gameplay scene.
  * Handles tile map rendering, local player with client-side prediction,
  * remote player interpolation, projectile rendering, HP, mana, death/respawn.
  */
+/** `weapon` -> `equipWeapon`, the flat field name on PlayerState. */
+function equipField(slot) {
+    return `equip${slot.charAt(0).toUpperCase()}${slot.slice(1)}`;
+}
+/** Read the flat `equip*` fields off a player state (or cache) into a slot map. */
+function playerEquipmentMap(src, fallback) {
+    const out = {};
+    for (const slot of EQUIP_SLOTS) {
+        const f = equipField(slot);
+        out[slot] = src?.[f] ?? fallback?.[f] ?? '';
+    }
+    return out;
+}
+/** The same values keyed by field name, for the remote-player cache. */
+function equipFields(src, fallback) {
+    const out = {};
+    for (const slot of EQUIP_SLOTS) {
+        const f = equipField(slot);
+        out[f] = src?.[f] ?? fallback?.[f] ?? '';
+    }
+    return out;
+}
 export class GameScene extends Phaser.Scene {
     network;
     inputManager;
@@ -18,14 +42,26 @@ export class GameScene extends Phaser.Scene {
     aimLine;
     localX = 0;
     localY = 0;
+    /** Visual-only position that lerps toward localX/Y each frame to absorb reconcile jitter. */
+    renderX = 0;
+    renderY = 0;
+    /** True when the current zone uses isometric rendering. */
+    isIso = false;
+    /** Last facing direction for idle animation. */
+    lastFacingDir = 's';
+    /** True while a one-shot or looping action animation is playing on the local player. */
+    isPlayingActionAnim = false;
     // Local player vitals
     localHp = 100;
     localMaxHp = 100;
+    localShieldHp = 0;
     localMana = 0;
     localMaxMana = 0;
     localAlive = true;
     localSpeed = 200;
     localClassId = 'warrior';
+    /** Paperdoll base body for the local character. */
+    localBodyId = '';
     localLevel = 1;
     localCharacterName = '';
     hpBarGfx;
@@ -36,6 +72,8 @@ export class GameScene extends Phaser.Scene {
     respawnTimer = 0;
     // Client-side prediction
     pendingInputs = [];
+    /** Last inputSeq value acknowledged by the server — used to skip redundant reconciles. */
+    _lastServerSeq = -1;
     lastServerSeq = 0;
     // Map data (received from server)
     collisionGrid = [];
@@ -59,12 +97,34 @@ export class GameScene extends Phaser.Scene {
     npcZones = new Map();
     npcCache = new Map();
     visibleNpcs = new Set();
+    // Zone-filtering for loot bags
+    lootBagZones = new Map();
+    lootBagCache = new Map();
+    visibleLootBags = new Set();
+    // ── Loot Panel State ───────────────────────────────────────
+    lootPanelOpen = false;
+    currentLootBagId = null;
+    lootPanelContainer;
+    lootPanelGfx;
+    lootPanelSlotTexts = [];
+    lootPanelQtyTexts = [];
+    lootPanelSlotIcons = [];
+    lootPanelTitleText;
+    /** Cached loot panel items from the latest server state. */
+    lootPanelItems = [];
+    // Loot panel layout constants
+    LOOT_COLS = 6;
+    LOOT_ROWS = 3;
+    LOOT_SLOT_SIZE = 48;
+    LOOT_SLOT_GAP = 4;
+    LOOT_PANEL_PAD = 10;
     // ── Draggable HUD panels ──────────────────────────────────
     // Per-panel offsets from their default computed positions (pixels).
     chatOffset = { x: 0, y: 0 };
     actionBarOffset = { x: 0, y: 0 };
     invOffset = { x: 0, y: 0 };
     skillsOffset = { x: 0, y: 0 };
+    combatLogOffset = { x: 0, y: 0 };
     // Active drag state
     hudDragTarget = null;
     hudDragStartMouse = { x: 0, y: 0 };
@@ -80,13 +140,16 @@ export class GameScene extends Phaser.Scene {
     // Inventory & Character Panel UI
     inventoryOpen = false;
     inventoryItems = [];
-    localEquipment = { weapon: '', helm: '', chest: '', legs: '', boots: '', ring: '' };
+    localEquipment = Object.fromEntries(EQUIP_SLOTS.map(s => [s, '']));
+    /** Overlay sprites for local player equipped items (managed by EntityRenderer helpers). */
+    localEquipOverlays = [];
     localXp = 0;
     invContainer;
     invDimBg; // fixed dim overlay, NOT inside invContainer
     skillsDimBg; // fixed dim overlay, NOT inside skillsPaneContainer
     panelGfx;
     invSlotTexts = [];
+    invSlotIcons = [];
     invQtyTexts = [];
     invTooltipText;
     invTitleText;
@@ -95,6 +158,11 @@ export class GameScene extends Phaser.Scene {
     charEquipTexts = [];
     charStatTexts = [];
     charBarsGfx;
+    // Item Detail Panel
+    itemDetailPanelOpen = false;
+    itemDetailContainer;
+    itemDetailGfx;
+    _itemDetailDynamic = [];
     // Drag-and-drop state
     dragging = false;
     dragSource = null;
@@ -123,6 +191,9 @@ export class GameScene extends Phaser.Scene {
     localCastingSkillId = '';
     localCastingStartedAt = 0;
     localCastingDurationMs = 0;
+    // Auto-attack state (synced from server)
+    localAutoAttackActive = false;
+    localAutoAttackSkillId = '';
     // Energy
     localEnergy = 0;
     localMaxEnergy = 0;
@@ -136,6 +207,11 @@ export class GameScene extends Phaser.Scene {
     skillDragId = '';
     skillDragGhost;
     skillDragGhostBg;
+    // Action bar slot drag state (drag skill off bar to remove it)
+    abDragging = false;
+    abDragSourceSlot = -1;
+    abDragGhost;
+    abDragGhostBg;
     // Skills pane tooltip
     skillTooltipContainer;
     skillTooltipBg;
@@ -155,6 +231,78 @@ export class GameScene extends Phaser.Scene {
     chatInputText = '';
     /** Default send channel. Whispers are always triggered by /w prefix. */
     chatCurrentChannel = 'general';
+    chatScrollOffset = 0; // 0 = bottom (newest)
+    chatScrollGfx;
+    // ── Targeting System ─────────────────────────────────────
+    /** ID of the currently targeted entity (player sessionId or NPC id), or null. */
+    currentTargetId = null;
+    /** Type of the currently targeted entity. */
+    currentTargetType = null;
+    /**
+     * Set to true when an entity sprite was just clicked, so the global
+     * pointer-down handler (which moves the player) can skip that frame.
+     */
+    entityClickConsumed = false;
+    // Target nameplate panel
+    targetOffset = { x: 0, y: 0 };
+    targetNameplateContainer;
+    targetNameplateBg;
+    targetNameplateTitleText;
+    targetNameplateNameText;
+    targetNameplateLevelText;
+    targetNameplateHpBar;
+    targetNameplateHpText;
+    targetNameplateBuffsGfx;
+    targetNameplateBuffsText;
+    targetNameplateTitleHandle;
+    // ── Party System ──────────────────────────────────────────
+    partyMembers = [];
+    partyMemberData = new Map();
+    remotePlayerShieldHp = new Map();
+    // Buffs panel
+    localBuffs = new Map();
+    buffsOffset = { x: 0, y: 0 };
+    buffsPanelContainer;
+    buffsPanelBg;
+    buffsPanelRowGfx = [];
+    buffsPanelAbbrTexts = [];
+    buffsPanelNameTexts = [];
+    buffsPanelTimerTexts = [];
+    buffsPanelTitleHandle = { x: 0, y: 0, w: 0, h: 0 };
+    buffsPanelTitleText;
+    partyOffset = { x: 0, y: 0 };
+    partyPanelContainer;
+    partyPanelBg;
+    partyPanelTexts = [];
+    partyPanelHpBars = [];
+    partyPanelManaBars = [];
+    partyPanelTitleHandle = { x: 0, y: 0, w: 0, h: 0 };
+    partySlotSessionIds = [null, null, null, null];
+    // ── Options Menu ─────────────────────────────────────────
+    optionsMenuOpen = false;
+    optionsMenuContainer;
+    optionsDimBg;
+    optionsButtons = [];
+    optionsCloseText;
+    /** Index of the currently hovered options button (-1 = none, -2 = close btn). */
+    optionsHoveredIdx = -1;
+    // ── HUD Edit Mode ──────────────────────────────────────────
+    hudEditMode = false;
+    hudEditLabel;
+    hudEditSubLabel;
+    /** Per-panel visibility (used in normal gameplay, toggled in edit mode). */
+    panelVisibility = {
+        chat: true, actionBar: true, target: true, party: true, buffs: true,
+    };
+    /** Per-panel opacity multiplier (0.5, 0.75, 1.0). */
+    panelOpacity = {
+        chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0,
+    };
+    /** Per-panel scale (0.8, 1.0, 1.2). */
+    panelScale = {
+        chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0,
+    };
+    hudEditPanelControls = [];
     // Layout constants
     CHAT_MAX_W = 360; // maximum panel width
     CHAT_H = 170;
@@ -162,27 +310,151 @@ export class GameScene extends Phaser.Scene {
     CHAT_LINE_H = 15;
     CHAT_PAD = 6;
     CHAT_INPUT_H = 18;
-    CHAT_MAX_MESSAGES = 50;
+    CHAT_MAX_MESSAGES = 200;
     CHAT_VISIBLE_LINES = 9; // (CHAT_H - header - input) / CHAT_LINE_H
+    CHAT_SCROLLBAR_W = 8;
     /** Left edge of chat panel — 12px gap right of the HP/mana bar (barX=16 + barWidth=200 + border=4 + gap=12) */
     CHAT_LEFT_X = 232;
     /** Tracks current effective width so word-wrap is only recalculated on change */
     chatEffectiveW = 200;
+    // ── Combat Log Panel ────────────────────────────────────
+    CL_W = 320;
+    CL_H = 200;
+    CL_LINE_H = 14;
+    CL_PAD = 6;
+    CL_TITLE_H = 18;
+    CL_SCROLLBAR_W = 8;
+    CL_MAX_MESSAGES = 200;
+    CL_VISIBLE_LINES = 12;
+    combatLogContainer;
+    combatLogBgGfx;
+    combatLogScrollGfx;
+    combatLogTitleText;
+    combatLogMessageTexts = [];
+    combatLogMessages = [];
+    combatLogScrollOffset = 0; // 0 = bottom (newest)
+    combatLogScrollDragging = false;
+    combatLogScrollDragStartY = 0;
+    combatLogScrollDragStartOffset = 0;
+    combatLogFilters = {
+        outDmg: true, // Your damage dealt
+        inDmg: true, // Damage taken
+        misses: true, // Misses (both directions)
+        dodges: true, // Dodges
+        blocks: true, // Blocks
+        deaths: true, // Deaths
+        heals: true, // Healing
+        buffs: true, // Buffs & debuffs
+        xp: true, // XP rewards
+        party: true, // Party member combat
+    };
+    combatLogContextMenuOpen = false;
+    combatLogContextMenuPos = { x: 0, y: 0 };
+    combatLogContextGfx;
+    combatLogContextTexts = [];
     constructor() {
         super({ key: 'GameScene' });
     }
     characterId = 0;
     authToken = '';
     init(data) {
-        if (data?.classId) {
+        if (data?.classId)
             this.selectedClassId = data.classId;
-        }
-        if (data?.characterId) {
+        if (data?.characterId)
             this.characterId = data.characterId;
-        }
-        if (data?.token) {
+        if (data?.token)
             this.authToken = data.token;
-        }
+        // ── Full state reset ────────────────────────────────────────────────────
+        // Phaser reuses the same scene instance on scene.start(), so any fields
+        // initialised as class-level defaults carry over from the previous session.
+        // Everything below must be reset here (before create() runs) so that a
+        // second login always starts clean.
+        // Local player vitals
+        this.localX = 0;
+        this.localY = 0;
+        this.renderX = 0;
+        this.renderY = 0;
+        this.localHp = 100;
+        this.localMaxHp = 100;
+        this.localShieldHp = 0;
+        this.localMana = 0;
+        this.localMaxMana = 0;
+        this.localEnergy = 0;
+        this.localMaxEnergy = 0;
+        this.localAlive = true;
+        this.localSpeed = 200;
+        this.localClassId = 'warrior';
+        this.localBodyId = '';
+        this.localLevel = 1;
+        this.localCharacterName = '';
+        this.lastFacingDir = 's';
+        this.isIso = false;
+        this.respawnTimer = 0;
+        // Client-side prediction
+        this.pendingInputs = [];
+        this._lastServerSeq = -1;
+        this.lastServerSeq = 0;
+        // Zone / entity tracking
+        this.currentZoneId = 'grasslands';
+        this.remotePlayerZones = new Map();
+        this.remotePlayerCache = new Map();
+        this.npcZones = new Map();
+        this.npcCache = new Map();
+        this.lootBagZones = new Map();
+        this.lootBagCache = new Map();
+        this.visibleProjectiles = new Set();
+        this.visibleSpellProjectiles = new Set();
+        this.visibleNpcs = new Set();
+        this.visibleLootBags = new Set();
+        // Skill / action bar
+        this.actionBar = ['', '', '', '', '', '', '', ''];
+        this.skillCooldowns = new Map();
+        this.localCastingSkillId = '';
+        this.localCastingStartedAt = 0;
+        this.localCastingDurationMs = 0;
+        // Targeting & combat
+        this.currentTargetId = null;
+        this.currentTargetType = null;
+        this.localBuffs = new Map();
+        // Combat Log
+        this.combatLogMessages = [];
+        this.combatLogScrollOffset = 0;
+        this.combatLogContextMenuOpen = false;
+        this.combatLogScrollDragging = false;
+        // Party
+        this.partyMembers = [];
+        this.partyMemberData = new Map();
+        this.remotePlayerShieldHp = new Map();
+        // Inventory / equipment
+        this.inventoryItems = [];
+        this.localEquipment = { weapon: '', helm: '', chest: '', legs: '', boots: '', ring: '' };
+        this.localEquipOverlays = [];
+        this.localXp = 0;
+        // Loot
+        this.lootPanelItems = [];
+        this.currentLootBagId = null;
+        // Chat
+        this.chatMessages = [];
+        this.chatInputText = '';
+        this.chatInputActive = false;
+        this.chatCurrentChannel = 'general';
+        this.chatScrollOffset = 0;
+        // UI open states (panels are recreated in create(), but booleans persist)
+        this.inventoryOpen = false;
+        this.skillsPaneOpen = false;
+        this.itemDetailPanelOpen = false;
+        this.lootPanelOpen = false;
+        this.optionsMenuOpen = false;
+        this.hudEditMode = false;
+        this.hudDragTarget = null;
+        this.dragging = false;
+        this.dragSource = null;
+        this.skillDragging = false;
+        this.skillDragId = '';
+        this.abDragging = false;
+        this.abDragSourceSlot = -1;
+        this.entityClickConsumed = false;
+        this.connected = false;
     }
     create() {
         this.inputManager = new InputManager(this);
@@ -196,11 +468,11 @@ export class GameScene extends Phaser.Scene {
             strokeThickness: 3,
         });
         this.statusText.setScrollFactor(0);
-        this.statusText.setDepth(100);
+        this.statusText.setDepth(UI_DEPTH_BASE);
         // Death overlay (hidden initially)
         this.deathOverlay = this.add.rectangle(this.cameras.main.width / 2, this.cameras.main.height / 2, this.cameras.main.width, this.cameras.main.height, 0x000000, 0.7);
         this.deathOverlay.setScrollFactor(0);
-        this.deathOverlay.setDepth(200);
+        this.deathOverlay.setDepth(UI_DEPTH_BASE + 100);
         this.deathOverlay.setVisible(false);
         this.deathText = this.add.text(this.cameras.main.width / 2, this.cameras.main.height / 2, 'YOU DIED\nRespawning...', {
             fontSize: '32px',
@@ -211,12 +483,12 @@ export class GameScene extends Phaser.Scene {
         });
         this.deathText.setOrigin(0.5, 0.5);
         this.deathText.setScrollFactor(0);
-        this.deathText.setDepth(201);
+        this.deathText.setDepth(UI_DEPTH_BASE + 101);
         this.deathText.setVisible(false);
         // Local HP/Mana bar (HUD)
         this.hpBarGfx = this.add.graphics();
         this.hpBarGfx.setScrollFactor(0);
-        this.hpBarGfx.setDepth(100);
+        this.hpBarGfx.setDepth(UI_DEPTH_BASE);
         // Class + Level HUD
         this.classHudText = this.add.text(16, this.cameras.main.height - 58, '', {
             fontSize: '12px',
@@ -225,7 +497,7 @@ export class GameScene extends Phaser.Scene {
             strokeThickness: 2,
         });
         this.classHudText.setScrollFactor(0);
-        this.classHudText.setDepth(100);
+        this.classHudText.setDepth(UI_DEPTH_BASE);
         // Create inventory panel (hidden initially)
         this.createInventoryPanel();
         // Create skill system UI
@@ -234,12 +506,30 @@ export class GameScene extends Phaser.Scene {
         this.createSkillsPane();
         // Create chat panel
         this.createChatPanel();
+        // Create combat log panel
+        this.createCombatLogPanel();
+        // Create target nameplate panel (initially hidden)
+        this.createTargetNameplate();
+        // Create party panel (initially hidden)
+        this.createPartyPanel();
+        // Create buffs panel (initially hidden)
+        this.createBuffsPanel();
+        // Create loot panel (hidden initially)
+        this.createLootPanel();
+        // Create item detail panel (hidden initially)
+        this.createItemDetailPanel();
+        // Create options menu (hidden initially)
+        this.createOptionsMenu();
+        // Create HUD edit mode labels (hidden initially)
+        this.createHudEditModeUI();
+        // Suppress browser context menu so right-click works in-game
+        this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         // Load persisted HUD layout, then wire up panel drag handlers
         this.loadHudLayout();
         this.setupHudDragHandlers();
         // Inventory toggle key (I)
         this.input.keyboard.on('keydown-I', () => {
-            if (this.chatInputActive)
+            if (this.chatInputActive || this.optionsMenuOpen || this.hudEditMode)
                 return;
             this.toggleInventory();
         });
@@ -255,6 +545,29 @@ export class GameScene extends Phaser.Scene {
         this.input.keyboard.on('keydown-ESC', () => {
             if (this.chatInputActive) {
                 this.cancelChatInput();
+            }
+            else if (this.lootPanelOpen) {
+                // Close loot panel and the inventory that was auto-opened with it
+                this.closeLootPanel();
+                if (this.inventoryOpen) {
+                    this.toggleInventory();
+                }
+            }
+            else if (this.inventoryOpen) {
+                this.toggleInventory();
+            }
+            else if (this.skillsPaneOpen) {
+                this.toggleSkillsPane();
+            }
+            else if (this.hudEditMode) {
+                this.exitHudEditMode();
+            }
+            else if (this.currentTargetId) {
+                // Clear target (also stops auto-attack via clearTarget)
+                this.clearTarget();
+            }
+            else {
+                this.toggleOptionsMenu();
             }
         });
         // Keyboard listener that routes to chat when active
@@ -277,20 +590,66 @@ export class GameScene extends Phaser.Scene {
         this.setupNetworkCallbacks();
         // Wire up action bar key presses (1-8)
         this.inputManager.onActionBarKeyPressed = (slotIndex) => {
-            if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen)
+            if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen || this.optionsMenuOpen || this.hudEditMode)
                 return;
             const skillId = this.actionBar[slotIndex];
             if (!skillId)
                 return;
             const skill = ClientDataManager.instance.getSkill(skillId);
-            // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
-            // Use the current mouse/cursor world position as the target.
-            if (skill?.targetType === 'aoeGround') {
-                const cam = this.cameras.main;
-                const pointer = this.input.activePointer;
-                const worldX = pointer.x + cam.scrollX;
-                const worldY = pointer.y + cam.scrollY;
-                this.network.sendCastSkill(skillId, undefined, worldX, worldY);
+            // Auto-attack skills: toggle on/off
+            if (skill?.isAutoAttack) {
+                // If this exact auto-attack is already active, pressing the key again stops it
+                if (this.localAutoAttackActive && this.localAutoAttackSkillId === skillId) {
+                    this.network.sendStopAutoAttack();
+                    return;
+                }
+                const showErr = (msg) => {
+                    const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+                    if (pos)
+                        this.entityRenderer.showCombatText(pos.x, pos.y - 30, msg, '#ff8844');
+                };
+                if (!this.currentTargetId || this.currentTargetType !== 'npc') {
+                    showErr('No target');
+                    return;
+                }
+                this.network.sendStartAutoAttack(skillId, this.currentTargetId);
+                return;
+            }
+            // Single-target skills require a target to be selected, and the target
+            // must match the skill's target class (ally = player, enemy = NPC).
+            if (skill?.targetType === 'singleEnemy' || skill?.targetType === 'singleAlly') {
+                const showErr = (msg) => {
+                    const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+                    if (pos)
+                        this.entityRenderer.showCombatText(pos.x, pos.y - 30, msg, '#ff8844');
+                };
+                if (!this.currentTargetId) {
+                    showErr('No target');
+                    return;
+                }
+                if (skill.targetType === 'singleAlly' && this.currentTargetType !== 'player' && this.currentTargetType !== 'self') {
+                    showErr('Invalid target');
+                    return;
+                }
+                if (skill.targetType === 'singleEnemy' && this.currentTargetType !== 'npc') {
+                    showErr('Invalid target');
+                    return;
+                }
+                this.network.sendCastSkill(skillId, this.currentTargetId);
+                // AOE_GROUND skills (Fireball, Meteor) require a ground target position.
+                // Use the current mouse/cursor world position as the target.
+            }
+            else if (skill?.targetType === 'aoeGround') {
+                const worldPoint = this.cameras.main.getWorldPoint(this.input.activePointer.x, this.input.activePointer.y);
+                let targetX = worldPoint.x;
+                let targetY = worldPoint.y;
+                // Convert from ISO screen coords to ortho world coords if isometric
+                if (this.isIso) {
+                    const orthoCoords = isoToOrtho(worldPoint.x, worldPoint.y);
+                    targetX = orthoCoords.x;
+                    targetY = orthoCoords.y;
+                }
+                this.network.sendCastSkill(skillId, undefined, targetX, targetY);
             }
             else {
                 this.network.sendCastSkill(skillId);
@@ -298,7 +657,7 @@ export class GameScene extends Phaser.Scene {
         };
         // Wire up skills pane toggle (K)
         this.inputManager.onSkillsPaneToggle = () => {
-            if (this.chatInputActive || this.inventoryOpen)
+            if (this.chatInputActive || this.inventoryOpen || this.optionsMenuOpen || this.hudEditMode)
                 return;
             this.toggleSkillsPane();
         };
@@ -314,6 +673,33 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
     }
     setupNetworkCallbacks() {
+        // ── Entity click-to-target callbacks ─────────────────────
+        this.entityRenderer.onPlayerClick = (sessionId) => {
+            this.entityClickConsumed = true;
+            this.inputManager.suppressNextClick = true; // prevent melee attack on targeting click
+            if (this.currentTargetId === sessionId && this.currentTargetType === 'player') {
+                this.clearTarget(); // click same target again = deselect
+            }
+            else {
+                this.setTarget(sessionId, 'player');
+            }
+        };
+        this.entityRenderer.onNpcClick = (npcId) => {
+            this.entityClickConsumed = true;
+            this.inputManager.suppressNextClick = true;
+            if (this.currentTargetId === npcId && this.currentTargetType === 'npc') {
+                this.clearTarget(); // click same target again = deselect
+            }
+            else {
+                this.setTarget(npcId, 'npc');
+            }
+        };
+        // Right-click on NPC → set as target (auto-attack must be triggered from action bar)
+        this.entityRenderer.onNpcRightClick = (npcId) => {
+            this.entityClickConsumed = true;
+            this.inputManager.suppressNextClick = true;
+            this.setTarget(npcId, 'npc');
+        };
         // Handle full map data (new multi-layer system)
         this.network.onMapData = (data) => {
             this.collisionGrid = data.collisionGrid;
@@ -323,8 +709,57 @@ export class GameScene extends Phaser.Scene {
             this.mapWidthPx = data.width * data.tileSize;
             this.mapHeightPx = data.height * data.tileSize;
             this.currentZoneId = data.zoneId;
+            this.isIso = data.orientation === 'isometric';
+            // Reconcile NPC visibility — fixes the race where onNpcAdd fires before
+            // currentZoneId is set, causing NPCs from other zones to ghost in.
+            for (const [nid, npcZone] of this.npcZones) {
+                const visible = this.visibleNpcs.has(nid);
+                const shouldBeVisible = npcZone === this.currentZoneId;
+                if (visible && !shouldBeVisible) {
+                    this.entityRenderer.removeNPC(nid);
+                    this.visibleNpcs.delete(nid);
+                }
+                else if (!visible && shouldBeVisible) {
+                    const cached = this.npcCache.get(nid);
+                    if (cached) {
+                        this.entityRenderer.addNPC(nid, cached.x, cached.y, cached.name ?? 'NPC', cached.level ?? 1, cached.npcType ?? 'enemy', cached.spriteColor ?? 0xff4444, cached.spriteSize ?? 1);
+                        this.entityRenderer.updateNPCHp(nid, cached.hp, cached.maxHp, cached.alive);
+                        this.visibleNpcs.add(nid);
+                    }
+                }
+            }
+            // Reconcile remote player visibility — fixes the same race for players:
+            // when the local player changes zones, remove sprites from the old zone
+            // and add sprites for players already in the new zone.
+            for (const [pid, playerZone] of this.remotePlayerZones) {
+                const isRendered = this.entityRenderer.hasPlayer(pid);
+                const shouldBeVisible = playerZone === this.currentZoneId;
+                if (isRendered && !shouldBeVisible) {
+                    this.entityRenderer.removeRemotePlayer(pid);
+                    // Clear stale target if it was pointing at a ghost
+                    if (this.currentTargetId === pid)
+                        this.clearTarget();
+                }
+                else if (!isRendered && shouldBeVisible) {
+                    const cached = this.remotePlayerCache.get(pid);
+                    if (cached) {
+                        this.entityRenderer.addRemotePlayer(pid, cached.x, cached.y, cached.classId, cached.level, cached.characterName);
+                    }
+                }
+            }
             // Update camera bounds for the new map size
-            this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+            // For ISO maps the screen footprint is much wider/taller than ortho pixel dims.
+            if (this.isIso) {
+                // ISO diamond bounds: the map spans roughly ±(width+height)*tileSize/2 in X,
+                // and 0..(width+height)*tileSize/2 in Y. Add generous padding.
+                const totalTiles = data.width + data.height;
+                const halfW = totalTiles * data.tileSize;
+                const halfH = totalTiles * data.tileSize / 2;
+                this.cameras.main.setBounds(-halfW, -halfH / 2, halfW * 2, halfH * 2);
+            }
+            else {
+                this.cameras.main.setBounds(0, 0, this.mapWidthPx, this.mapHeightPx);
+            }
             this.buildTileMapFromData(data);
         };
         // Legacy fallback
@@ -344,6 +779,8 @@ export class GameScene extends Phaser.Scene {
         // Handle zone change notifications
         this.network.onZoneChange = (data) => {
             console.log(`[GameScene] Zone change → ${data.zoneId} (spawn: ${data.spawnX}, ${data.spawnY})`);
+            // 0. Clear targeting — target may not exist in new zone
+            this.clearTarget();
             // 1. Remove all currently-rendered remote players, projectiles, and NPCs
             for (const sid of this.remotePlayerZones.keys()) {
                 this.entityRenderer.removeRemotePlayer(sid);
@@ -360,12 +797,20 @@ export class GameScene extends Phaser.Scene {
                 this.entityRenderer.removeNPC(nid);
             }
             this.visibleNpcs.clear();
+            for (const bid of this.visibleLootBags) {
+                this.entityRenderer.removeLootBag(bid);
+            }
+            this.visibleLootBags.clear();
+            // Close loot panel on zone change
+            if (this.lootPanelOpen)
+                this.closeLootPanel();
             // 2. Switch zone
             this.currentZoneId = data.zoneId;
             // 3. Re-add any cached remote players that are already in our new zone
             for (const [sid, cached] of this.remotePlayerCache) {
                 if ((cached.zoneId ?? 'grasslands') === this.currentZoneId) {
-                    this.entityRenderer.addRemotePlayer(sid, cached.x, cached.y, cached.classId ?? 'warrior', cached.level ?? 1, cached.characterName ?? '');
+                    this.entityRenderer.addRemotePlayer(sid, cached.x, cached.y, cached.classId ?? 'warrior', cached.level ?? 1, cached.characterName ?? '', cached.bodyId ?? '');
+                    this.entityRenderer.updateRemotePlayerEquipment(sid, playerEquipmentMap(cached));
                 }
             }
             // 4. Re-add NPCs that are in our new zone
@@ -379,30 +824,52 @@ export class GameScene extends Phaser.Scene {
                     }
                 }
             }
-            // 4. Teleport the local player to the new spawn
+            // 5. Re-add loot bags that are in our new zone
+            for (const [bid, bagZone] of this.lootBagZones) {
+                if (bagZone === this.currentZoneId) {
+                    const cached = this.lootBagCache.get(bid);
+                    if (cached) {
+                        this.entityRenderer.addLootBag(bid, cached.x, cached.y, bagZone);
+                        this.visibleLootBags.add(bid);
+                    }
+                }
+            }
+            // 6. Teleport the local player to the new spawn
             this.localX = data.spawnX;
             this.localY = data.spawnY;
+            this.renderX = data.spawnX;
+            this.renderY = data.spawnY;
             if (this.playerSprite) {
-                this.playerSprite.setPosition(this.localX, this.localY);
+                const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+                this.playerSprite.setPosition(playerIso.x, playerIso.y);
+                this.lastFacingDir = 's';
+                playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle', 's', true);
             }
             // 5. Clear pending inputs — server position is authoritative after zone change
             this.pendingInputs = [];
+            this._lastServerSeq = -1;
         };
         this.network.onPlayerAdd = (player, sessionId) => {
             if (sessionId === this.network.sessionId) {
                 // This is us — set up local player
                 this.localX = player.x;
                 this.localY = player.y;
+                this.renderX = player.x;
+                this.renderY = player.y;
                 this.localHp = player.hp;
                 this.localMaxHp = player.maxHp;
+                this.localShieldHp = player.shieldHp ?? 0;
                 this.localMana = player.mana ?? 0;
                 this.localMaxMana = player.maxMana ?? 0;
                 this.localAlive = player.alive;
                 this.localSpeed = player.speed ?? 200;
                 this.localClassId = player.classId ?? 'warrior';
+                this.localBodyId = player.bodyId ?? '';
                 this.localLevel = player.level ?? 1;
                 this.localXp = player.xp ?? 0;
                 this.localCharacterName = player.characterName ?? '';
+                // Set zone early so onNpcAdd / onPlayerAdd for others filters correctly
+                this.currentZoneId = player.zoneId ?? 'grasslands';
                 this.createLocalPlayer();
                 this.connected = true;
                 this.statusText.setText('WASD move | Mouse aim | Left-click melee | Right-click ranged (Ranger)');
@@ -423,9 +890,15 @@ export class GameScene extends Phaser.Scene {
                     hp: player.hp ?? 100,
                     maxHp: player.maxHp ?? 100,
                     alive: player.alive ?? true,
+                    mana: player.mana ?? 0,
+                    maxMana: player.maxMana ?? 0,
+                    shieldHp: player.shieldHp ?? 0,
+                    bodyId: player.bodyId ?? '',
+                    ...equipFields(player),
                 });
                 if (theirZone === this.currentZoneId) {
-                    this.entityRenderer.addRemotePlayer(sessionId, player.x, player.y, player.classId ?? 'warrior', player.level ?? 1, player.characterName ?? '');
+                    this.entityRenderer.addRemotePlayer(sessionId, player.x, player.y, player.classId ?? 'warrior', player.level ?? 1, player.characterName ?? '', player.bodyId ?? '');
+                    this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
                 }
             }
         };
@@ -434,6 +907,7 @@ export class GameScene extends Phaser.Scene {
                 // Update local state from server
                 this.localHp = player.hp;
                 this.localMaxHp = player.maxHp;
+                this.localShieldHp = player.shieldHp ?? 0;
                 this.localMana = player.mana ?? 0;
                 this.localMaxMana = player.maxMana ?? 0;
                 this.localSpeed = player.speed ?? this.localSpeed;
@@ -451,6 +925,9 @@ export class GameScene extends Phaser.Scene {
                     this.localCastingSkillId = '';
                     this.localCastingDurationMs = 0;
                 }
+                // Track auto-attack state from server
+                this.localAutoAttackActive = player.autoAttackActive ?? false;
+                this.localAutoAttackSkillId = player.autoAttackSkillId ?? '';
                 const wasAlive = this.localAlive;
                 this.localAlive = player.alive;
                 // Handle death transition
@@ -482,27 +959,52 @@ export class GameScene extends Phaser.Scene {
                     level: player.level ?? cached.level ?? 1,
                     classId: player.classId ?? cached.classId ?? 'warrior',
                     characterName: player.characterName ?? cached.characterName ?? '',
+                    mana: player.mana ?? cached.mana ?? 0,
+                    maxMana: player.maxMana ?? cached.maxMana ?? 0,
+                    shieldHp: player.shieldHp ?? cached.shieldHp ?? 0,
+                    bodyId: player.bodyId ?? cached.bodyId ?? '',
+                    ...equipFields(player, cached),
                 });
                 if (wasInOurZone && !isInOurZone) {
                     // Player left our zone — remove their sprite
                     this.entityRenderer.removeRemotePlayer(sessionId);
                 }
                 else if (!wasInOurZone && isInOurZone) {
-                    // Player entered our zone — add their sprite
-                    this.entityRenderer.addRemotePlayer(sessionId, player.x, player.y, player.classId ?? 'warrior', player.level ?? 1, player.characterName ?? '');
+                    // Player entered our zone — add their sprite and sync equipment immediately
+                    this.entityRenderer.addRemotePlayer(sessionId, player.x, player.y, player.classId ?? 'warrior', player.level ?? 1, player.characterName ?? '', player.bodyId ?? '');
+                    this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
                 }
                 else if (isInOurZone) {
                     // Same zone — normal position/HP update
                     this.entityRenderer.updateRemotePlayerTarget(sessionId, player.x, player.y, player.aimAngle);
                     this.entityRenderer.updateRemotePlayerHp(sessionId, player.hp, player.maxHp, player.alive, player.level ?? 1);
+                    // Sync equipment overlays for remote player
+                    this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
                 }
                 // Different zone (and wasn't in ours) → nothing to do
+                // Track shield for target pane (remote players only)
+                this.remotePlayerShieldHp.set(sessionId, player.shieldHp ?? 0);
+            }
+            // Update party member data cache (fires for ALL players, not just our zone)
+            if (this.partyMembers.some(m => m.sessionId === sessionId)) {
+                this.partyMemberData.set(sessionId, {
+                    hp: player.hp ?? 0,
+                    maxHp: player.maxHp ?? 1,
+                    mana: player.mana ?? 0,
+                    maxMana: player.maxMana ?? 0,
+                    level: player.level ?? 1,
+                    alive: player.alive ?? true,
+                    shieldHp: player.shieldHp ?? 0,
+                });
             }
         };
         this.network.onPlayerRemove = (sessionId) => {
+            if (this.currentTargetId === sessionId)
+                this.clearTarget();
             this.entityRenderer.removeRemotePlayer(sessionId);
             this.remotePlayerZones.delete(sessionId);
             this.remotePlayerCache.delete(sessionId);
+            this.remotePlayerShieldHp.delete(sessionId);
         };
         // Projectile callbacks — only render projectiles whose owner is in our zone.
         // Projectiles have no zoneId, so we derive zone from their ownerId:
@@ -551,8 +1053,10 @@ export class GameScene extends Phaser.Scene {
             }
         };
         // Spell impact — play explosion VFX at the detonation point
+        // data.x/y are orthogonal world coords from the server; convert to ISO screen coords before rendering
         this.network.onSpellImpact = (data) => {
-            this.entityRenderer.showSpellImpact(data.x, data.y, data.radius, data.skillId);
+            const isoPos = orthoToIso(data.x, data.y);
+            this.entityRenderer.showSpellImpact(isoPos.x, isoPos.y, data.radius, data.skillId);
         };
         // NPC callbacks — NPCs have a zoneId, so we filter by zone like remote players.
         this.network.onNpcAdd = (npc, id) => {
@@ -598,9 +1102,19 @@ export class GameScene extends Phaser.Scene {
             if (this.visibleNpcs.has(id)) {
                 this.entityRenderer.updateNPCTarget(id, npc.x, npc.y, npc.aimAngle ?? 0);
                 this.entityRenderer.updateNPCHp(id, npc.hp, npc.maxHp, npc.alive);
+                // Sync active buffs from syncedBuffs schema
+                if (npc.syncedBuffs) {
+                    const buffs = [];
+                    npc.syncedBuffs.forEach((b) => {
+                        buffs.push({ skillId: b.skillId, expiresAt: b.expiresAt, dotDamagePerSec: b.dotDamagePerSec ?? 0 });
+                    });
+                    this.entityRenderer.updateNPCBuffs(id, buffs);
+                }
             }
         };
         this.network.onNpcRemove = (id) => {
+            if (this.currentTargetId === id)
+                this.clearTarget();
             if (this.visibleNpcs.has(id)) {
                 this.entityRenderer.removeNPC(id);
                 this.visibleNpcs.delete(id);
@@ -613,26 +1127,47 @@ export class GameScene extends Phaser.Scene {
             if (data.targetId === this.network.sessionId) {
                 // We got hit — show damage with crit indicator
                 const dmgText = data.isCrit ? `${data.damage}!` : `${data.damage}`;
-                this.entityRenderer.showDamageFlash(this.localX, this.localY, data.damage, data.isCrit);
+                const pos = this.getCombatTextPosition(data.targetId);
+                if (pos)
+                    this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
                 this.cameras.main.shake(100, data.isCrit ? 0.01 : 0.005);
+                // Combat log — incoming damage
+                const atkName = this.getCombatEntityName(data.attackerId);
+                const critTag = data.isCrit ? ' (Critical!)' : '';
+                this.pushCombatLog(`${atkName} hits you for ${data.damage} damage${critTag}`, '#ff6644', 'inDmg');
             }
             else {
                 this.showRemoteDamageFlash(data.targetId, data.damage, data.isCrit);
+                // Combat log — party member taking damage
+                if (this.isLocalOrParty(data.targetId)) {
+                    const tgtName = this.getCombatEntityName(data.targetId);
+                    const atkName = this.getCombatEntityName(data.attackerId);
+                    const critTag = data.isCrit ? ' (Critical!)' : '';
+                    this.pushCombatLog(`${atkName} hits ${tgtName} for ${data.damage}${critTag}`, '#cc8866', 'party');
+                }
             }
         };
         this.network.onPlayerDied = (data) => {
-            if (data.targetId !== this.network.sessionId) {
-                console.log(`[Combat] Player ${data.targetId.slice(0, 6)} was killed by ${data.killerId.slice(0, 6)}`);
+            if (data.targetId === this.network.sessionId) {
+                const killerName = this.getCombatEntityName(data.killerId);
+                this.pushCombatLog(`You were killed by ${killerName}`, '#ff4444', 'deaths');
+            }
+            else if (this.isLocalOrParty(data.targetId)) {
+                const tgtName = this.getCombatEntityName(data.targetId);
+                const killerName = this.getCombatEntityName(data.killerId);
+                this.pushCombatLog(`${tgtName} was killed by ${killerName}`, '#ff6666', 'deaths');
             }
         };
         this.network.onPlayerRespawned = (data) => {
             if (data.playerId === this.network.sessionId) {
-                console.log('[Combat] You respawned!');
+                this.pushCombatLog('You have respawned', '#44ff44', 'deaths');
             }
         };
         this.network.onMeleeAttack = (data) => {
             if (data.attackerId === this.network.sessionId) {
-                this.entityRenderer.showMeleeSlash(this.localX, this.localY, data.angle);
+                const pos = this.getCombatTextPosition(data.attackerId);
+                if (pos)
+                    this.entityRenderer.showMeleeSlash(pos.x, pos.y, data.angle, this.isIso);
             }
             else {
                 this.showRemoteMeleeSlash(data.attackerId, data.angle);
@@ -643,37 +1178,139 @@ export class GameScene extends Phaser.Scene {
             const pos = this.getCombatTextPosition(data.targetId);
             if (pos)
                 this.entityRenderer.showCombatText(pos.x, pos.y, 'MISS', '#999999');
+            // Combat log
+            if (data.attackerId === this.network.sessionId) {
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`Your attack missed ${tgtName}`, '#999999', 'misses');
+            }
+            else if (data.targetId === this.network.sessionId) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                this.pushCombatLog(`${atkName}'s attack missed you`, '#999999', 'misses');
+            }
+            else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`${atkName}'s attack missed ${tgtName}`, '#888888', 'party');
+            }
         };
         this.network.onDodged = (data) => {
             const pos = this.getCombatTextPosition(data.targetId);
             if (pos)
                 this.entityRenderer.showCombatText(pos.x, pos.y, 'DODGE', '#ffffff');
+            if (data.targetId === this.network.sessionId) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                this.pushCombatLog(`You dodged ${atkName}'s attack`, '#ffffff', 'dodges');
+            }
+            else if (data.attackerId === this.network.sessionId) {
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`${tgtName} dodged your attack`, '#cccccc', 'dodges');
+            }
+            else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`${tgtName} dodged ${atkName}'s attack`, '#aaaaaa', 'party');
+            }
         };
         this.network.onBlocked = (data) => {
             const pos = this.getCombatTextPosition(data.targetId);
             if (pos)
                 this.entityRenderer.showCombatText(pos.x, pos.y, 'BLOCK', '#4488ff');
+            if (data.targetId === this.network.sessionId) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                this.pushCombatLog(`You blocked ${atkName}'s attack`, '#4488ff', 'blocks');
+            }
+            else if (data.attackerId === this.network.sessionId) {
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`${tgtName} blocked your attack`, '#6688cc', 'blocks');
+            }
+            else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+                const atkName = this.getCombatEntityName(data.attackerId);
+                const tgtName = this.getCombatEntityName(data.targetId);
+                this.pushCombatLog(`${tgtName} blocked ${atkName}'s attack`, '#5577aa', 'party');
+            }
         };
         // NPC combat events
         this.network.onNpcHit = (data) => {
             const pos = this.entityRenderer.getNPCPosition(data.targetId);
             if (pos) {
                 this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
+                // Magic Missile VFX — bolt from caster to NPC target
+                if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE && data.casterId) {
+                    const casterPos = this.getCombatTextPosition(data.casterId);
+                    if (casterPos) {
+                        this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, pos.x, pos.y);
+                    }
+                }
+                // ── Action animation on hit ──
+                const hitAttackerId = data.casterId || data.attackerId;
+                if (hitAttackerId) {
+                    const animType = data.skillId === 'melee_attack' ? 'melee'
+                        : data.skillId === 'ranged_attack' ? 'ranged'
+                            : null; // named skills use cast animation triggered by onSkillStarted
+                    if (animType) {
+                        const dir = this.getDirectionToTarget(hitAttackerId, pos.x, pos.y);
+                        if (hitAttackerId === this.network.sessionId) {
+                            this.playActionAnimation(animType, dir);
+                        }
+                        else {
+                            this.entityRenderer.playRemoteActionAnim(hitAttackerId, animType, dir);
+                        }
+                    }
+                }
+            }
+            // Combat log — outgoing damage (you or party hitting an NPC)
+            const casterId = data.casterId || data.attackerId;
+            if (casterId && this.isLocalOrParty(casterId)) {
+                const atkName = this.getCombatEntityName(casterId);
+                const tgtName = this.getCombatEntityName(data.targetId);
+                const critTag = data.isCrit ? ' (Critical!)' : '';
+                let skillLabel = '';
+                if (data.skillId === 'melee_attack') {
+                    skillLabel = ' [Melee]';
+                }
+                else if (data.skillId === 'ranged_attack') {
+                    skillLabel = ' [Ranged]';
+                }
+                else if (data.skillId) {
+                    skillLabel = ` [${ClientDataManager.instance.getSkill(data.skillId)?.name ?? data.skillId}]`;
+                }
+                if (casterId === this.network.sessionId) {
+                    this.pushCombatLog(`You hit ${tgtName} for ${data.damage}${critTag}${skillLabel}`, '#ffcc44', 'outDmg');
+                }
+                else {
+                    this.pushCombatLog(`${atkName} hits ${tgtName} for ${data.damage}${critTag}${skillLabel}`, '#aabb88', 'party');
+                }
             }
         };
         this.network.onNpcDied = (data) => {
-            console.log(`[Combat] NPC ${data.targetId} was killed by ${data.killerId.slice(0, 6)}, +${data.xpReward} XP`);
+            const tgtName = this.getCombatEntityName(data.targetId);
+            if (data.killerId === this.network.sessionId) {
+                this.pushCombatLog(`You killed ${tgtName}`, '#44ff44', 'deaths');
+            }
+            else if (this.isLocalOrParty(data.killerId)) {
+                const killerName = this.getCombatEntityName(data.killerId);
+                this.pushCombatLog(`${killerName} killed ${tgtName}`, '#88cc88', 'party');
+            }
+        };
+        this.network.onXpGained = (amount) => {
+            if (amount > 0) {
+                this.pushCombatLog(`+${amount} XP`, '#ffaa00', 'xp');
+            }
         };
         // Inventory sync
         this.network.onInventoryChange = (items) => {
             this.inventoryItems = items;
-            if (this.inventoryOpen) {
-                this.renderInventorySlots();
-            }
+            // Always refresh the render so looted/moved items appear immediately,
+            // regardless of how the panel was opened.
+            this.renderInventorySlots();
         };
         // Equipment sync
         this.network.onEquipmentChange = (equipment) => {
             this.localEquipment = equipment;
+            // Sync equipment overlay sprites on local player
+            if (this.playerSprite) {
+                this.entityRenderer.syncOverlays(this.localEquipOverlays, equipment, this.playerSprite);
+            }
             if (this.inventoryOpen) {
                 this.renderCharacterPanel();
             }
@@ -689,10 +1326,11 @@ export class GameScene extends Phaser.Scene {
         this.network.onSkillStarted = (data) => {
             if (data.casterId === this.network.sessionId) {
                 if (data.castTimeMs > 0) {
-                    // Cast-time spell — show cast bar
+                    // Cast-time spell — show cast bar + cast animation
                     this.localCastingSkillId = data.skillId;
                     this.localCastingStartedAt = Date.now();
                     this.localCastingDurationMs = data.castTimeMs;
+                    this.playActionAnimation('cast', this.lastFacingDir);
                 }
                 else {
                     // Instant cast — start cooldown immediately
@@ -703,6 +1341,12 @@ export class GameScene extends Phaser.Scene {
                             durationMs: skill.cooldownMs,
                         });
                     }
+                }
+            }
+            else {
+                // Remote player started casting
+                if (data.castTimeMs > 0) {
+                    this.entityRenderer.playRemoteActionAnim(data.casterId, 'cast');
                 }
             }
         };
@@ -719,6 +1363,12 @@ export class GameScene extends Phaser.Scene {
                         });
                     }
                 }
+                // Stop cast animation when the spell finishes
+                this.stopActionAnimation();
+            }
+            else if (data.casterId) {
+                // Stop remote player's cast animation
+                this.entityRenderer.stopRemoteActionAnim(data.casterId);
             }
             // Show damage/heal numbers via entity renderer
             if (data.type === 'damage' && data.targetId) {
@@ -726,50 +1376,206 @@ export class GameScene extends Phaser.Scene {
                 if (pos) {
                     this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
                 }
+                // Magic Missile VFX: bolt from caster to target
+                if (data.skillId === SkillId.WIZARD_MAGIC_MISSILE) {
+                    const casterPos = this.getCombatTextPosition(data.casterId);
+                    const targetPos = this.getCombatTextPosition(data.targetId);
+                    if (casterPos && targetPos) {
+                        this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, targetPos.x, targetPos.y);
+                    }
+                }
             }
             else if (data.type === 'heal' && data.targetId) {
                 const pos = this.getCombatTextPosition(data.targetId);
                 if (pos) {
                     this.entityRenderer.showCombatText(pos.x, pos.y, `+${data.amount}`, '#44ff44');
                 }
+                // Combat log — healing
+                if (this.isLocalOrParty(data.targetId) || this.isLocalOrParty(data.casterId)) {
+                    const casterName = this.getCombatEntityName(data.casterId);
+                    const tgtName = this.getCombatEntityName(data.targetId);
+                    const skillName = data.skillId ? (ClientDataManager.instance.getSkill(data.skillId)?.name ?? data.skillId) : 'heal';
+                    if (data.casterId === data.targetId) {
+                        this.pushCombatLog(`${casterName} healed self for ${data.amount} [${skillName}]`, '#44ff44', 'heals');
+                    }
+                    else {
+                        this.pushCombatLog(`${casterName} healed ${tgtName} for ${data.amount} [${skillName}]`, '#44ff44', 'heals');
+                    }
+                }
             }
         };
         this.network.onSkillFailed = (data) => {
             // Show error text above player
-            this.entityRenderer.showCombatText(this.localX, this.localY - 30, data.reason, '#ff6666');
+            const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+            if (pos) {
+                const offsetPos = { x: pos.x, y: pos.y - 30 };
+                this.entityRenderer.showCombatText(offsetPos.x, offsetPos.y, data.reason, '#ff6666');
+            }
         };
         this.network.onSkillInterrupted = (data) => {
             if (data.casterId === this.network.sessionId) {
                 this.localCastingSkillId = '';
                 this.localCastingDurationMs = 0;
+                this.stopActionAnimation();
                 this.entityRenderer.showCombatText(this.localX, this.localY - 30, 'Interrupted!', '#ff8888');
+            }
+            else {
+                this.entityRenderer.stopRemoteActionAnim(data.casterId);
             }
         };
         this.network.onBuffApplied = (data) => {
             const skill = ClientDataManager.instance.getSkill(data.skillId);
-            if (skill && data.targetId === this.network.sessionId) {
-                this.entityRenderer.showCombatText(this.localX, this.localY - 30, `+${skill.name}`, '#88ccff');
+            if (data.targetId === this.network.sessionId) {
+                if (skill) {
+                    const pos = this.getCombatTextPosition(this.network.sessionId);
+                    if (pos)
+                        this.entityRenderer.showCombatText(pos.x, pos.y - 30, `+${skill.name}`, '#88ccff');
+                    // Combat log
+                    const durSec = (data.durationMs / 1000).toFixed(0);
+                    this.pushCombatLog(`+${skill.name} applied (${durSec}s)`, '#88ccff', 'buffs');
+                }
+                // Track in local buff list for the buffs panel
+                const now = Date.now();
+                this.localBuffs.set(data.skillId, {
+                    skillId: data.skillId,
+                    appliedAt: now,
+                    expiresAt: now + data.durationMs,
+                });
+            }
+            else {
+                // Debuff applied to an NPC — show a floating label above the target
+                const npcPos = this.entityRenderer.getNPCPosition(data.targetId);
+                if (npcPos && skill) {
+                    const label = skill.category === 'debuff' ? `☠ ${skill.name}` : `✦ ${skill.name}`;
+                    const color = skill.category === 'debuff' ? '#88ff44' : '#88ccff';
+                    this.entityRenderer.showCombatText(npcPos.x, npcPos.y - 30, label, color);
+                    // Combat log — debuff on NPC
+                    const tgtName = this.getCombatEntityName(data.targetId);
+                    this.pushCombatLog(`${skill.name} applied to ${tgtName}`, '#88ff44', 'buffs');
+                }
             }
         };
         this.network.onBuffRemoved = (data) => {
             const skill = ClientDataManager.instance.getSkill(data.skillId);
-            if (skill && data.targetId === this.network.sessionId) {
-                this.entityRenderer.showCombatText(this.localX, this.localY - 30, `-${skill.name}`, '#888888');
+            if (data.targetId === this.network.sessionId) {
+                if (skill) {
+                    const pos = this.getCombatTextPosition(this.network.sessionId);
+                    if (pos)
+                        this.entityRenderer.showCombatText(pos.x, pos.y - 30, `-${skill.name}`, '#888888');
+                    this.pushCombatLog(`-${skill.name} faded`, '#888888', 'buffs');
+                }
+                this.localBuffs.delete(data.skillId);
             }
         };
         // ── Chat ──
         this.network.onChatMessage = (data) => {
             this.receiveChatMessage(data);
         };
+        // ── Loot Bags ──
+        this.network.onLootBagAdd = (bag, bagId) => {
+            const bagZone = bag.zoneId ?? 'grasslands';
+            this.lootBagZones.set(bagId, bagZone);
+            this.lootBagCache.set(bagId, { x: bag.x, y: bag.y, zoneId: bagZone, items: bag.items });
+            if (bagZone === this.currentZoneId) {
+                this.entityRenderer.addLootBag(bagId, bag.x, bag.y, bagZone);
+                this.visibleLootBags.add(bagId);
+            }
+        };
+        this.network.onLootBagChange = (bag, bagId) => {
+            this.lootBagCache.set(bagId, { x: bag.x, y: bag.y, zoneId: bag.zoneId, items: bag.items });
+            // Live-update loot panel if this bag is currently open
+            if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+                this.refreshLootPanelItems(bag);
+            }
+        };
+        this.network.onLootBagRemove = (bagId) => {
+            // Close loot panel if viewing this bag
+            if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+                this.closeLootPanel();
+            }
+            if (this.visibleLootBags.has(bagId)) {
+                this.entityRenderer.removeLootBag(bagId);
+                this.visibleLootBags.delete(bagId);
+            }
+            this.lootBagZones.delete(bagId);
+            this.lootBagCache.delete(bagId);
+        };
+        // Direct server confirmation that a loot action succeeded.
+        // By the time this fires, the Colyseus state patch has already been applied,
+        // so we can safely read the live schema state to force-refresh both panels.
+        this.network.onLootSuccess = (bagId) => {
+            // Refresh loot panel from live bag schema (bypasses onLootBagChange callback)
+            if (this.lootPanelOpen && this.currentLootBagId === bagId) {
+                const cached = this.lootBagCache.get(bagId);
+                if (cached) {
+                    this.refreshLootPanelItems(cached);
+                }
+            }
+            // Force-rebuild inventory from live player schema (bypasses onInventoryChange callback)
+            this.network.refreshInventory();
+        };
+        // Level-up notification — show a prominent gold message on screen
+        this.network.onLevelUp = (newLevel) => {
+            // Large gold combat text over the player
+            const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+            if (pos) {
+                this.entityRenderer.showCombatText(pos.x, pos.y - 50, `LEVEL UP! (${newLevel})`, '#ffdd44');
+            }
+            // Also announce in chat as a system message
+            this.pushSystemChat(`You have reached level ${newLevel}!`);
+        };
+        // ── Party system callbacks ──
+        this.network.onPartyUpdate = (members) => {
+            this.partyMembers = members;
+            // Backfill partyMemberData immediately for any new member whose state
+            // was already received via onPlayerChange before they joined the party.
+            // Without this, bars stay blank until the next state-change delta arrives.
+            for (const member of members) {
+                if (member.sessionId === this.network.sessionId)
+                    continue;
+                if (!this.partyMemberData.has(member.sessionId)) {
+                    const cached = this.remotePlayerCache.get(member.sessionId);
+                    if (cached) {
+                        this.partyMemberData.set(member.sessionId, {
+                            hp: cached.hp ?? 0,
+                            maxHp: cached.maxHp ?? 1,
+                            mana: cached.mana ?? 0,
+                            maxMana: cached.maxMana ?? 0,
+                            level: cached.level ?? 1,
+                            alive: cached.alive ?? true,
+                            shieldHp: cached.shieldHp ?? 0,
+                        });
+                    }
+                }
+            }
+            // Prune stale data for members no longer in party
+            const memberSet = new Set(members.map(m => m.sessionId));
+            for (const key of this.partyMemberData.keys()) {
+                if (!memberSet.has(key))
+                    this.partyMemberData.delete(key);
+            }
+        };
+        // Wire up bag click handler on entity renderer
+        this.entityRenderer.onBagClick = (bagId, button) => {
+            this.entityClickConsumed = true;
+            if (button === 2) {
+                // Right-click → open loot panel
+                this.openLootPanel(bagId);
+            }
+        };
     }
     /**
      * Get the world position for a given player (local or remote).
      */
-    getCombatTextPosition(playerId) {
-        if (playerId === this.network.sessionId) {
-            return { x: this.localX, y: this.localY };
+    getCombatTextPosition(entityId) {
+        if (entityId === this.network.sessionId) {
+            if (this.isIso) {
+                return orthoToIso(this.renderX, this.renderY);
+            }
+            return { x: this.renderX, y: this.renderY };
         }
-        return this.entityRenderer.getPlayerPosition(playerId);
+        return this.entityRenderer.getPlayerPosition(entityId)
+            ?? this.entityRenderer.getNPCPosition(entityId);
     }
     showRemoteDamageFlash(targetId, damage, isCrit) {
         const pos = this.entityRenderer.getPlayerPosition(targetId);
@@ -779,22 +1585,114 @@ export class GameScene extends Phaser.Scene {
     showRemoteMeleeSlash(attackerId, angle) {
         const pos = this.entityRenderer.getPlayerPosition(attackerId);
         if (pos)
-            this.entityRenderer.showMeleeSlash(pos.x, pos.y, angle);
+            this.entityRenderer.showMeleeSlash(pos.x, pos.y, angle, this.isIso);
     }
     createLocalPlayer() {
-        this.playerSprite = this.add.sprite(this.localX, this.localY, 'player');
-        this.playerSprite.setDepth(10);
-        // Tint by class
-        const template = ClientDataManager.instance.getClass(this.localClassId);
-        if (template) {
-            // Import CLASS_COLORS if we want to tint, but for local player keep it subtle
-        }
+        const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
+        this.playerSprite = createCharacterSprite(this, playerIso.x, playerIso.y, this.localClassId, this.localBodyId);
+        this.playerSprite.setDepth(ENTITY_DEPTH_BASE);
+        this.playerSprite.rotation = 0;
+        // Allow clicking the local player sprite to self-target
+        this.playerSprite.setInteractive({ useHandCursor: false });
+        this.playerSprite.on('pointerdown', () => {
+            this.entityClickConsumed = true;
+            this.inputManager.suppressNextClick = true;
+            const selfId = this.network.sessionId;
+            if (!selfId)
+                return;
+            if (this.currentTargetId === selfId && this.currentTargetType === 'self') {
+                this.clearTarget(); // click self again = deselect
+            }
+            else {
+                this.setTarget(selfId, 'self');
+            }
+        });
         // Aim indicator line
         this.aimLine = this.add.graphics();
-        this.aimLine.setDepth(9);
+        this.aimLine.setDepth(ENTITY_DEPTH_BASE - 1);
         // Camera follows player
         this.cameras.main.startFollow(this.playerSprite, true, 0.1, 0.1);
         this.cameras.main.setZoom(1);
+    }
+    /**
+     * Determine the 4-direction movement direction string from WASD input.
+     * Maps directly from world-space movement intent (W=up, S=down, A=left, D=right)
+     * so that the sprite row matches the key pressed, regardless of ISO projection.
+     * For diagonals the vertical axis takes priority (up/down over left/right).
+     * Returns null if not moving.
+     */
+    getMovementDir(input) {
+        const mx = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+        const my = (input.down ? 1 : 0) - (input.up ? 1 : 0);
+        if (mx === 0 && my === 0)
+            return null;
+        // WASD is rotated 45 degrees into the world before it moves the player
+        // (see applyInputLocally / MovementSystem.processInput). Facing has to use
+        // the same rotated vector, otherwise the local player faces one way on
+        // their own screen and another on everyone else's.
+        const orthoMx = mx + my;
+        const orthoMy = -mx + my;
+        return dirFromOrthoVector(orthoMx, orthoMy);
+    }
+    // ── Action Animation Helpers ───────────────────────────────
+    /**
+     * Play an action animation (melee, ranged, cast) on the local player sprite.
+     * Melee/ranged play once then return to idle; cast loops until stopped.
+     */
+    playActionAnimation(animType, direction) {
+        if (!this.playerSprite)
+            return;
+        const dir = (direction ?? this.lastFacingDir);
+        const anim = toPaperdollAnim(animType);
+        const animKey = characterAnimKey(this, this.playerSprite, this.localClassId, anim, dir);
+        if (!animKey)
+            return;
+        this.isPlayingActionAnim = true;
+        this.playerSprite.play(animKey, true);
+        if (anim === 'attack' || anim === 'shoot') {
+            // One-shot animation — return to idle when complete
+            this.playerSprite.once('animationcomplete', () => {
+                this.isPlayingActionAnim = false;
+                if (this.playerSprite) {
+                    playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle', this.lastFacingDir, true);
+                }
+            });
+        }
+        // 'cast' loops indefinitely — stopped by stopActionAnimation()
+    }
+    /** Stop any looping action animation (e.g. cast) and return to idle. */
+    stopActionAnimation() {
+        this.isPlayingActionAnim = false;
+        if (this.playerSprite) {
+            playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle', this.lastFacingDir, true);
+        }
+    }
+    /**
+     * Get the facing direction from an attacker toward a target screen position.
+     * Returns 'up', 'down', 'left', or 'right'.
+     */
+    getDirectionToTarget(attackerId, targetScreenX, targetScreenY) {
+        let attackerX;
+        let attackerY;
+        if (attackerId === this.network.sessionId) {
+            // Local player
+            const playerIso = this.isIso
+                ? orthoToIso(this.renderX, this.renderY)
+                : { x: this.renderX, y: this.renderY };
+            attackerX = playerIso.x;
+            attackerY = playerIso.y;
+        }
+        else {
+            // Remote player
+            const pos = this.entityRenderer.getPlayerPosition(attackerId);
+            if (!pos)
+                return this.lastFacingDir;
+            attackerX = pos.x;
+            attackerY = pos.y;
+        }
+        // Already in ISO screen space, so this is a screen-vector lookup
+        return dirFromScreenVector(targetScreenX - attackerX, targetScreenY - attackerY)
+            ?? this.lastFacingDir;
     }
     /**
      * Build the visual tilemap from the collision grid data.
@@ -828,17 +1726,20 @@ export class GameScene extends Phaser.Scene {
      * Build multi-layer tile map from server MapDataPayload.
      * Renders each tile layer in order, with proper depth sorting.
      */
+    /** Depth stride between tile layers for painter's-algorithm sorting. */
+    static LAYER_DEPTH_STRIDE = 100_000;
     buildTileMapFromData(data) {
         // Clear existing tiles
         for (const sprite of this.tileSprites) {
             sprite.destroy();
         }
         this.tileSprites = [];
-        const { tileLayers, tileSize, width, height } = data;
-        let layerDepth = 0;
+        const { tileLayers, tileSize } = data;
+        const isIso = data.orientation === 'isometric';
+        let layerIndex = 0;
         for (const layer of tileLayers) {
             if (!layer.visible) {
-                layerDepth++;
+                layerIndex++;
                 continue;
             }
             for (let y = 0; y < layer.height; y++) {
@@ -847,15 +1748,32 @@ export class GameScene extends Phaser.Scene {
                     if (gid === 0)
                         continue; // Empty tile, skip
                     const textureKey = GameScene.GID_TEXTURE_MAP[gid] ?? 'tile_void';
-                    const sprite = this.add.sprite(x * tileSize + tileSize / 2, y * tileSize + tileSize / 2, textureKey);
-                    sprite.setDepth(layerDepth);
+                    let screenX;
+                    let screenY;
+                    let depth;
+                    if (isIso) {
+                        // Isometric: project tile grid → screen via orthoToIso
+                        const pos = tileToIso(x, y);
+                        screenX = pos.x;
+                        screenY = pos.y;
+                        // Depth sorting: layer stride + row+col sum for painter's algorithm
+                        depth = layerIndex * GameScene.LAYER_DEPTH_STRIDE + (x + y);
+                    }
+                    else {
+                        // Orthogonal: simple grid placement
+                        screenX = x * tileSize + tileSize / 2;
+                        screenY = y * tileSize + tileSize / 2;
+                        depth = layerIndex;
+                    }
+                    const sprite = this.add.sprite(screenX, screenY, textureKey);
+                    sprite.setDepth(depth);
                     if (layer.opacity < 1) {
                         sprite.setAlpha(layer.opacity);
                     }
                     this.tileSprites.push(sprite);
                 }
             }
-            layerDepth++;
+            layerIndex++;
         }
     }
     /**
@@ -909,6 +1827,12 @@ export class GameScene extends Phaser.Scene {
         const hpColor = hpRatio > 0.5 ? 0x44ff44 : hpRatio > 0.25 ? 0xffaa00 : 0xff4444;
         this.hpBarGfx.fillStyle(hpColor, 1);
         this.hpBarGfx.fillRect(barX, hpBarY, barWidth * hpRatio, barHeight);
+        // Shield overlay — cyan tint on HP bar when Shield of Faith is active
+        if (this.localShieldHp > 0 && this.localMaxHp > 0) {
+            const shieldRatio = Math.min(1, this.localShieldHp / this.localMaxHp);
+            this.hpBarGfx.fillStyle(0x00ccff, 0.45);
+            this.hpBarGfx.fillRect(barX, hpBarY, barWidth * shieldRatio, barHeight);
+        }
         this.hpBarGfx.lineStyle(1, 0xffffff, 0.5);
         this.hpBarGfx.strokeRect(barX - 2, hpBarY - 2, barWidth + 4, barHeight + 4);
         // HP text
@@ -942,7 +1866,8 @@ export class GameScene extends Phaser.Scene {
             : this.localMaxEnergy > 0
                 ? `  EP: ${Math.floor(this.localEnergy)}/${this.localMaxEnergy}`
                 : '';
-        this.classHudText.setText(`${displayName} Lv.${this.localLevel}  HP: ${this.localHp}/${this.localMaxHp}${resourceStr}`);
+        const shieldStr = this.localShieldHp > 0 ? `  Shield: ${this.localShieldHp}` : '';
+        this.classHudText.setText(`${displayName} Lv.${this.localLevel}  HP: ${this.localHp}/${this.localMaxHp}${resourceStr}${shieldStr}`);
         // Position class HUD above bars
         const hasResourceBar = this.localMaxMana > 0 || this.localMaxEnergy > 0;
         const topBarY = hasResourceBar
@@ -961,7 +1886,7 @@ export class GameScene extends Phaser.Scene {
     get invPanelW() {
         return this.INV_COLS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 16;
     }
-    PANEL_H = 340;
+    PANEL_H = 386; // 9 equipment rows + stats
     get invPanelH() {
         return this.PANEL_H;
     }
@@ -985,6 +1910,23 @@ export class GameScene extends Phaser.Scene {
                 this.invOffset = saved.inv;
             if (saved.skills)
                 this.skillsOffset = saved.skills;
+            if (saved.target)
+                this.targetOffset = saved.target;
+            if (saved.party)
+                this.partyOffset = saved.party;
+            if (saved.buffs)
+                this.buffsOffset = saved.buffs;
+            if (saved.combatLog)
+                this.combatLogOffset = saved.combatLog;
+            if (saved.combatLogFilters)
+                Object.assign(this.combatLogFilters, saved.combatLogFilters);
+            if (saved.panelVisibility)
+                Object.assign(this.panelVisibility, saved.panelVisibility);
+            if (saved.panelOpacity)
+                Object.assign(this.panelOpacity, saved.panelOpacity);
+            if (saved.panelScale)
+                Object.assign(this.panelScale, saved.panelScale);
+            this.applyPanelCustomisation();
         }
         catch { /* ignore malformed data */ }
     }
@@ -995,9 +1937,361 @@ export class GameScene extends Phaser.Scene {
                 actionBar: this.actionBarOffset,
                 inv: this.invOffset,
                 skills: this.skillsOffset,
+                target: this.targetOffset,
+                party: this.partyOffset,
+                buffs: this.buffsOffset,
+                combatLog: this.combatLogOffset,
+                combatLogFilters: this.combatLogFilters,
+                panelVisibility: this.panelVisibility,
+                panelOpacity: this.panelOpacity,
+                panelScale: this.panelScale,
             }));
         }
         catch { /* ignore */ }
+    }
+    // ══════════════════════════════════════════════════════════
+    // ██  OPTIONS MENU
+    // ══════════════════════════════════════════════════════════
+    // Options menu layout constants (shared between create and hit-testing)
+    OPTS_PANEL_W = 320;
+    OPTS_PANEL_H = 300;
+    OPTS_BTN_W = 240;
+    OPTS_BTN_H = 34;
+    OPTS_BTN_GAP = 8;
+    OPTS_TITLE_H = 22;
+    OPTS_BUTTONS = [
+        { label: 'Edit HUD', action: 'editHud', enabled: true },
+        { label: 'Reset HUD Layout', action: 'resetHud', enabled: true },
+        { label: 'Toggle Sound (Coming Soon)', action: 'sound', enabled: false },
+        { label: 'Logout', action: 'logout', enabled: true },
+    ];
+    /** Return the screen rect for the options panel. */
+    getOptionsPanelRect() {
+        const cam = this.cameras.main;
+        return {
+            x: cam.width / 2 - this.OPTS_PANEL_W / 2,
+            y: cam.height / 2 - this.OPTS_PANEL_H / 2,
+            w: this.OPTS_PANEL_W,
+            h: this.OPTS_PANEL_H,
+        };
+    }
+    /** Return the screen rect for a specific options button by index. */
+    getOptionsButtonRect(index) {
+        const pr = this.getOptionsPanelRect();
+        const startY = pr.y + this.OPTS_TITLE_H + 24;
+        const by = startY + index * (this.OPTS_BTN_H + this.OPTS_BTN_GAP);
+        return {
+            x: pr.x + this.OPTS_PANEL_W / 2 - this.OPTS_BTN_W / 2,
+            y: by,
+            w: this.OPTS_BTN_W,
+            h: this.OPTS_BTN_H,
+        };
+    }
+    /** Return the screen rect for the close (✕) button. */
+    getOptionsCloseRect() {
+        const pr = this.getOptionsPanelRect();
+        return { x: pr.x + this.OPTS_PANEL_W - 28, y: pr.y + 2, w: 24, h: 24 };
+    }
+    createOptionsMenu() {
+        const cam = this.cameras.main;
+        // Dim overlay — visual only, not interactive.
+        // Click-outside and button clicks are handled via manual hit-rect testing
+        // in the global pointerdown/pointermove handlers (same pattern as all other panels).
+        this.optionsDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.5);
+        this.optionsDimBg.setScrollFactor(0);
+        this.optionsDimBg.setDepth(UI_DEPTH_BASE + 299);
+        this.optionsDimBg.setVisible(false);
+        // Container — holds all visual elements, toggled as a group
+        this.optionsMenuContainer = this.add.container(0, 0);
+        this.optionsMenuContainer.setScrollFactor(0);
+        this.optionsMenuContainer.setDepth(UI_DEPTH_BASE + 300);
+        this.optionsMenuContainer.setVisible(false);
+        this.rebuildOptionsMenuVisuals();
+    }
+    /**
+     * (Re)build the visual elements inside the options menu container.
+     * Called once at creation and can be called again on resize.
+     */
+    rebuildOptionsMenuVisuals() {
+        // Clear previous contents
+        this.optionsMenuContainer.removeAll(true);
+        this.optionsButtons = [];
+        const pr = this.getOptionsPanelRect();
+        // Background
+        const bg = this.add.rectangle(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_PANEL_H / 2, this.OPTS_PANEL_W, this.OPTS_PANEL_H, 0x1a1a2e, 0.95);
+        bg.setStrokeStyle(2, 0x555588);
+        this.optionsMenuContainer.add(bg);
+        // Title
+        const title = this.add.text(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_TITLE_H / 2 + 4, 'Options', {
+            fontSize: '15px', color: '#ffcc00', stroke: '#000000', strokeThickness: 2, fontStyle: 'bold',
+        }).setOrigin(0.5, 0.5);
+        this.optionsMenuContainer.add(title);
+        // Separator
+        const sep = this.add.rectangle(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_TITLE_H + 6, this.OPTS_PANEL_W - 20, 1, 0x555588, 0.6);
+        this.optionsMenuContainer.add(sep);
+        // Buttons (visual only — interaction handled via global pointer handlers)
+        for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+            const btn = this.OPTS_BUTTONS[i];
+            const br = this.getOptionsButtonRect(i);
+            const bx = br.x + br.w / 2;
+            const by = br.y + br.h / 2;
+            const btnBg = this.add.rectangle(bx, by, this.OPTS_BTN_W, this.OPTS_BTN_H, btn.enabled ? 0x2a2a3e : 0x1e1e2e, 1);
+            btnBg.setStrokeStyle(1, 0x444466);
+            this.optionsMenuContainer.add(btnBg);
+            const textColor = btn.enabled ? '#cccccc' : '#555555';
+            const btnText = this.add.text(bx, by, btn.label, {
+                fontSize: '13px', color: textColor, stroke: '#000000', strokeThickness: 1,
+            }).setOrigin(0.5, 0.5);
+            this.optionsMenuContainer.add(btnText);
+            this.optionsButtons.push({ bg: btnBg, text: btnText, action: btn.action });
+        }
+        // Close button (✕)
+        const cr = this.getOptionsCloseRect();
+        const closeBtn = this.add.text(cr.x + cr.w / 2, cr.y + cr.h / 2, '✕', {
+            fontSize: '14px', color: '#888888', stroke: '#000000', strokeThickness: 1,
+        }).setOrigin(0.5, 0.5);
+        this.optionsMenuContainer.add(closeBtn);
+        // Store ref for hover styling
+        this.optionsCloseText = closeBtn;
+        // Footer
+        const footer = this.add.text(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_PANEL_H - 16, '1382 Labs — Valhalla', {
+            fontSize: '10px', color: '#444466',
+        }).setOrigin(0.5, 0.5);
+        this.optionsMenuContainer.add(footer);
+    }
+    toggleOptionsMenu() {
+        this.optionsMenuOpen = !this.optionsMenuOpen;
+        this.optionsDimBg.setVisible(this.optionsMenuOpen);
+        this.optionsMenuContainer.setVisible(this.optionsMenuOpen);
+    }
+    handleOptionsAction(action) {
+        switch (action) {
+            case 'editHud':
+                this.toggleOptionsMenu();
+                this.enterHudEditMode();
+                break;
+            case 'resetHud':
+                this.resetHudLayout();
+                break;
+            case 'logout':
+                this.logoutToLoginScreen();
+                break;
+            case 'sound':
+                // Placeholder for future audio system
+                break;
+        }
+    }
+    returnToCharacterSelect() {
+        this.saveHudLayout();
+        // Await the full WebSocket leave so the server processes the disconnect
+        // before we attempt a new joinOrCreate from the character select screen.
+        this.network.disconnect()
+            .then(() => AuthClient.getCharactersWithUsername())
+            .then(({ characters, username }) => {
+            this.scene.start('CharacterSelectScene', {
+                characters,
+                username,
+                token: this.authToken,
+            });
+        })
+            .catch(() => {
+            // If the fetch fails (e.g. network error), fall back to LoginScene
+            AuthClient.clearToken();
+            this.scene.start('LoginScene');
+        });
+    }
+    logoutToLoginScreen() {
+        this.saveHudLayout();
+        // Release all Phaser keyboard captures before leaving — addKey() registers
+        // WASD in the global KeyboardManager capture list (which calls preventDefault),
+        // so without this, WASD won't type in HTML <input> fields after the scene ends.
+        this.input.keyboard?.clearCaptures();
+        this.network.disconnect().then(() => {
+            AuthClient.clearToken();
+            this.scene.start('LoginScene');
+        }).catch(() => {
+            AuthClient.clearToken();
+            this.scene.start('LoginScene');
+        });
+    }
+    resetHudLayout() {
+        this.chatOffset = { x: 0, y: 0 };
+        this.actionBarOffset = { x: 0, y: 0 };
+        this.invOffset = { x: 0, y: 0 };
+        this.skillsOffset = { x: 0, y: 0 };
+        this.targetOffset = { x: 0, y: 0 };
+        this.partyOffset = { x: 0, y: 0 };
+        this.buffsOffset = { x: 0, y: 0 };
+        this.combatLogOffset = { x: 0, y: 0 };
+        this.panelVisibility = { chat: true, actionBar: true, target: true, party: true, buffs: true };
+        this.panelOpacity = { chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0 };
+        this.panelScale = { chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0 };
+        try {
+            localStorage.removeItem(`valhalla_hud_${this.characterId}`);
+        }
+        catch { /* ignore */ }
+        this.applyPanelCustomisation();
+        this.saveHudLayout();
+    }
+    // ══════════════════════════════════════════════════════════
+    // ██  HUD EDIT MODE
+    // ══════════════════════════════════════════════════════════
+    createHudEditModeUI() {
+        const cam = this.cameras.main;
+        this.hudEditLabel = this.add.text(cam.width / 2, 20, 'HUD EDIT MODE', {
+            fontSize: '18px', color: '#ffcc00', stroke: '#000000', strokeThickness: 3, fontStyle: 'bold',
+        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 310).setVisible(false);
+        this.hudEditSubLabel = this.add.text(cam.width / 2, 42, 'Drag panels to reposition  •  Click controls to customise  •  Press Esc to exit', {
+            fontSize: '11px', color: '#aaaacc', stroke: '#000000', strokeThickness: 1,
+        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 310).setVisible(false);
+    }
+    /** Map panel keys to their Phaser containers. */
+    getPanelContainerMap() {
+        return {
+            chat: this.chatContainer,
+            actionBar: this.actionBarContainer,
+            target: this.targetNameplateContainer,
+            party: this.partyPanelContainer,
+            buffs: this.buffsPanelContainer,
+        };
+    }
+    enterHudEditMode() {
+        this.hudEditMode = true;
+        this.hudEditLabel.setVisible(true);
+        this.hudEditSubLabel.setVisible(true);
+        // Force show all customisable panels so the user can drag them
+        const containers = this.getPanelContainerMap();
+        for (const key of Object.keys(containers)) {
+            containers[key].setVisible(true);
+        }
+        // Build per-panel control strips
+        this.buildHudEditControls();
+    }
+    exitHudEditMode() {
+        this.hudEditMode = false;
+        this.hudEditLabel.setVisible(false);
+        this.hudEditSubLabel.setVisible(false);
+        // Destroy edit mode controls
+        for (const obj of this.hudEditPanelControls) {
+            obj.destroy();
+        }
+        this.hudEditPanelControls = [];
+        // Apply visibility/opacity/scale settings and hide panels that should be hidden
+        this.applyPanelCustomisation();
+        this.saveHudLayout();
+    }
+    /**
+     * Apply the stored panelVisibility, panelOpacity and panelScale to the actual containers.
+     * Called when loading layout, exiting edit mode, or resetting layout.
+     */
+    applyPanelCustomisation() {
+        const containers = this.getPanelContainerMap();
+        for (const key of Object.keys(containers)) {
+            const c = containers[key];
+            const scale = this.panelScale[key] ?? 1.0;
+            c.setScale(scale);
+            c.setAlpha(this.panelOpacity[key] ?? 1.0);
+            // Don't force-hide panels that have contextual visibility (target, party).
+            // Those are managed by the game logic. We just store the user preference.
+        }
+    }
+    /**
+     * Build floating control strips for each panel during HUD edit mode.
+     * Each panel gets: [Eye] toggle visibility, [O] cycle opacity, [S] cycle scale
+     */
+    buildHudEditControls() {
+        // Clean up any previous controls
+        for (const obj of this.hudEditPanelControls) {
+            obj.destroy();
+        }
+        this.hudEditPanelControls = [];
+        const containers = this.getPanelContainerMap();
+        const cam = this.cameras.main;
+        const CTRL_H = 22;
+        const CTRL_W = 120;
+        // Panel-specific screen rect functions (approximate top-left of each panel)
+        const panelRects = {
+            chat: () => ({
+                x: this.CHAT_LEFT_X + this.chatOffset.x,
+                y: cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y,
+            }),
+            actionBar: () => ({
+                x: this.actionBarScreenRect.x + this.actionBarOffset.x,
+                y: this.actionBarScreenRect.y + this.actionBarOffset.y,
+            }),
+            target: () => ({
+                x: 16 + this.targetOffset.x,
+                y: 60 + this.targetOffset.y,
+            }),
+            party: () => ({
+                x: (this.partyPanelTitleHandle?.x ?? 0) + this.partyOffset.x,
+                y: (this.partyPanelTitleHandle?.y ?? 80) + this.partyOffset.y,
+            }),
+            buffs: () => ({
+                x: (this.buffsPanelTitleHandle?.x ?? cam.width - 180) + this.buffsOffset.x,
+                y: (this.buffsPanelTitleHandle?.y ?? 60) + this.buffsOffset.y,
+            }),
+        };
+        for (const key of Object.keys(containers)) {
+            const rect = panelRects[key]?.();
+            if (!rect)
+                continue;
+            const ctrlX = rect.x;
+            const ctrlY = rect.y - CTRL_H - 4; // above the panel
+            // Background strip
+            const stripBg = this.add.rectangle(ctrlX + CTRL_W / 2, ctrlY + CTRL_H / 2, CTRL_W, CTRL_H, 0x1a1a2e, 0.9)
+                .setStrokeStyle(1, 0x555588).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 311);
+            this.hudEditPanelControls.push(stripBg);
+            // [Eye] Visibility toggle
+            const vis = this.panelVisibility[key] ?? true;
+            const eyeBtn = this.add.text(ctrlX + 8, ctrlY + 4, vis ? '👁' : '👁‍🗨', {
+                fontSize: '13px', color: vis ? '#44ff44' : '#ff4444',
+            }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+            eyeBtn.on('pointerdown', () => {
+                this.panelVisibility[key] = !this.panelVisibility[key];
+                eyeBtn.setText(this.panelVisibility[key] ? '👁' : '👁‍🗨');
+                eyeBtn.setColor(this.panelVisibility[key] ? '#44ff44' : '#ff4444');
+                // In edit mode, keep showing the panel even if toggled off (greyed out)
+                containers[key].setAlpha(this.panelVisibility[key] ? (this.panelOpacity[key] ?? 1) : 0.3);
+            });
+            this.hudEditPanelControls.push(eyeBtn);
+            // [O] Opacity cycle: 50% → 75% → 100%
+            const opacitySteps = [0.5, 0.75, 1.0];
+            const opLabel = this.add.text(ctrlX + 34, ctrlY + 4, `O:${Math.round((this.panelOpacity[key] ?? 1) * 100)}%`, {
+                fontSize: '11px', color: '#aaaacc',
+            }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+            opLabel.on('pointerdown', () => {
+                const curIdx = opacitySteps.indexOf(this.panelOpacity[key] ?? 1.0);
+                const nextIdx = (curIdx + 1) % opacitySteps.length;
+                this.panelOpacity[key] = opacitySteps[nextIdx];
+                opLabel.setText(`O:${Math.round(opacitySteps[nextIdx] * 100)}%`);
+                if (this.panelVisibility[key]) {
+                    containers[key].setAlpha(opacitySteps[nextIdx]);
+                }
+            });
+            this.hudEditPanelControls.push(opLabel);
+            // [S] Scale cycle: 0.8x → 1.0x → 1.2x
+            const scaleSteps = [0.8, 1.0, 1.2];
+            const scLabel = this.add.text(ctrlX + 82, ctrlY + 4, `S:${this.panelScale[key] ?? 1.0}x`, {
+                fontSize: '11px', color: '#aaaacc',
+            }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+            scLabel.on('pointerdown', () => {
+                const curIdx = scaleSteps.indexOf(this.panelScale[key] ?? 1.0);
+                const nextIdx = (curIdx + 1) % scaleSteps.length;
+                this.panelScale[key] = scaleSteps[nextIdx];
+                scLabel.setText(`S:${scaleSteps[nextIdx]}x`);
+                containers[key].setScale(scaleSteps[nextIdx]);
+            });
+            this.hudEditPanelControls.push(scLabel);
+        }
+    }
+    /**
+     * Phaser lifecycle — called when the scene is stopped or replaced (e.g. logging out,
+     * returning to character select). Saves HUD layout as a safety net so positions are
+     * never lost even if the player leaves without completing a drag gesture.
+     */
+    shutdown() {
+        this.saveHudLayout();
     }
     /**
      * Single global pointer handler that detects drags on each panel's title bar
@@ -1009,14 +2303,17 @@ export class GameScene extends Phaser.Scene {
         // ── Compute current screen rects for each panel's drag handle ──────────
         const getChatHandleRect = () => {
             const cam = this.cameras.main;
-            const hudRight = this.classHudText ? this.classHudText.x + this.classHudText.width + 10 : this.CHAT_LEFT_X;
-            const px = Math.max(this.CHAT_LEFT_X, hudRight) + this.chatOffset.x;
+            const px = this.CHAT_LEFT_X + this.chatOffset.x;
             const py = cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y;
             return { x: px, y: py, w: this.chatEffectiveW, h: TITLE_H };
         };
         const getActionBarHandleRect = () => {
             const r = this.actionBarScreenRect;
             return { x: r.x, y: r.y, w: r.w, h: r.h }; // full bar is the handle
+        };
+        const getCombatLogHandleRect = () => {
+            const r = this.getCombatLogPanelRect();
+            return { x: r.x, y: r.y, w: r.w, h: this.CL_TITLE_H };
         };
         const getInvHandleRect = () => {
             // Top strip of the combined character+inventory panel block
@@ -1036,6 +2333,28 @@ export class GameScene extends Phaser.Scene {
                 return;
             const px = pointer.x;
             const py = pointer.y;
+            // ── Options menu interaction (manual hit-rect, same pattern as all panels) ──
+            if (this.optionsMenuOpen) {
+                // Close button (✕)
+                if (hitRect(this.getOptionsCloseRect(), px, py)) {
+                    this.toggleOptionsMenu();
+                    return;
+                }
+                // Button clicks
+                for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+                    if (!this.OPTS_BUTTONS[i].enabled)
+                        continue;
+                    if (hitRect(this.getOptionsButtonRect(i), px, py)) {
+                        this.handleOptionsAction(this.OPTS_BUTTONS[i].action);
+                        return;
+                    }
+                }
+                // Click outside panel → close
+                if (!hitRect(this.getOptionsPanelRect(), px, py)) {
+                    this.toggleOptionsMenu();
+                }
+                return; // don't start panel drags while options menu is open
+            }
             // Chat drag handle
             if (hitRect(getChatHandleRect(), px, py)) {
                 this.hudDragTarget = 'chat';
@@ -1045,13 +2364,28 @@ export class GameScene extends Phaser.Scene {
             }
             // Action bar drag handle
             if (hitRect(getActionBarHandleRect(), px, py)) {
-                // Only start drag on the padding area (not on a slot) to avoid blocking skill drops
                 const slotHit = this.getActionBarSlotAt(px, py);
                 if (slotHit === -1) {
+                    // Padding area → reposition the whole bar
                     this.hudDragTarget = 'actionBar';
                     this.hudDragStartMouse = { x: px, y: py };
                     this.hudDragStartOffset = { ...this.actionBarOffset };
                     return;
+                }
+                else {
+                    // Slot area → start skill drag if the slot is occupied
+                    const skillId = this.actionBar[slotHit];
+                    if (skillId) {
+                        const skill = ClientDataManager.instance.getSkill(skillId);
+                        this.abDragging = true;
+                        this.abDragSourceSlot = slotHit;
+                        this.abDragGhost.setText(skill?.iconAbbrev ?? skillId.slice(0, 4));
+                        this.abDragGhost.setPosition(px + 16, py);
+                        this.abDragGhostBg.setPosition(px + 16, py);
+                        this.abDragGhost.setVisible(true);
+                        this.abDragGhostBg.setVisible(true);
+                        return;
+                    }
                 }
             }
             // Inventory panel drag handle (only when open)
@@ -1068,8 +2402,128 @@ export class GameScene extends Phaser.Scene {
                 this.hudDragStartOffset = { ...this.skillsOffset };
                 return;
             }
+            // Target nameplate drag handle (only when a target is selected)
+            if (this.currentTargetId && this.targetNameplateTitleHandle &&
+                hitRect(this.targetNameplateTitleHandle, px, py)) {
+                this.hudDragTarget = 'target';
+                this.hudDragStartMouse = { x: px, y: py };
+                this.hudDragStartOffset = { ...this.targetOffset };
+                return;
+            }
+            // Party panel drag handle (only when party is visible)
+            if (this.partyMembers.length > 0 && hitRect(this.partyPanelTitleHandle, px, py)) {
+                this.hudDragTarget = 'party';
+                this.hudDragStartMouse = { x: px, y: py };
+                this.hudDragStartOffset = { ...this.partyOffset };
+                return;
+            }
+            // Buffs panel drag handle (only when at least one buff is active)
+            if (this.localBuffs.size > 0 && hitRect(this.buffsPanelTitleHandle, px, py)) {
+                this.hudDragTarget = 'buffs';
+                this.hudDragStartMouse = { x: px, y: py };
+                this.hudDragStartOffset = { ...this.buffsOffset };
+                return;
+            }
+            // Combat log: close context menu on left click, or start drag
+            if (this.combatLogContextMenuOpen) {
+                this.handleCombatLogContextClick(px, py);
+                return;
+            }
+            if (hitRect(getCombatLogHandleRect(), px, py)) {
+                this.hudDragTarget = 'combatLog';
+                this.hudDragStartMouse = { x: px, y: py };
+                this.hudDragStartOffset = { ...this.combatLogOffset };
+                return;
+            }
+        });
+        // ── Combat log: right-click opens context menu ──
+        this.input.on('pointerdown', (pointer) => {
+            if (!pointer.rightButtonDown())
+                return;
+            const px = pointer.x;
+            const py = pointer.y;
+            const r = this.getCombatLogPanelRect();
+            if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+                this.openCombatLogContextMenu(px, py);
+            }
+            else if (this.combatLogContextMenuOpen) {
+                this.closeCombatLogContextMenu();
+            }
+        });
+        // ── Chat + Combat log: mouse wheel scroll ──
+        this.input.on('wheel', (_pointer, _gos, _dx, dy) => {
+            const px = _pointer.x;
+            const py = _pointer.y;
+            // Chat scroll
+            const cr = this.getChatPanelRect();
+            if (px >= cr.x && px <= cr.x + cr.w && py >= cr.y && py <= cr.y + cr.h) {
+                const maxScroll = Math.max(0, this.chatMessages.length - this.CHAT_VISIBLE_LINES);
+                if (dy < 0) {
+                    this.chatScrollOffset = Math.min(maxScroll, this.chatScrollOffset + 3);
+                }
+                else {
+                    this.chatScrollOffset = Math.max(0, this.chatScrollOffset - 3);
+                }
+                return;
+            }
+            // Combat log scroll
+            const r = this.getCombatLogPanelRect();
+            if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+                const filtered = this.getFilteredCombatLogMessages();
+                const maxScroll = Math.max(0, filtered.length - this.CL_VISIBLE_LINES);
+                if (dy < 0) {
+                    // Scroll up (show older messages)
+                    this.combatLogScrollOffset = Math.min(maxScroll, this.combatLogScrollOffset + 3);
+                }
+                else {
+                    // Scroll down (show newer messages)
+                    this.combatLogScrollOffset = Math.max(0, this.combatLogScrollOffset - 3);
+                }
+            }
         });
         this.input.on('pointermove', (pointer) => {
+            // ── Options menu hover effects ──
+            if (this.optionsMenuOpen) {
+                const mx = pointer.x;
+                const my = pointer.y;
+                let newHover = -1;
+                for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+                    if (!this.OPTS_BUTTONS[i].enabled)
+                        continue;
+                    const br = this.getOptionsButtonRect(i);
+                    if (mx >= br.x && mx <= br.x + br.w && my >= br.y && my <= br.y + br.h) {
+                        newHover = i;
+                        break;
+                    }
+                }
+                // Check close button
+                const cr = this.getOptionsCloseRect();
+                const overClose = mx >= cr.x && mx <= cr.x + cr.w && my >= cr.y && my <= cr.y + cr.h;
+                if (newHover !== this.optionsHoveredIdx) {
+                    // Un-hover previous
+                    if (this.optionsHoveredIdx >= 0 && this.optionsHoveredIdx < this.optionsButtons.length) {
+                        this.optionsButtons[this.optionsHoveredIdx].bg.setFillStyle(0x2a2a3e);
+                        this.optionsButtons[this.optionsHoveredIdx].text.setColor('#cccccc');
+                    }
+                    // Hover new
+                    if (newHover >= 0) {
+                        this.optionsButtons[newHover].bg.setFillStyle(0x3a3a4e);
+                        this.optionsButtons[newHover].text.setColor('#ffcc00');
+                    }
+                    this.optionsHoveredIdx = newHover;
+                }
+                // Close btn hover
+                if (this.optionsCloseText) {
+                    this.optionsCloseText.setColor(overClose ? '#ff6666' : '#888888');
+                }
+                return; // don't process drag while options menu is open
+            }
+            // Action-bar slot drag ghost
+            if (this.abDragging) {
+                this.abDragGhost.setPosition(pointer.x + 16, pointer.y);
+                this.abDragGhostBg.setPosition(pointer.x + 16, pointer.y);
+                return;
+            }
             if (!this.hudDragTarget)
                 return;
             const dx = pointer.x - this.hudDragStartMouse.x;
@@ -1093,20 +2547,615 @@ export class GameScene extends Phaser.Scene {
                     this.skillsOffset = newOffset;
                     this.skillsPaneContainer.setPosition(newOffset.x, newOffset.y);
                     break;
+                case 'target':
+                    this.targetOffset = newOffset;
+                    this.targetNameplateContainer.setPosition(this.getTargetNameplateDefaultX() + newOffset.x, this.getTargetNameplateDefaultY() + newOffset.y);
+                    break;
+                case 'party':
+                    this.partyOffset = newOffset;
+                    break;
+                case 'buffs':
+                    this.buffsOffset = newOffset;
+                    break;
+                case 'combatLog':
+                    this.combatLogOffset = newOffset;
+                    break;
             }
         });
-        this.input.on('pointerup', () => {
+        this.input.on('pointerup', (pointer) => {
+            // ── Action-bar skill drag drop ──────────────────────────
+            if (this.abDragging) {
+                const src = this.abDragSourceSlot;
+                const dest = this.getActionBarSlotAt(pointer.x, pointer.y);
+                if (dest >= 0 && dest !== src) {
+                    // Dropped on another slot → swap
+                    const tmp = this.actionBar[dest];
+                    this.actionBar[dest] = this.actionBar[src];
+                    this.actionBar[src] = tmp;
+                    this.network.sendSetActionBar(this.actionBar);
+                }
+                else if (dest === -1) {
+                    // Dropped outside the action bar → remove from source slot
+                    this.actionBar[src] = '';
+                    this.network.sendSetActionBar(this.actionBar);
+                }
+                // dest === src → no-op (dropped back on same slot)
+                this.abDragging = false;
+                this.abDragSourceSlot = -1;
+                this.abDragGhost.setVisible(false);
+                this.abDragGhostBg.setVisible(false);
+                return;
+            }
+            // ── HUD panel repositioning drag end ────────────────────
             if (!this.hudDragTarget)
                 return;
             this.hudDragTarget = null;
             this.saveHudLayout();
         });
     }
+    // ── Targeting Methods ─────────────────────────────────────
+    getTargetNameplateDefaultX() {
+        return this.cameras.main.width - 222;
+    }
+    getTargetNameplateDefaultY() {
+        return 100;
+    }
+    createTargetNameplate() {
+        const cam = this.cameras.main;
+        const TH = 22; // title strip height (fixed)
+        const defaultX = cam.width - 222;
+        const defaultY = 100;
+        this.targetNameplateContainer = this.add.container(defaultX + this.targetOffset.x, defaultY + this.targetOffset.y);
+        this.targetNameplateContainer.setScrollFactor(0);
+        this.targetNameplateContainer.setDepth(UI_DEPTH_BASE + 70);
+        this.targetNameplateContainer.setVisible(false);
+        // ── Background panel (redrawn with dynamic width each frame) ──
+        this.targetNameplateBg = this.add.graphics();
+        // ── "Target" label in title strip ──
+        this.targetNameplateTitleText = this.add.text(0, TH / 2, 'Target', {
+            fontSize: '11px',
+            color: '#8888bb',
+            fontStyle: 'bold',
+        });
+        this.targetNameplateTitleText.setOrigin(0.5, 0.5);
+        // ── Target name ──
+        this.targetNameplateNameText = this.add.text(8, TH + 5, '', {
+            fontSize: '13px',
+            color: '#ffffff',
+            fontStyle: 'bold',
+        });
+        this.targetNameplateNameText.setOrigin(0, 0);
+        // ── Level label ──
+        this.targetNameplateLevelText = this.add.text(0, TH + 5, '', {
+            fontSize: '11px',
+            color: '#aaaaaa',
+        });
+        this.targetNameplateLevelText.setOrigin(1, 0);
+        // ── HP bar (redrawn each frame) ──
+        this.targetNameplateHpBar = this.add.graphics();
+        // ── HP value text ── (y = barTop + barHeight + gap = (TH+24) + 10 + 4 = TH+38)
+        this.targetNameplateHpText = this.add.text(0, TH + 38, '', {
+            fontSize: '10px',
+            color: '#aaaaaa',
+        });
+        this.targetNameplateHpText.setOrigin(0.5, 0);
+        // ── Buff pills (drawn each frame for NPC targets) ──
+        this.targetNameplateBuffsGfx = this.add.graphics();
+        // Single text element that renders buff pill labels (e.g. "☠ Poison 4s")
+        this.targetNameplateBuffsText = this.add.text(0, 0, '', {
+            fontSize: '10px',
+            color: '#88ff88',
+            fontStyle: 'bold',
+        });
+        this.targetNameplateBuffsText.setOrigin(0, 0.5);
+        this.targetNameplateBuffsText.setVisible(false);
+        this.targetNameplateContainer.add([
+            this.targetNameplateBg,
+            this.targetNameplateTitleText,
+            this.targetNameplateNameText,
+            this.targetNameplateLevelText,
+            this.targetNameplateHpBar,
+            this.targetNameplateHpText,
+            this.targetNameplateBuffsGfx,
+            this.targetNameplateBuffsText,
+        ]);
+        // Cache the title-strip screen rect for drag hit-testing (updated in updateTargetNameplate)
+        this.targetNameplateTitleHandle = { x: defaultX, y: defaultY, w: 210, h: TH };
+    }
+    // ── Party Panel ─────────────────────────────────────────────
+    createPartyPanel() {
+        const PW = 160; // panel width
+        const TH = 20; // title strip height
+        const defaultX = 12;
+        const defaultY = 200;
+        this.partyPanelContainer = this.add.container(defaultX + this.partyOffset.x, defaultY + this.partyOffset.y);
+        this.partyPanelContainer.setScrollFactor(0);
+        this.partyPanelContainer.setDepth(UI_DEPTH_BASE + 75);
+        this.partyPanelContainer.setVisible(false);
+        // Background (redrawn dynamically based on member count)
+        this.partyPanelBg = this.add.graphics();
+        this.partyPanelContainer.add(this.partyPanelBg);
+        // Title text
+        const titleText = this.add.text(PW / 2, TH / 2, 'Party', {
+            fontSize: '11px',
+            color: '#8888bb',
+            fontStyle: 'bold',
+        });
+        titleText.setOrigin(0.5, 0.5);
+        this.partyPanelContainer.add(titleText);
+        // Pre-create slots for up to 4 members (name text + HP bar + mana bar each)
+        for (let i = 0; i < 4; i++) {
+            const nameText = this.add.text(8, TH + 4 + i * 38, '', {
+                fontSize: '11px',
+                color: '#ffffff',
+                fontStyle: 'bold',
+            });
+            nameText.setOrigin(0, 0);
+            // Make the full row clickable for targeting
+            nameText.setInteractive({
+                hitArea: new Phaser.Geom.Rectangle(-8, -2, PW, 34),
+                hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+                useHandCursor: true,
+            });
+            const slotIndex = i;
+            nameText.on('pointerdown', () => {
+                const sid = this.partySlotSessionIds[slotIndex];
+                if (!sid)
+                    return;
+                this.entityClickConsumed = true;
+                this.inputManager.suppressNextClick = true;
+                if (this.currentTargetId === sid && this.currentTargetType === 'player') {
+                    this.clearTarget();
+                }
+                else {
+                    this.setTarget(sid, 'player');
+                }
+            });
+            this.partyPanelTexts.push(nameText);
+            this.partyPanelContainer.add(nameText);
+            const hpBar = this.add.graphics();
+            this.partyPanelHpBars.push(hpBar);
+            this.partyPanelContainer.add(hpBar);
+            const manaBar = this.add.graphics();
+            this.partyPanelManaBars.push(manaBar);
+            this.partyPanelContainer.add(manaBar);
+        }
+        // Cache initial title handle rect
+        this.partyPanelTitleHandle = { x: defaultX, y: defaultY, w: PW, h: TH };
+    }
+    // ── Buffs Panel ──────────────────────────────────────────────
+    createBuffsPanel() {
+        const MAX_BUFFS = 8;
+        const PW = 180;
+        const TH = 20;
+        this.buffsPanelContainer = this.add.container(0, 0);
+        this.buffsPanelContainer.setScrollFactor(0);
+        this.buffsPanelContainer.setDepth(UI_DEPTH_BASE + 76);
+        this.buffsPanelContainer.setVisible(false);
+        // Background graphics (redrawn each frame based on buff count)
+        this.buffsPanelBg = this.add.graphics();
+        this.buffsPanelContainer.add(this.buffsPanelBg);
+        // Title text — x is updated each frame when panel width changes
+        this.buffsPanelTitleText = this.add.text(PW / 2, TH / 2, 'Buffs', {
+            fontSize: '11px',
+            color: '#8888bb',
+            fontStyle: 'bold',
+        }).setOrigin(0.5, 0.5);
+        this.buffsPanelContainer.add(this.buffsPanelTitleText);
+        // Pre-create one slot per possible displayed buff
+        for (let i = 0; i < MAX_BUFFS; i++) {
+            // Graphics: icon box fill + timer progress bar
+            const rowGfx = this.add.graphics();
+            this.buffsPanelRowGfx.push(rowGfx);
+            this.buffsPanelContainer.add(rowGfx);
+            // Abbreviation text, centered over the icon box
+            const abbrText = this.add.text(0, 0, '', {
+                fontSize: '8px',
+                fontFamily: 'monospace',
+                color: '#ffffff',
+                fontStyle: 'bold',
+            }).setOrigin(0.5, 0.5);
+            this.buffsPanelAbbrTexts.push(abbrText);
+            this.buffsPanelContainer.add(abbrText);
+            // Buff name
+            const nameText = this.add.text(0, 0, '', {
+                fontSize: '9px',
+                fontFamily: 'monospace',
+                color: '#dddddd',
+            }).setOrigin(0, 0);
+            this.buffsPanelNameTexts.push(nameText);
+            this.buffsPanelContainer.add(nameText);
+            // Countdown timer (right-aligned)
+            const timerText = this.add.text(0, 0, '', {
+                fontSize: '9px',
+                fontFamily: 'monospace',
+                color: '#aaaaaa',
+            }).setOrigin(1, 0);
+            this.buffsPanelTimerTexts.push(timerText);
+            this.buffsPanelContainer.add(timerText);
+        }
+    }
+    updateBuffsPanel() {
+        const MAX_BUFFS = 8;
+        const MIN_PW = 150; // minimum panel width in px
+        const TH = 20; // title bar height
+        const ROW_H = 28; // height per buff row
+        const ICON_X = 8; // left padding / icon left edge
+        const ICON_SIZE = 16;
+        const NAME_GAP = 4; // gap between icon right edge and name text
+        const TIMER_GAP = 6; // gap between name text right edge and timer
+        const RIGHT_PAD = 8; // right margin inside panel
+        const BAR_H = 4;
+        const now = Date.now();
+        // Prune expired buffs
+        for (const [skillId, buff] of this.localBuffs) {
+            if (now >= buff.expiresAt)
+                this.localBuffs.delete(skillId);
+        }
+        const buffs = Array.from(this.localBuffs.values());
+        if (buffs.length === 0) {
+            this.buffsPanelContainer.setVisible(false);
+            return;
+        }
+        this.buffsPanelContainer.setVisible(true);
+        const cam = this.cameras.main;
+        const displayCount = Math.min(buffs.length, MAX_BUFFS);
+        // ── Pass 1: set text content so Phaser can report measured widths ──
+        for (let i = 0; i < displayCount; i++) {
+            const buff = buffs[i];
+            const skill = ClientDataManager.instance.getSkill(buff.skillId);
+            const skillName = skill?.name ?? buff.skillId;
+            const secsLeft = Math.ceil(Math.max(0, buff.expiresAt - now) / 1000);
+            this.buffsPanelNameTexts[i].setText(skillName);
+            this.buffsPanelTimerTexts[i].setText(`${secsLeft}s`);
+        }
+        // ── Measure and compute dynamic panel width ──
+        let maxNameW = 0;
+        let maxTimerW = 0;
+        for (let i = 0; i < displayCount; i++) {
+            maxNameW = Math.max(maxNameW, this.buffsPanelNameTexts[i].width);
+            maxTimerW = Math.max(maxTimerW, this.buffsPanelTimerTexts[i].width);
+        }
+        const nameStartX = ICON_X + ICON_SIZE + NAME_GAP;
+        const PW = Math.max(MIN_PW, nameStartX + maxNameW + TIMER_GAP + maxTimerW + RIGHT_PAD);
+        const panelH = TH + displayCount * ROW_H + 4;
+        // ── Position panel (re-centred on new width) ──
+        const defaultX = Math.round(cam.width / 2 - PW / 2);
+        const defaultY = cam.height - 72 - panelH;
+        const px = defaultX + this.buffsOffset.x;
+        const py = defaultY + this.buffsOffset.y;
+        this.buffsPanelContainer.setPosition(px, py);
+        this.buffsPanelTitleHandle = { x: px, y: py, w: PW, h: TH };
+        // Re-centre title text horizontally when PW changes
+        this.buffsPanelTitleText.setX(PW / 2);
+        // ── Redraw background ──
+        this.buffsPanelBg.clear();
+        this.buffsPanelBg.fillStyle(0x12122a, 0.92);
+        this.buffsPanelBg.fillRoundedRect(0, 0, PW, panelH, 4);
+        this.buffsPanelBg.lineStyle(1, 0x44446a, 1);
+        this.buffsPanelBg.strokeRoundedRect(0, 0, PW, panelH, 4);
+        this.buffsPanelBg.fillStyle(0x22225a, 0.98);
+        this.buffsPanelBg.fillRoundedRect(0, 0, PW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+        // ── Pass 2: position and draw each slot ──
+        for (let i = 0; i < MAX_BUFFS; i++) {
+            if (i < displayCount) {
+                const buff = buffs[i];
+                const skill = ClientDataManager.instance.getSkill(buff.skillId);
+                const iconColor = skill?.iconColor ?? 0x555577;
+                const abbrev = skill?.iconAbbrev ?? '??';
+                const rowY = TH + 4 + i * ROW_H;
+                const iconY = rowY + 2;
+                const barY = rowY + ICON_SIZE + 6;
+                const barW = PW - ICON_X - RIGHT_PAD;
+                // Duration progress (1 → 0 as buff counts down)
+                const total = buff.expiresAt - buff.appliedAt;
+                const elapsed = now - buff.appliedAt;
+                const ratio = total > 0 ? Math.max(0, 1 - elapsed / total) : 0;
+                // Icon box
+                this.buffsPanelRowGfx[i].clear();
+                this.buffsPanelRowGfx[i].fillStyle(iconColor, 1);
+                this.buffsPanelRowGfx[i].fillRect(ICON_X, iconY, ICON_SIZE, ICON_SIZE);
+                this.buffsPanelRowGfx[i].lineStyle(1, 0xffffff, 0.4);
+                this.buffsPanelRowGfx[i].strokeRect(ICON_X, iconY, ICON_SIZE, ICON_SIZE);
+                // Timer progress bar (spans full inner width)
+                this.buffsPanelRowGfx[i].fillStyle(0x1a1a2e, 1);
+                this.buffsPanelRowGfx[i].fillRect(ICON_X, barY, barW, BAR_H);
+                this.buffsPanelRowGfx[i].fillStyle(iconColor, 0.85);
+                this.buffsPanelRowGfx[i].fillRect(ICON_X, barY, Math.floor(barW * ratio), BAR_H);
+                this.buffsPanelRowGfx[i].setVisible(true);
+                // Abbreviation (centred in icon)
+                this.buffsPanelAbbrTexts[i].setText(abbrev);
+                this.buffsPanelAbbrTexts[i].setPosition(ICON_X + ICON_SIZE / 2, iconY + ICON_SIZE / 2);
+                this.buffsPanelAbbrTexts[i].setVisible(true);
+                // Buff name (full — panel was sized to fit, no truncation)
+                this.buffsPanelNameTexts[i].setPosition(nameStartX, iconY);
+                this.buffsPanelNameTexts[i].setVisible(true);
+                // text was already set in pass 1
+                // Countdown timer (right-aligned to panel edge)
+                this.buffsPanelTimerTexts[i].setPosition(PW - RIGHT_PAD, iconY);
+                this.buffsPanelTimerTexts[i].setVisible(true);
+                // text was already set in pass 1
+            }
+            else {
+                this.buffsPanelRowGfx[i].clear();
+                this.buffsPanelRowGfx[i].setVisible(false);
+                this.buffsPanelAbbrTexts[i].setVisible(false);
+                this.buffsPanelNameTexts[i].setVisible(false);
+                this.buffsPanelTimerTexts[i].setVisible(false);
+            }
+        }
+    }
+    updatePartyPanel() {
+        // Filter out self from display list
+        const displayMembers = this.partyMembers.filter(m => m.sessionId !== this.network.sessionId);
+        if (displayMembers.length === 0) {
+            this.partyPanelContainer.setVisible(false);
+            return;
+        }
+        this.partyPanelContainer.setVisible(true);
+        const PW = 160;
+        const TH = 20;
+        const ROW_H = 38;
+        const BAR_H = 7;
+        const BAR_W = PW - 16;
+        const panelH = TH + displayMembers.length * ROW_H + 4;
+        const defaultX = 12;
+        const defaultY = 200;
+        const px = defaultX + this.partyOffset.x;
+        const py = defaultY + this.partyOffset.y;
+        this.partyPanelContainer.setPosition(px, py);
+        this.partyPanelTitleHandle = { x: px, y: py, w: PW, h: TH };
+        // Redraw background
+        this.partyPanelBg.clear();
+        this.partyPanelBg.fillStyle(0x12122a, 0.92);
+        this.partyPanelBg.fillRoundedRect(0, 0, PW, panelH, 4);
+        this.partyPanelBg.lineStyle(1, 0x44446a, 1);
+        this.partyPanelBg.strokeRoundedRect(0, 0, PW, panelH, 4);
+        // Title strip
+        this.partyPanelBg.fillStyle(0x22225a, 0.98);
+        this.partyPanelBg.fillRoundedRect(0, 0, PW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+        // Title text
+        this.partyPanelBg.fillStyle(0x8888bb, 1);
+        // We'll just render the title via a small text approach by overlaying it on the bg
+        // Actually, let's use the first draw to place it. We need a text object for the title.
+        // For simplicity, use the bg graphics and manually draw the title each frame via an inline text reuse.
+        // Update member rows
+        for (let i = 0; i < 4; i++) {
+            if (i < displayMembers.length) {
+                const member = displayMembers[i];
+                const data = this.partyMemberData.get(member.sessionId);
+                const hp = data?.hp ?? 0;
+                const maxHp = data?.maxHp ?? 1;
+                const mana = data?.mana ?? 0;
+                const maxMana = data?.maxMana ?? 1;
+                const alive = data?.alive ?? true;
+                const rowY = TH + 4 + i * ROW_H;
+                // Name
+                this.partySlotSessionIds[i] = member.sessionId;
+                const displayName = member.characterName.length > 14
+                    ? member.characterName.slice(0, 14) + '…'
+                    : member.characterName;
+                this.partyPanelTexts[i].setText(displayName);
+                this.partyPanelTexts[i].setPosition(8, rowY);
+                const isTargeted = this.currentTargetId === member.sessionId && this.currentTargetType === 'player';
+                this.partyPanelTexts[i].setColor(isTargeted ? '#ffdd55' : (alive ? '#ffffff' : '#666666'));
+                this.partyPanelTexts[i].setVisible(true);
+                // HP bar
+                const hpBarY = rowY + 16;
+                const hpRatio = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
+                this.partyPanelHpBars[i].clear();
+                // Background
+                this.partyPanelHpBars[i].fillStyle(0x1a1a1a, 1);
+                this.partyPanelHpBars[i].fillRect(8, hpBarY, BAR_W, BAR_H);
+                // Fill
+                const hpColor = hpRatio > 0.5 ? 0x44bb44 : hpRatio > 0.25 ? 0xdddd44 : 0xdd4444;
+                this.partyPanelHpBars[i].fillStyle(hpColor, 1);
+                this.partyPanelHpBars[i].fillRect(8, hpBarY, Math.floor(BAR_W * hpRatio), BAR_H);
+                // Shield overlay (Shield of Faith) — cyan tint proportional to remaining absorption
+                const memberShieldHp = data?.shieldHp ?? 0;
+                if (memberShieldHp > 0 && maxHp > 0) {
+                    const shieldRatio = Math.min(1, memberShieldHp / maxHp);
+                    this.partyPanelHpBars[i].fillStyle(0x00ccff, 0.45);
+                    this.partyPanelHpBars[i].fillRect(8, hpBarY, Math.floor(BAR_W * shieldRatio), BAR_H);
+                }
+                this.partyPanelHpBars[i].setVisible(true);
+                // Mana bar
+                const manaBarY = hpBarY + BAR_H + 2;
+                const manaRatio = maxMana > 0 ? Math.max(0, mana / maxMana) : 0;
+                this.partyPanelManaBars[i].clear();
+                this.partyPanelManaBars[i].fillStyle(0x1a1a1a, 1);
+                this.partyPanelManaBars[i].fillRect(8, manaBarY, BAR_W, BAR_H);
+                this.partyPanelManaBars[i].fillStyle(0x4466dd, 1);
+                this.partyPanelManaBars[i].fillRect(8, manaBarY, Math.floor(BAR_W * manaRatio), BAR_H);
+                this.partyPanelManaBars[i].setVisible(true);
+            }
+            else {
+                // Hide unused slots
+                this.partySlotSessionIds[i] = null;
+                this.partyPanelTexts[i].setVisible(false);
+                this.partyPanelHpBars[i].clear();
+                this.partyPanelHpBars[i].setVisible(false);
+                this.partyPanelManaBars[i].clear();
+                this.partyPanelManaBars[i].setVisible(false);
+            }
+        }
+    }
+    updateTargetNameplate() {
+        if (!this.currentTargetId || !this.currentTargetType) {
+            this.targetNameplateContainer.setVisible(false);
+            this.targetNameplateBuffsGfx.clear();
+            return;
+        }
+        const TH = 22; // title strip height
+        const BAR_Y = TH + 24; // 46 — top of HP bar
+        const BAR_H = 10;
+        const HP_TEXT_Y = BAR_Y + BAR_H + 4; // 60 — 4 px gap below bar
+        const BUFF_Y = HP_TEXT_Y + 14 + 6; // 80 — top of buff pill row
+        const PILL_H = 16; // pill height
+        const PILL_SPACING = 4; // gap between pills
+        const MIN_NW = 160;
+        const LEFT_PAD = 8;
+        const RIGHT_PAD = 10;
+        const NAME_LEVEL_GAP = 10;
+        let name = '';
+        let level = 1;
+        let hp = 0;
+        let maxHp = 1;
+        let isEnemy = false;
+        let shieldHp = 0;
+        let npcBuffs = [];
+        if (this.currentTargetType === 'player') {
+            const info = this.entityRenderer.getPlayerTargetInfo(this.currentTargetId);
+            if (!info) {
+                this.clearTarget();
+                return;
+            }
+            name = info.characterName || info.classId;
+            level = info.level;
+            hp = info.hp;
+            maxHp = info.maxHp;
+            isEnemy = false;
+            shieldHp = this.remotePlayerShieldHp.get(this.currentTargetId) ?? 0;
+        }
+        else if (this.currentTargetType === 'self') {
+            // Local player — read directly from scene fields (always up to date)
+            name = this.localCharacterName || (ClientDataManager.instance.getClass(this.localClassId)?.name ?? this.localClassId);
+            level = this.localLevel;
+            hp = this.localHp;
+            maxHp = this.localMaxHp;
+            isEnemy = false;
+            shieldHp = this.localShieldHp;
+        }
+        else {
+            const info = this.entityRenderer.getNpcTargetInfo(this.currentTargetId);
+            if (!info) {
+                this.clearTarget();
+                return;
+            }
+            name = info.name;
+            level = info.level;
+            hp = info.hp;
+            maxHp = info.maxHp;
+            isEnemy = info.npcType === 'enemy';
+            npcBuffs = info.buffs ?? [];
+        }
+        // ── Compute panel height (extends if NPC has active buffs) ─
+        const now = Date.now();
+        const activeBuffs = npcBuffs.filter(b => b.expiresAt > now);
+        const NH_BASE = HP_TEXT_Y + 14 + 5; // 79 — base height (no buffs)
+        const NH = activeBuffs.length > 0
+            ? NH_BASE + PILL_H + PILL_SPACING + 4
+            : NH_BASE;
+        this.targetNameplateContainer.setVisible(true);
+        // ── Pass 1: set text so Phaser can measure widths ──────────
+        const nameColor = this.currentTargetType === 'npc'
+            ? (isEnemy ? '#ff8888' : '#ffee88')
+            : '#ffffff';
+        this.targetNameplateNameText.setText(name);
+        this.targetNameplateNameText.setColor(nameColor);
+        this.targetNameplateLevelText.setText(`Lv.${level}`);
+        // ── Pass 2: compute dynamic panel width ────────────────────
+        const nameW = this.targetNameplateNameText.width;
+        const levelW = this.targetNameplateLevelText.width;
+        const NW = Math.max(MIN_NW, LEFT_PAD + nameW + NAME_LEVEL_GAP + levelW + RIGHT_PAD);
+        // ── Reposition right-anchored and centred elements ─────────
+        this.targetNameplateLevelText.setX(NW - RIGHT_PAD + 4);
+        this.targetNameplateTitleText.setX(NW / 2);
+        this.targetNameplateHpText.setX(NW / 2);
+        this.targetNameplateHpText.setY(HP_TEXT_Y);
+        // ── Reposition container so panel stays right-anchored ─────
+        const camW = this.cameras.main.width;
+        this.targetNameplateContainer.setPosition((camW - NW - 12) + this.targetOffset.x, this.getTargetNameplateDefaultY() + this.targetOffset.y);
+        // ── Redraw background at new width ─────────────────────────
+        this.targetNameplateBg.clear();
+        this.targetNameplateBg.fillStyle(0x12122a, 0.92);
+        this.targetNameplateBg.fillRoundedRect(0, 0, NW, NH, 4);
+        this.targetNameplateBg.lineStyle(1, 0x44446a, 1);
+        this.targetNameplateBg.strokeRoundedRect(0, 0, NW, NH, 4);
+        this.targetNameplateBg.fillStyle(0x22225a, 0.98);
+        this.targetNameplateBg.fillRoundedRect(0, 0, NW, TH, { tl: 4, tr: 4, bl: 0, br: 0 });
+        // ── Update drag handle ─────────────────────────────────────
+        const cx = this.targetNameplateContainer.x;
+        const cy = this.targetNameplateContainer.y;
+        this.targetNameplateTitleHandle = { x: cx, y: cy, w: NW, h: TH };
+        // ── HP bar ─────────────────────────────────────────────────
+        const hpRatio = maxHp > 0 ? Math.max(0, hp / maxHp) : 0;
+        const fillColor = hpRatio > 0.5 ? 0x44ee44 : hpRatio > 0.25 ? 0xffaa00 : 0xff4444;
+        const barX = LEFT_PAD;
+        const barW = NW - LEFT_PAD * 2;
+        this.targetNameplateHpBar.clear();
+        this.targetNameplateHpBar.fillStyle(0x000000, 0.6);
+        this.targetNameplateHpBar.fillRect(barX - 1, BAR_Y - 1, barW + 2, BAR_H + 2);
+        this.targetNameplateHpBar.fillStyle(fillColor, 1);
+        this.targetNameplateHpBar.fillRect(barX, BAR_Y, Math.max(0, barW * hpRatio), BAR_H);
+        // Shield overlay (Shield of Faith) — cyan tint proportional to remaining absorption
+        if (shieldHp > 0 && maxHp > 0) {
+            const shieldRatio = Math.min(1, shieldHp / maxHp);
+            this.targetNameplateHpBar.fillStyle(0x00ccff, 0.45);
+            this.targetNameplateHpBar.fillRect(barX, BAR_Y, Math.max(0, barW * shieldRatio), BAR_H);
+        }
+        // ── HP text ────────────────────────────────────────────────
+        this.targetNameplateHpText.setText(`${Math.round(hp)} / ${Math.round(maxHp)}`);
+        // ── Buff pills (NPC targets only) ──────────────────────────
+        this.targetNameplateBuffsGfx.clear();
+        if (activeBuffs.length > 0) {
+            let pillX = LEFT_PAD;
+            for (const buff of activeBuffs) {
+                // Remaining seconds, clamped to 0
+                const remainSec = Math.max(0, Math.ceil((buff.expiresAt - now) / 1000));
+                // Skill short name (e.g. "Poison" from "rogue_poison_blade")
+                const skillTemplate = ClientDataManager.instance.getSkill(buff.skillId);
+                const skillName = skillTemplate?.name ?? buff.skillId;
+                // Shorten to first word for compact pill
+                const shortName = skillName.split(' ')[0];
+                const label = `\u2620 ${shortName} ${remainSec}s`;
+                // Pill color: green for DoT poison, purple fallback
+                const pillColor = buff.dotDamagePerSec > 0 ? 0x1a3a1a : 0x2a1a3a;
+                const pillBorder = buff.dotDamagePerSec > 0 ? 0x44bb44 : 0x9955cc;
+                const textColor = buff.dotDamagePerSec > 0 ? '#88ff88' : '#cc88ff';
+                // Approximate pill width (8px per char is a safe estimate for 10px font)
+                const pillW = Math.max(50, label.length * 7 + 8);
+                // Pill background + border
+                this.targetNameplateBuffsGfx.fillStyle(pillColor, 0.95);
+                this.targetNameplateBuffsGfx.fillRoundedRect(pillX, BUFF_Y, pillW, PILL_H, 3);
+                this.targetNameplateBuffsGfx.lineStyle(1, pillBorder, 0.9);
+                this.targetNameplateBuffsGfx.strokeRoundedRect(pillX, BUFF_Y, pillW, PILL_H, 3);
+                // Position text label inside first pill
+                // (Only one Text object — show the first buff label; additional buffs shown as extra pills)
+                if (pillX === LEFT_PAD) {
+                    this.targetNameplateBuffsText.setText(label);
+                    this.targetNameplateBuffsText.setColor(textColor);
+                    this.targetNameplateBuffsText.setPosition(pillX + 4, BUFF_Y + PILL_H / 2);
+                    this.targetNameplateBuffsText.setVisible(true);
+                }
+                pillX += pillW + PILL_SPACING;
+                // Stop drawing more pills if we'd exceed the panel width
+                if (pillX > NW - RIGHT_PAD)
+                    break;
+            }
+            // If only additional pills beyond the first exist (no label shown), still show the text
+        }
+        else {
+            this.targetNameplateBuffsText.setVisible(false);
+        }
+    }
+    setTarget(id, type) {
+        this.currentTargetId = id;
+        this.currentTargetType = type;
+        this.targetNameplateContainer.setPosition(this.getTargetNameplateDefaultX() + this.targetOffset.x, this.getTargetNameplateDefaultY() + this.targetOffset.y);
+    }
+    clearTarget() {
+        this.currentTargetId = null;
+        this.currentTargetType = null;
+        this.targetNameplateContainer?.setVisible(false);
+        // Stop auto-attack when target is cleared
+        this.network.sendStopAutoAttack();
+    }
     createInventoryPanel() {
         const cam = this.cameras.main;
         this.invContainer = this.add.container(0, 0);
         this.invContainer.setScrollFactor(0);
-        this.invContainer.setDepth(300);
+        this.invContainer.setDepth(UI_DEPTH_BASE + 200);
         this.invContainer.setVisible(false);
         // Shared graphics layer for both panels
         this.panelGfx = this.add.graphics();
@@ -1114,7 +3163,7 @@ export class GameScene extends Phaser.Scene {
         // Fullscreen dim overlay — kept OUTSIDE invContainer so it doesn't move when the panel is dragged
         this.invDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.4);
         this.invDimBg.setScrollFactor(0);
-        this.invDimBg.setDepth(299); // just below invContainer (300)
+        this.invDimBg.setDepth(UI_DEPTH_BASE + 199); // just below invContainer (UI_DEPTH_BASE + 200)
         this.invDimBg.setVisible(false);
         // Panel positions — both centered together, using the taller panel for vertical centering
         const maxPanelH = Math.max(this.PANEL_H, this.invPanelH);
@@ -1148,8 +3197,9 @@ export class GameScene extends Phaser.Scene {
             strokeThickness: 2,
         });
         this.invContainer.add(this.invTitleText);
-        // Inventory slot texts (no zones — we use scene-level pointer hit testing)
+        // Inventory slot texts and icon images (no zones — we use scene-level pointer hit testing)
         this.invSlotTexts = [];
+        this.invSlotIcons = [];
         this.invQtyTexts = [];
         for (let i = 0; i < INVENTORY_MAX_SLOTS; i++) {
             const col = i % this.INV_COLS;
@@ -1166,6 +3216,8 @@ export class GameScene extends Phaser.Scene {
             nameText.setOrigin(0.5, 0.5);
             this.invContainer.add(nameText);
             this.invSlotTexts.push(nameText);
+            // Placeholder for inventory icon image (created on demand in renderInventorySlots)
+            this.invSlotIcons.push(null);
             const qtyText = this.add.text(sx + this.SLOT_SIZE / 2 - 6, sy + this.SLOT_SIZE / 2 - 10, '', {
                 fontSize: '10px',
                 color: '#ffff00',
@@ -1193,7 +3245,7 @@ export class GameScene extends Phaser.Scene {
         this.dragGhostBg = this.add.rectangle(0, 0, 52, 28, 0x000000, 0.85);
         this.dragGhostBg.setStrokeStyle(1, 0xffcc00);
         this.dragGhostBg.setVisible(false);
-        this.dragGhostBg.setDepth(999);
+        this.dragGhostBg.setDepth(UI_DEPTH_BASE + 899);
         this.invContainer.add(this.dragGhostBg);
         this.dragGhost = this.add.text(0, 0, '', {
             fontSize: '11px',
@@ -1203,7 +3255,7 @@ export class GameScene extends Phaser.Scene {
         });
         this.dragGhost.setOrigin(0.5, 0.5);
         this.dragGhost.setVisible(false);
-        this.dragGhost.setDepth(1000);
+        this.dragGhost.setDepth(UI_DEPTH_BASE + 900);
         this.invContainer.add(this.dragGhost);
         // Setup drag-and-drop input handlers
         this.setupDragAndDrop();
@@ -1240,7 +3292,7 @@ export class GameScene extends Phaser.Scene {
         });
         this.invContainer.add(equipLabel);
         y += 16;
-        const slotLabels = ['Weapon', 'Helm', 'Chest', 'Legs', 'Boots', 'Ring'];
+        const slotLabels = EQUIP_SLOTS.map(sl => sl.charAt(0).toUpperCase() + sl.slice(1));
         this.charEquipTexts = [];
         this.equipSlotYPositions = [];
         for (let i = 0; i < slotLabels.length; i++) {
@@ -1327,14 +3379,25 @@ export class GameScene extends Phaser.Scene {
                 return;
             if (this.hudDragTarget !== null)
                 return; // panel drag takes priority
+            // Item detail panel close button (must be checked before drag logic)
+            if (this.itemDetailPanelOpen && this.isItemDetailCloseBtn(pointer.x, pointer.y)) {
+                this.closeItemDetailPanel();
+                return;
+            }
             // Adjust for the container's current drag offset
             const px = pointer.x - this.invOffset.x;
             const py = pointer.y - this.invOffset.y;
+            const isShift = pointer.event.shiftKey;
             // Check inventory slot
             const invSlot = this.getInventorySlotAt(px, py);
             if (invSlot >= 0) {
                 const item = this.inventoryItems[invSlot];
                 if (item) {
+                    // Shift+click: open item detail pane instead of dragging
+                    if (isShift) {
+                        this.showItemDetail(item.itemId);
+                        return;
+                    }
                     const template = ClientDataManager.instance.getItem(item.itemId);
                     if (template) {
                         this.startDrag({ type: 'inventory', index: invSlot }, template.name, RARITY_COLORS[template.rarity] ?? '#ffffff');
@@ -1347,9 +3410,32 @@ export class GameScene extends Phaser.Scene {
             if (equipSlot) {
                 const equippedId = this.localEquipment[equipSlot] || '';
                 if (equippedId) {
+                    // Shift+click on equipped item: open item detail pane
+                    if (isShift) {
+                        this.showItemDetail(equippedId);
+                        return;
+                    }
                     const template = ClientDataManager.instance.getItem(equippedId);
                     if (template) {
                         this.startDrag({ type: 'equipment', slotType: equipSlot }, template.name, RARITY_COLORS[template.rarity] ?? '#ffffff');
+                    }
+                }
+            }
+            // Check loot panel slot (left-click drag from loot panel)
+            if (this.lootPanelOpen && this.currentLootBagId && pointer.button === 0) {
+                const lootSlot = this.getLootSlotAt(pointer.x, pointer.y);
+                if (lootSlot >= 0) {
+                    const item = this.lootPanelItems[lootSlot];
+                    if (item) {
+                        // Shift+click: inspect item before looting
+                        if (isShift) {
+                            this.showItemDetail(item.itemId);
+                            return;
+                        }
+                        const template = ClientDataManager.instance.getItem(item.itemId);
+                        if (template) {
+                            this.startDrag({ type: 'lootBag', bagId: this.currentLootBagId, bagSlotIndex: lootSlot }, template.name, RARITY_COLORS[template.rarity] ?? '#ffffff');
+                        }
                     }
                 }
             }
@@ -1457,7 +3543,7 @@ export class GameScene extends Phaser.Scene {
      * Get the equipment slot type at a given screen position, or null if none.
      */
     getEquipSlotAt(px, py) {
-        const slotTypes = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+        const slotTypes = EQUIP_SLOTS;
         const rowH = 14;
         for (let i = 0; i < this.equipSlotYPositions.length; i++) {
             const slotY = this.equipSlotYPositions[i];
@@ -1480,6 +3566,10 @@ export class GameScene extends Phaser.Scene {
         // Inventory panel bounds
         if (px >= this.invX && px <= this.invX + this.invPanelW &&
             py >= this.panelY && py <= this.panelY + this.invPanelH) {
+            return true;
+        }
+        // Loot panel bounds
+        if (this.lootPanelOpen && this.isInsideLootPanel(px, py)) {
             return true;
         }
         return false;
@@ -1570,6 +3660,16 @@ export class GameScene extends Phaser.Scene {
                 this.network.sendDropItem('equipment', undefined, slotType);
             }
         }
+        else if (this.dragSource.type === 'lootBag') {
+            // Loot bag → Inventory: loot the item
+            const bagId = this.dragSource.bagId;
+            const bagSlotIndex = this.dragSource.bagSlotIndex;
+            const lootItem = this.lootPanelItems[bagSlotIndex];
+            if (lootItem && (targetInvSlot >= 0 || insidePanels)) {
+                this.network.sendLootItem(bagId, bagSlotIndex, lootItem.quantity);
+            }
+            // Dropping outside panels from loot panel = do nothing
+        }
     }
     toggleInventory() {
         this.inventoryOpen = !this.inventoryOpen;
@@ -1579,6 +3679,9 @@ export class GameScene extends Phaser.Scene {
             this.invContainer.setPosition(this.invOffset.x, this.invOffset.y);
             this.renderInventorySlots();
             this.renderCharacterPanel();
+        }
+        else {
+            this.closeItemDetailPanel();
         }
     }
     renderCharacterPanel() {
@@ -1595,7 +3698,7 @@ export class GameScene extends Phaser.Scene {
         }
         this.charInfoText.setText(info);
         // ── Equipment Slots ──
-        const slotKeys = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+        const slotKeys = EQUIP_SLOTS;
         for (let i = 0; i < slotKeys.length; i++) {
             const equippedId = this.localEquipment[slotKeys[i]] || '';
             if (equippedId) {
@@ -1701,16 +3804,46 @@ export class GameScene extends Phaser.Scene {
             // Slot border
             this.panelGfx.lineStyle(1, itemTemplate ? 0x888888 : 0x444466, 1);
             this.panelGfx.strokeRect(sx, sy, this.SLOT_SIZE, this.SLOT_SIZE);
-            // Update text
+            // Update icon / text
             if (itemTemplate) {
-                const abbr = itemTemplate.name.length > 8 ? itemTemplate.name.slice(0, 7) + '.' : itemTemplate.name;
-                this.invSlotTexts[i].setText(abbr);
-                this.invSlotTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+                const iconKey = itemTemplate.inventoryIcon ? `icon_${itemTemplate.inventoryIcon}` : null;
+                const hasIcon = iconKey && this.textures.exists(iconKey);
+                if (hasIcon) {
+                    // Show icon image, hide text abbreviation
+                    this.invSlotTexts[i].setText('');
+                    if (!this.invSlotIcons[i] || this.invSlotIcons[i].texture.key !== iconKey) {
+                        // Destroy old icon if different
+                        if (this.invSlotIcons[i]) {
+                            this.invSlotIcons[i].destroy();
+                        }
+                        const iconImg = this.add.image(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2, iconKey);
+                        // Scale icon to fit slot (leave a 2px border)
+                        const maxDim = this.SLOT_SIZE - 4;
+                        const scale = Math.min(maxDim / iconImg.width, maxDim / iconImg.height);
+                        iconImg.setScale(scale);
+                        this.invContainer.add(iconImg);
+                        this.invSlotIcons[i] = iconImg;
+                    }
+                    this.invSlotIcons[i].setVisible(true);
+                    this.invSlotIcons[i].setPosition(sx + this.SLOT_SIZE / 2, sy + this.SLOT_SIZE / 2);
+                }
+                else {
+                    // No icon — use text abbreviation
+                    const abbr = itemTemplate.name.length > 8 ? itemTemplate.name.slice(0, 7) + '.' : itemTemplate.name;
+                    this.invSlotTexts[i].setText(abbr);
+                    this.invSlotTexts[i].setColor(RARITY_COLORS[itemTemplate.rarity] ?? '#ffffff');
+                    if (this.invSlotIcons[i]) {
+                        this.invSlotIcons[i].setVisible(false);
+                    }
+                }
                 this.invQtyTexts[i].setText(item.quantity > 1 ? `${item.quantity}` : '');
             }
             else {
                 this.invSlotTexts[i].setText('');
                 this.invQtyTexts[i].setText('');
+                if (this.invSlotIcons[i]) {
+                    this.invSlotIcons[i].setVisible(false);
+                }
             }
         }
         // Tooltip — shows on hover via zones; default message
@@ -1732,10 +3865,10 @@ export class GameScene extends Phaser.Scene {
             this.deathText.setText(`YOU DIED\nRespawning in ${secs}...`);
         }
         // ── Skip gameplay input while any UI panel or chat is open ─
-        if (this.inventoryOpen || this.skillsPaneOpen || this.chatInputActive) {
+        if (this.inventoryOpen || this.skillsPaneOpen || this.chatInputActive || this.optionsMenuOpen || this.hudEditMode) {
             this.inputManager.clearFire();
         }
-        else if (!this.inventoryOpen && !this.skillsPaneOpen && !this.chatInputActive) {
+        else if (!this.inventoryOpen && !this.skillsPaneOpen && !this.chatInputActive && !this.optionsMenuOpen && !this.hudEditMode) {
             // ── Sample input ────────────────────────────────────────
             const input = this.inputManager.getInput(this.localX, this.localY);
             // ── Client-side prediction (only if alive) ──────────────
@@ -1746,13 +3879,69 @@ export class GameScene extends Phaser.Scene {
             this.network.sendInput(input);
             // ── Store for reconciliation ────────────────────────────
             this.pendingInputs.push({ input, dt });
-            // ── Update local sprite ─────────────────────────────────
+            // ── Update local sprite (via render interpolation) ──────
             if (this.localAlive) {
-                this.playerSprite.x = this.localX;
-                this.playerSprite.y = this.localY;
-                this.playerSprite.rotation = input.aimAngle;
+                // Smooth renderX/Y toward the authoritative localX/Y each frame.
+                // This absorbs any micro-corrections from server reconciliation
+                // without adding perceptible input lag (~2 px at 200 speed).
+                const rdx = this.localX - this.renderX;
+                const rdy = this.localY - this.renderY;
+                const rDistSq = rdx * rdx + rdy * rdy;
+                if (rDistSq < 0.25) {
+                    // Sub-pixel — snap to avoid endless chase
+                    this.renderX = this.localX;
+                    this.renderY = this.localY;
+                }
+                else if (rDistSq > 2500) {
+                    // > 50 px — teleport / zone change, snap immediately
+                    this.renderX = this.localX;
+                    this.renderY = this.localY;
+                }
+                else {
+                    const smoothT = 1 - Math.exp(-25 * dt);
+                    this.renderX += rdx * smoothT;
+                    this.renderY += rdy * smoothT;
+                }
+                const playerIso = this.isIso ? orthoToIso(this.renderX, this.renderY) : { x: this.renderX, y: this.renderY };
+                this.playerSprite.x = playerIso.x;
+                this.playerSprite.y = playerIso.y;
+                this.playerSprite.setDepth(ENTITY_DEPTH_BASE + Math.floor(this.renderX / 64) + Math.floor(this.renderY / 64));
+                // Directional sprite animation based on movement
+                const moveDir = this.getMovementDir(input);
+                this.playerSprite.rotation = 0;
+                // Movement cancels action animations
+                if (this.isPlayingActionAnim && moveDir) {
+                    this.stopActionAnimation();
+                }
+                if (this.isPlayingActionAnim) {
+                    // Let action animation play through
+                }
+                else if (moveDir) {
+                    this.lastFacingDir = moveDir;
+                    playCharacterAnim(this, this.playerSprite, this.localClassId, 'walk', moveDir);
+                }
+                else {
+                    playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle', this.lastFacingDir);
+                }
                 // ── Draw aim line ─────────────────────────────────────
                 this.drawAimLine(input.aimAngle);
+                // ── Sync equipment overlay positions ─────────────────
+                this.entityRenderer.updateOverlayPositions(this.localEquipOverlays, this.playerSprite);
+            }
+        }
+        // ── Auto-close loot panel if too far ────────────────────
+        if (this.lootPanelOpen && this.currentLootBagId) {
+            const bagOrtho = this.entityRenderer.getLootBagOrthoPosition(this.currentLootBagId);
+            if (bagOrtho) {
+                const dx = this.localX - bagOrtho.x;
+                const dy = this.localY - bagOrtho.y;
+                if (dx * dx + dy * dy > LOOT_BAG_PICKUP_RANGE * LOOT_BAG_PICKUP_RANGE) {
+                    this.closeLootPanel();
+                }
+            }
+            else {
+                // Bag no longer exists
+                this.closeLootPanel();
             }
         }
         // ── Draw HUD ────────────────────────────────────────────
@@ -1760,6 +3949,10 @@ export class GameScene extends Phaser.Scene {
         this.drawActionBar();
         this.drawCastBar();
         this.drawChatPanel();
+        this.drawCombatLogPanel();
+        this.updateTargetNameplate();
+        this.updatePartyPanel();
+        this.updateBuffsPanel();
         // ── Interpolate remote players + projectiles ────────────
         this.entityRenderer.update();
     }
@@ -1778,6 +3971,13 @@ export class GameScene extends Phaser.Scene {
             mx -= 1;
         if (input.right)
             mx += 1;
+        // Apply 45° rotation for isometric movement
+        if (this.isIso) {
+            const isoMx = mx + my;
+            const isoMy = -mx + my;
+            mx = isoMx;
+            my = isoMy;
+        }
         const dir = normalise(mx, my);
         const dx = dir.x * this.localSpeed * dt;
         const dy = dir.y * this.localSpeed * dt;
@@ -1833,15 +4033,40 @@ export class GameScene extends Phaser.Scene {
      * any inputs the server hasn't processed yet.
      */
     reconcile(serverX, serverY, serverSeq) {
-        // Drop all inputs that have been acknowledged by the server
+        // If the server hasn't acknowledged any new input since the last reconcile,
+        // no positions will have changed on the server side — skip the work entirely.
+        if (serverSeq === this._lastServerSeq)
+            return;
+        this._lastServerSeq = serverSeq;
+        // Drop all inputs the server has already processed.
         this.pendingInputs = this.pendingInputs.filter((p) => p.input.seq > serverSeq);
-        // Start from authoritative position
+        // Save the current client-predicted position so we can measure error below.
+        const predictedX = this.localX;
+        const predictedY = this.localY;
+        // Compute the server-authoritative position by re-applying every unacknowledged input.
         this.localX = serverX;
         this.localY = serverY;
-        // Re-apply unacknowledged inputs
         for (const pending of this.pendingInputs) {
             this.applyInputLocally(pending.input, pending.dt);
         }
+        // ── Smooth error correction ───────────────────────────────
+        // Instead of hard-snapping, blend small prediction errors so micro-corrections
+        // don't produce visible pops.  Large errors (genuine desyncs) still snap immediately.
+        const errX = this.localX - predictedX;
+        const errY = this.localY - predictedY;
+        const errSq = errX * errX + errY * errY;
+        if (errSq < 1) {
+            // Sub-pixel error — discard entirely and trust the client prediction.
+            this.localX = predictedX;
+            this.localY = predictedY;
+        }
+        else if (errSq < 144) {
+            // Small error (< 12 px) — blend 35 % of the way toward the correction.
+            // This spreads the adjustment over ~3 server patches (~150 ms) invisibly.
+            this.localX = predictedX + errX * 0.35;
+            this.localY = predictedY + errY * 0.35;
+        }
+        // errSq >= 144 (>= 12 px) — genuine desync, hard-snap (position already set).
     }
     /**
      * Draw a short aim line from the player in the aim direction.
@@ -1850,14 +4075,24 @@ export class GameScene extends Phaser.Scene {
         this.aimLine.clear();
         this.aimLine.lineStyle(2, 0xff4444, 0.7);
         const len = 40;
-        const startX = this.localX + Math.cos(angle) * 20;
-        const startY = this.localY + Math.sin(angle) * 20;
-        const endX = this.localX + Math.cos(angle) * (20 + len);
-        const endY = this.localY + Math.sin(angle) * (20 + len);
-        this.aimLine.beginPath();
-        this.aimLine.moveTo(startX, startY);
-        this.aimLine.lineTo(endX, endY);
-        this.aimLine.strokePath();
+        const startX = this.renderX + Math.cos(angle) * 20;
+        const startY = this.renderY + Math.sin(angle) * 20;
+        const endX = this.renderX + Math.cos(angle) * (20 + len);
+        const endY = this.renderY + Math.sin(angle) * (20 + len);
+        if (this.isIso) {
+            const isoStart = orthoToIso(startX, startY);
+            const isoEnd = orthoToIso(endX, endY);
+            this.aimLine.beginPath();
+            this.aimLine.moveTo(isoStart.x, isoStart.y);
+            this.aimLine.lineTo(isoEnd.x, isoEnd.y);
+            this.aimLine.strokePath();
+        }
+        else {
+            this.aimLine.beginPath();
+            this.aimLine.moveTo(startX, startY);
+            this.aimLine.lineTo(endX, endY);
+            this.aimLine.strokePath();
+        }
     }
     // ═══════════════════════════════════════════════════════════
     // CHAT SYSTEM
@@ -1866,12 +4101,17 @@ export class GameScene extends Phaser.Scene {
         const cam = this.cameras.main;
         this.chatContainer = this.add.container(0, 0);
         this.chatContainer.setScrollFactor(0);
-        this.chatContainer.setDepth(120);
+        this.chatContainer.setDepth(UI_DEPTH_BASE + 20);
         // Background drawn via graphics (redrawn every frame in drawChatPanel)
         this.chatBgGfx = this.add.graphics();
         this.chatContainer.add(this.chatBgGfx);
         this.chatInputBgGfx = this.add.graphics();
         this.chatContainer.add(this.chatInputBgGfx);
+        // Scrollbar graphics (drawn on top of background)
+        this.chatScrollGfx = this.add.graphics();
+        this.chatScrollGfx.setScrollFactor(0);
+        this.chatScrollGfx.setDepth(UI_DEPTH_BASE + 22);
+        this.chatContainer.add(this.chatScrollGfx);
         // Channel label (e.g. "[General]")
         this.chatChannelLabel = this.add.text(0, 0, '[General]', {
             fontSize: '10px',
@@ -1880,7 +4120,7 @@ export class GameScene extends Phaser.Scene {
             strokeThickness: 1,
         });
         this.chatChannelLabel.setScrollFactor(0);
-        this.chatChannelLabel.setDepth(121);
+        this.chatChannelLabel.setDepth(UI_DEPTH_BASE + 21);
         this.chatContainer.add(this.chatChannelLabel);
         // Pre-allocate message text objects
         for (let i = 0; i < this.CHAT_VISIBLE_LINES; i++) {
@@ -1889,10 +4129,10 @@ export class GameScene extends Phaser.Scene {
                 color: '#ffffff',
                 stroke: '#000000',
                 strokeThickness: 1,
-                wordWrap: { width: this.chatEffectiveW - this.CHAT_PAD * 2 },
+                wordWrap: { width: this.chatEffectiveW - this.CHAT_PAD * 2 - this.CHAT_SCROLLBAR_W },
             });
             t.setScrollFactor(0);
-            t.setDepth(121);
+            t.setDepth(UI_DEPTH_BASE + 21);
             t.setVisible(false);
             this.chatContainer.add(t);
             this.chatMessageTexts.push(t);
@@ -1905,15 +4145,14 @@ export class GameScene extends Phaser.Scene {
             strokeThickness: 1,
         });
         this.chatInputDisplay.setScrollFactor(0);
-        this.chatInputDisplay.setDepth(121);
+        this.chatInputDisplay.setDepth(UI_DEPTH_BASE + 21);
         this.chatInputDisplay.setVisible(false);
         this.chatContainer.add(this.chatInputDisplay);
         // Position all elements
         this.repositionChatPanel(cam.width, cam.height);
     }
     repositionChatPanel(camW, camH) {
-        const hudTextRight = this.classHudText ? this.classHudText.x + this.classHudText.width + 10 : 0;
-        const panelX = Math.max(this.CHAT_LEFT_X, hudTextRight);
+        const panelX = this.CHAT_LEFT_X;
         const panelY = camH - this.CHAT_H - this.CHAT_BOTTOM_MARGIN;
         this.chatBgGfx.setPosition(panelX, panelY);
         this.chatChannelLabel.setPosition(panelX + this.CHAT_PAD, panelY + 3);
@@ -1925,12 +4164,302 @@ export class GameScene extends Phaser.Scene {
         this.chatInputBgGfx.setPosition(panelX, inputY);
         this.chatInputDisplay.setPosition(panelX + this.CHAT_PAD + 14, inputY + 3);
     }
+    // ══════════════════════════════════════════════════════════
+    // ██  COMBAT LOG PANEL
+    // ══════════════════════════════════════════════════════════
+    createCombatLogPanel() {
+        const cam = this.cameras.main;
+        this.CL_VISIBLE_LINES = Math.floor((this.CL_H - this.CL_TITLE_H - this.CL_PAD) / this.CL_LINE_H);
+        this.combatLogContainer = this.add.container(0, 0);
+        this.combatLogContainer.setScrollFactor(0);
+        this.combatLogContainer.setDepth(UI_DEPTH_BASE + 22);
+        // Background
+        this.combatLogBgGfx = this.add.graphics();
+        this.combatLogContainer.add(this.combatLogBgGfx);
+        // Scrollbar
+        this.combatLogScrollGfx = this.add.graphics();
+        this.combatLogContainer.add(this.combatLogScrollGfx);
+        // Title text
+        this.combatLogTitleText = this.add.text(0, 0, 'Combat Log', {
+            fontSize: '10px',
+            color: '#cc8844',
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        this.combatLogTitleText.setScrollFactor(0);
+        this.combatLogTitleText.setDepth(UI_DEPTH_BASE + 23);
+        this.combatLogContainer.add(this.combatLogTitleText);
+        // Pre-allocate message text objects
+        const textW = this.CL_W - this.CL_PAD * 2 - this.CL_SCROLLBAR_W;
+        for (let i = 0; i < this.CL_VISIBLE_LINES; i++) {
+            const t = this.add.text(0, 0, '', {
+                fontSize: '10px',
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 1,
+                wordWrap: { width: textW },
+            });
+            t.setScrollFactor(0);
+            t.setDepth(UI_DEPTH_BASE + 23);
+            t.setVisible(false);
+            this.combatLogContainer.add(t);
+            this.combatLogMessageTexts.push(t);
+        }
+        // Context menu graphics (starts hidden, positioned on right-click)
+        this.combatLogContextGfx = this.add.graphics();
+        this.combatLogContextGfx.setScrollFactor(0);
+        this.combatLogContextGfx.setDepth(UI_DEPTH_BASE + 310);
+        this.combatLogContextGfx.setVisible(false);
+    }
+    /** Get the default screen position of the combat log panel (top-right area). */
+    getCombatLogDefaultPos() {
+        const cam = this.cameras.main;
+        return { x: cam.width - this.CL_W - 12, y: 12 };
+    }
+    /** Get the chat panel rect (for scroll / drag hit-testing). */
+    getChatPanelRect() {
+        const cam = this.cameras.main;
+        return {
+            x: this.CHAT_LEFT_X + this.chatOffset.x,
+            y: cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y,
+            w: this.chatEffectiveW,
+            h: this.CHAT_H,
+        };
+    }
+    /** Get the combat log panel rect (for drag detection). */
+    getCombatLogPanelRect() {
+        const def = this.getCombatLogDefaultPos();
+        return {
+            x: def.x + this.combatLogOffset.x,
+            y: def.y + this.combatLogOffset.y,
+            w: this.CL_W,
+            h: this.CL_H,
+        };
+    }
+    /** Resolve an entity ID (player/NPC session or state ID) to a display name. */
+    getCombatEntityName(id) {
+        if (id === this.network.sessionId)
+            return 'You';
+        // Check party members
+        const partyMember = this.partyMembers.find(m => m.sessionId === id);
+        if (partyMember)
+            return partyMember.characterName;
+        // Check other players
+        const cached = this.remotePlayerCache.get(id);
+        if (cached)
+            return cached.characterName || id.slice(0, 6);
+        // Check NPCs
+        const npc = this.npcCache.get(id);
+        if (npc)
+            return npc.name || 'NPC';
+        return id.slice(0, 6);
+    }
+    /** Check if a given entity is the local player or a party member. */
+    isLocalOrParty(id) {
+        if (id === this.network.sessionId)
+            return true;
+        return this.partyMembers.some(m => m.sessionId === id);
+    }
+    /** Push a combat log entry. Respects max message cap. */
+    pushCombatLog(text, color, type) {
+        this.combatLogMessages.push({ text, color, type });
+        if (this.combatLogMessages.length > this.CL_MAX_MESSAGES) {
+            this.combatLogMessages.shift();
+            // Adjust scroll offset if we pruned from the top
+            if (this.combatLogScrollOffset > 0) {
+                this.combatLogScrollOffset = Math.max(0, this.combatLogScrollOffset - 1);
+            }
+        }
+        // Auto-scroll to bottom if already near the bottom
+        if (this.combatLogScrollOffset <= 2) {
+            this.combatLogScrollOffset = 0;
+        }
+    }
+    /** Get filtered messages for display. */
+    getFilteredCombatLogMessages() {
+        return this.combatLogMessages.filter(m => this.combatLogFilters[m.type] !== false);
+    }
+    drawCombatLogPanel() {
+        const cam = this.cameras.main;
+        const def = this.getCombatLogDefaultPos();
+        const panelX = def.x + this.combatLogOffset.x;
+        const panelY = def.y + this.combatLogOffset.y;
+        // Draw background
+        this.combatLogBgGfx.clear();
+        this.combatLogBgGfx.setPosition(panelX, panelY);
+        this.combatLogBgGfx.fillStyle(0x0a0a1a, 0.78);
+        this.combatLogBgGfx.fillRect(0, 0, this.CL_W, this.CL_H);
+        this.combatLogBgGfx.lineStyle(1, 0x553322, 0.9);
+        this.combatLogBgGfx.strokeRect(0, 0, this.CL_W, this.CL_H);
+        // Title strip
+        this.combatLogBgGfx.fillStyle(0x1a1008, 0.6);
+        this.combatLogBgGfx.fillRect(0, 0, this.CL_W, this.CL_TITLE_H);
+        this.combatLogTitleText.setPosition(panelX + this.CL_PAD, panelY + 3);
+        // Get filtered messages
+        const filtered = this.getFilteredCombatLogMessages();
+        const totalFiltered = filtered.length;
+        const maxScroll = Math.max(0, totalFiltered - this.CL_VISIBLE_LINES);
+        // Clamp scroll offset
+        if (this.combatLogScrollOffset > maxScroll)
+            this.combatLogScrollOffset = maxScroll;
+        // Show messages — bottom-up layout so word-wrapped lines don't overlap.
+        const msgAreaTopY = panelY + this.CL_TITLE_H + 2;
+        const msgAreaBottomY = panelY + this.CL_H - 4;
+        const startIdx = Math.max(0, totalFiltered - this.CL_VISIBLE_LINES - this.combatLogScrollOffset);
+        // Pass 1: populate slots with content (slot 0 = oldest visible, slot N-1 = newest).
+        for (let i = 0; i < this.CL_VISIBLE_LINES; i++) {
+            const t = this.combatLogMessageTexts[i];
+            const msgIdx = startIdx + i;
+            if (msgIdx >= 0 && msgIdx < totalFiltered) {
+                const msg = filtered[msgIdx];
+                t.setText(msg.text);
+                t.setColor(msg.color);
+                t.setVisible(true);
+            }
+            else {
+                t.setText('');
+                t.setVisible(false);
+            }
+        }
+        // Pass 2: read actual rendered heights and stack from bottom up.
+        let curY = msgAreaBottomY;
+        for (let i = this.CL_VISIBLE_LINES - 1; i >= 0; i--) {
+            const t = this.combatLogMessageTexts[i];
+            if (!t.text) {
+                t.setVisible(false);
+                continue;
+            }
+            const h = Math.max(this.CL_LINE_H, t.height);
+            curY -= h;
+            if (curY < msgAreaTopY) {
+                t.setVisible(false); // would overflow into the title bar — hide it
+            }
+            else {
+                t.setPosition(panelX + this.CL_PAD, curY);
+                t.setVisible(true);
+            }
+        }
+        // Draw scrollbar
+        this.combatLogScrollGfx.clear();
+        this.combatLogScrollGfx.setPosition(panelX, panelY);
+        const sbX = this.CL_W - this.CL_SCROLLBAR_W - 2;
+        const sbY = this.CL_TITLE_H + 2;
+        const sbH = this.CL_H - this.CL_TITLE_H - 4;
+        // Track background
+        this.combatLogScrollGfx.fillStyle(0x222233, 0.5);
+        this.combatLogScrollGfx.fillRect(sbX, sbY, this.CL_SCROLLBAR_W, sbH);
+        if (totalFiltered > this.CL_VISIBLE_LINES) {
+            // Thumb
+            const thumbRatio = this.CL_VISIBLE_LINES / totalFiltered;
+            const thumbH = Math.max(16, sbH * thumbRatio);
+            const scrollFraction = maxScroll > 0 ? (maxScroll - this.combatLogScrollOffset) / maxScroll : 1;
+            const thumbY = sbY + (sbH - thumbH) * scrollFraction;
+            this.combatLogScrollGfx.fillStyle(0x886644, 0.8);
+            this.combatLogScrollGfx.fillRoundedRect(sbX, thumbY, this.CL_SCROLLBAR_W, thumbH, 3);
+        }
+        // Draw context menu if open
+        if (this.combatLogContextMenuOpen) {
+            this.drawCombatLogContextMenu();
+        }
+    }
+    // ── Combat Log: Context Menu (right-click filter toggles) ──
+    CL_FILTER_LABELS = [
+        { key: 'outDmg', label: 'Your Damage', color: '#ffcc44' },
+        { key: 'inDmg', label: 'Damage Taken', color: '#ff6644' },
+        { key: 'misses', label: 'Misses', color: '#999999' },
+        { key: 'dodges', label: 'Dodges', color: '#ffffff' },
+        { key: 'blocks', label: 'Blocks', color: '#4488ff' },
+        { key: 'deaths', label: 'Deaths', color: '#ff4444' },
+        { key: 'heals', label: 'Healing', color: '#44ff44' },
+        { key: 'buffs', label: 'Buffs & Debuffs', color: '#88ccff' },
+        { key: 'xp', label: 'XP Rewards', color: '#ffaa00' },
+        { key: 'party', label: 'Party Combat', color: '#aabb88' },
+    ];
+    openCombatLogContextMenu(x, y) {
+        this.combatLogContextMenuOpen = true;
+        this.combatLogContextMenuPos = { x, y };
+        this.combatLogContextGfx.setVisible(true);
+        // Destroy old text objects
+        for (const t of this.combatLogContextTexts)
+            t.destroy();
+        this.combatLogContextTexts = [];
+        const rowH = 20;
+        const menuW = 150;
+        const menuH = this.CL_FILTER_LABELS.length * rowH + 8;
+        // Clamp menu position to screen
+        const cam = this.cameras.main;
+        const menuX = Math.min(x, cam.width - menuW - 4);
+        const menuY = Math.min(y, cam.height - menuH - 4);
+        this.combatLogContextGfx.clear();
+        this.combatLogContextGfx.fillStyle(0x1a1a2e, 0.97);
+        this.combatLogContextGfx.fillRoundedRect(menuX, menuY, menuW, menuH, 4);
+        this.combatLogContextGfx.lineStyle(1, 0x886644, 1);
+        this.combatLogContextGfx.strokeRoundedRect(menuX, menuY, menuW, menuH, 4);
+        for (let i = 0; i < this.CL_FILTER_LABELS.length; i++) {
+            const f = this.CL_FILTER_LABELS[i];
+            const ry = menuY + 4 + i * rowH;
+            // Checkbox square
+            const checked = this.combatLogFilters[f.key] !== false;
+            this.combatLogContextGfx.fillStyle(checked ? 0x886644 : 0x333344, 1);
+            this.combatLogContextGfx.fillRect(menuX + 8, ry + 4, 12, 12);
+            if (checked) {
+                this.combatLogContextGfx.lineStyle(2, 0xffffff, 1);
+                this.combatLogContextGfx.lineBetween(menuX + 10, ry + 10, menuX + 13, ry + 14);
+                this.combatLogContextGfx.lineBetween(menuX + 13, ry + 14, menuX + 18, ry + 6);
+                this.combatLogContextGfx.lineStyle(1, 0x886644, 1); // reset
+            }
+            const label = this.add.text(menuX + 26, ry + 3, f.label, {
+                fontSize: '10px',
+                color: f.color,
+                stroke: '#000000',
+                strokeThickness: 1,
+            });
+            label.setScrollFactor(0);
+            label.setDepth(UI_DEPTH_BASE + 311);
+            this.combatLogContextTexts.push(label);
+        }
+    }
+    closeCombatLogContextMenu() {
+        this.combatLogContextMenuOpen = false;
+        this.combatLogContextGfx.setVisible(false);
+        for (const t of this.combatLogContextTexts)
+            t.destroy();
+        this.combatLogContextTexts = [];
+    }
+    drawCombatLogContextMenu() {
+        // The menu is drawn in openCombatLogContextMenu and stays static until closed
+        // This is called from drawCombatLogPanel to keep it visible
+    }
+    /** Handle a click inside the context menu. Returns true if consumed. */
+    handleCombatLogContextClick(px, py) {
+        if (!this.combatLogContextMenuOpen)
+            return false;
+        const rowH = 20;
+        const menuW = 150;
+        const menuH = this.CL_FILTER_LABELS.length * rowH + 8;
+        const cam = this.cameras.main;
+        const menuX = Math.min(this.combatLogContextMenuPos.x, cam.width - menuW - 4);
+        const menuY = Math.min(this.combatLogContextMenuPos.y, cam.height - menuH - 4);
+        // Check if click is inside menu
+        if (px >= menuX && px <= menuX + menuW && py >= menuY && py <= menuY + menuH) {
+            // Which row?
+            const rowIdx = Math.floor((py - menuY - 4) / rowH);
+            if (rowIdx >= 0 && rowIdx < this.CL_FILTER_LABELS.length) {
+                const key = this.CL_FILTER_LABELS[rowIdx].key;
+                this.combatLogFilters[key] = !this.combatLogFilters[key];
+                // Redraw menu
+                this.closeCombatLogContextMenu();
+                this.openCombatLogContextMenu(this.combatLogContextMenuPos.x, this.combatLogContextMenuPos.y);
+            }
+            return true;
+        }
+        // Clicked outside menu — close it
+        this.closeCombatLogContextMenu();
+        return true;
+    }
     drawChatPanel() {
         const cam = this.cameras.main;
-        // Dynamically place the panel just to the right of the HUD text (class/level/HP/mana),
-        // with a small gap, so it never overlaps regardless of text content length.
-        const hudTextRight = this.classHudText.x + this.classHudText.width + 10;
-        const panelX = Math.max(this.CHAT_LEFT_X, hudTextRight) + this.chatOffset.x;
+        const panelX = this.CHAT_LEFT_X + this.chatOffset.x;
         const panelY = cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y;
         // Compute effective width: fill the gap between the HUD text and the action bar
         const actionBarTotalW = ACTION_BAR_SLOTS * (this.AB_SLOT_SIZE + this.AB_SLOT_GAP)
@@ -1940,7 +4469,7 @@ export class GameScene extends Phaser.Scene {
         // Update word-wrap on text objects only when width actually changes
         if (newW !== this.chatEffectiveW) {
             this.chatEffectiveW = newW;
-            const wrapW = newW - this.CHAT_PAD * 2;
+            const wrapW = newW - this.CHAT_PAD * 2 - this.CHAT_SCROLLBAR_W;
             for (const t of this.chatMessageTexts) {
                 t.setWordWrapWidth(wrapW);
             }
@@ -1956,22 +4485,62 @@ export class GameScene extends Phaser.Scene {
         const channelLabel = this.chatCurrentChannel === 'general' ? '[General]' : '[World]';
         this.chatChannelLabel.setText(channelLabel);
         this.chatChannelLabel.setPosition(panelX + this.CHAT_PAD, panelY + 3);
-        // Messages — show most recent CHAT_VISIBLE_LINES from history
+        // Messages — bottom-up layout so word-wrapped lines don't overlap.
         const msgAreaTopY = panelY + 18;
-        const start = Math.max(0, this.chatMessages.length - this.CHAT_VISIBLE_LINES);
+        const msgAreaBottomY = panelY + this.CHAT_H - this.CHAT_INPUT_H - 4;
+        const totalMsgs = this.chatMessages.length;
+        const maxScroll = Math.max(0, totalMsgs - this.CHAT_VISIBLE_LINES);
+        if (this.chatScrollOffset > maxScroll)
+            this.chatScrollOffset = maxScroll;
+        // Pass 1: populate slots (slot 0 = oldest visible, slot N-1 = newest visible).
+        const start = Math.max(0, totalMsgs - this.CHAT_VISIBLE_LINES - this.chatScrollOffset);
         for (let i = 0; i < this.CHAT_VISIBLE_LINES; i++) {
             const t = this.chatMessageTexts[i];
             const msgIndex = start + i;
-            if (msgIndex < this.chatMessages.length) {
+            if (msgIndex < totalMsgs) {
                 const msg = this.chatMessages[msgIndex];
                 t.setText(msg.text);
                 t.setColor(msg.color);
-                t.setPosition(panelX + this.CHAT_PAD, msgAreaTopY + i * this.CHAT_LINE_H);
                 t.setVisible(true);
             }
             else {
+                t.setText('');
                 t.setVisible(false);
             }
+        }
+        // Pass 2: read actual rendered heights and stack from bottom up.
+        let curY = msgAreaBottomY;
+        for (let i = this.CHAT_VISIBLE_LINES - 1; i >= 0; i--) {
+            const t = this.chatMessageTexts[i];
+            if (!t.text) {
+                t.setVisible(false);
+                continue;
+            }
+            const h = Math.max(this.CHAT_LINE_H, t.height);
+            curY -= h;
+            if (curY < msgAreaTopY) {
+                t.setVisible(false); // would overflow the top — hide it
+            }
+            else {
+                t.setPosition(panelX + this.CHAT_PAD, curY);
+                t.setVisible(true);
+            }
+        }
+        // Scrollbar
+        this.chatScrollGfx.clear();
+        this.chatScrollGfx.setPosition(panelX, panelY);
+        const sbX = this.chatEffectiveW - this.CHAT_SCROLLBAR_W - 2;
+        const sbY = 18;
+        const sbH = this.CHAT_H - 18 - this.CHAT_INPUT_H - 4;
+        this.chatScrollGfx.fillStyle(0x222233, 0.5);
+        this.chatScrollGfx.fillRect(sbX, sbY, this.CHAT_SCROLLBAR_W, sbH);
+        if (totalMsgs > this.CHAT_VISIBLE_LINES) {
+            const thumbRatio = this.CHAT_VISIBLE_LINES / totalMsgs;
+            const thumbH = Math.max(16, sbH * thumbRatio);
+            const scrollFraction = maxScroll > 0 ? (maxScroll - this.chatScrollOffset) / maxScroll : 1;
+            const thumbY = sbY + (sbH - thumbH) * scrollFraction;
+            this.chatScrollGfx.fillStyle(0x446688, 0.8);
+            this.chatScrollGfx.fillRoundedRect(sbX, thumbY, this.CHAT_SCROLLBAR_W, thumbH, 3);
         }
         // Input area
         const inputY = panelY + this.CHAT_H - this.CHAT_INPUT_H - 2;
@@ -2037,6 +4606,23 @@ export class GameScene extends Phaser.Scene {
             }
             this.network.sendChatMessage('whisper', msg, targetName);
         }
+        else if (lc.startsWith('/invite ')) {
+            const name = raw.slice(8).trim();
+            if (name.length === 0) {
+                this.pushSystemChat('Usage: /invite PlayerName');
+                return;
+            }
+            this.network.sendPartyInvite(name);
+        }
+        else if (lc === '/accept') {
+            this.network.sendPartyAccept();
+        }
+        else if (lc === '/decline') {
+            this.network.sendPartyDecline();
+        }
+        else if (lc === '/leave') {
+            this.network.sendPartyLeave();
+        }
         else if (raw.startsWith('/')) {
             this.pushSystemChat(`Unknown command: ${raw.split(' ')[0]}`);
         }
@@ -2070,6 +4656,14 @@ export class GameScene extends Phaser.Scene {
         this.chatMessages.push({ text, color });
         if (this.chatMessages.length > this.CHAT_MAX_MESSAGES) {
             this.chatMessages.shift();
+            // Adjust scroll offset if we pruned from the top
+            if (this.chatScrollOffset > 0) {
+                this.chatScrollOffset = Math.max(0, this.chatScrollOffset - 1);
+            }
+        }
+        // Auto-scroll to bottom if already near the bottom
+        if (this.chatScrollOffset <= 2) {
+            this.chatScrollOffset = 0;
         }
     }
     pushSystemChat(message) {
@@ -2085,7 +4679,7 @@ export class GameScene extends Phaser.Scene {
         const cam = this.cameras.main;
         this.actionBarContainer = this.add.container(0, 0);
         this.actionBarContainer.setScrollFactor(0);
-        this.actionBarContainer.setDepth(150);
+        this.actionBarContainer.setDepth(UI_DEPTH_BASE + 50);
         this.actionBarGfx = this.add.graphics();
         this.actionBarContainer.add(this.actionBarGfx);
         this.actionBarCooldownGfx = this.add.graphics();
@@ -2159,8 +4753,14 @@ export class GameScene extends Phaser.Scene {
                 this.actionBarGfx.fillStyle(0x222244, 0.6);
             }
             this.actionBarGfx.fillRect(sx, sy, this.AB_SLOT_SIZE, this.AB_SLOT_SIZE);
-            // Slot border
-            this.actionBarGfx.lineStyle(1, skill ? 0x888888 : 0x444466, 1);
+            // Slot border — glow green when auto-attack is active on this slot
+            const isActiveAutoAttack = skill?.isAutoAttack && this.localAutoAttackActive && this.localAutoAttackSkillId === skillId;
+            if (isActiveAutoAttack) {
+                this.actionBarGfx.lineStyle(2, 0x44ff44, 1);
+            }
+            else {
+                this.actionBarGfx.lineStyle(1, skill ? 0x888888 : 0x444466, 1);
+            }
             this.actionBarGfx.strokeRect(sx, sy, this.AB_SLOT_SIZE, this.AB_SLOT_SIZE);
             // Skill text
             if (skill) {
@@ -2220,7 +4820,7 @@ export class GameScene extends Phaser.Scene {
     createCastBar() {
         this.castBarContainer = this.add.container(0, 0);
         this.castBarContainer.setScrollFactor(0);
-        this.castBarContainer.setDepth(160);
+        this.castBarContainer.setDepth(UI_DEPTH_BASE + 60);
         this.castBarContainer.setVisible(false);
         this.castBarGfx = this.add.graphics();
         this.castBarContainer.add(this.castBarGfx);
@@ -2275,12 +4875,12 @@ export class GameScene extends Phaser.Scene {
         const cam = this.cameras.main;
         this.skillsPaneContainer = this.add.container(0, 0);
         this.skillsPaneContainer.setScrollFactor(0);
-        this.skillsPaneContainer.setDepth(310);
+        this.skillsPaneContainer.setDepth(UI_DEPTH_BASE + 210);
         this.skillsPaneContainer.setVisible(false);
         // Fullscreen dim overlay — kept OUTSIDE skillsPaneContainer so it doesn't move when the pane is dragged
         this.skillsDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.5);
         this.skillsDimBg.setScrollFactor(0);
-        this.skillsDimBg.setDepth(309); // just below skillsPaneContainer (310)
+        this.skillsDimBg.setDepth(UI_DEPTH_BASE + 209); // just below skillsPaneContainer (UI_DEPTH_BASE + 210)
         this.skillsDimBg.setVisible(false);
         this.skillsPaneGfx = this.add.graphics();
         this.skillsPaneContainer.add(this.skillsPaneGfx);
@@ -2305,7 +4905,7 @@ export class GameScene extends Phaser.Scene {
         this.skillDragGhostBg = this.add.rectangle(0, 0, 52, 22, 0x000000, 0.85);
         this.skillDragGhostBg.setStrokeStyle(1, 0xffcc00);
         this.skillDragGhostBg.setVisible(false);
-        this.skillDragGhostBg.setDepth(999);
+        this.skillDragGhostBg.setDepth(UI_DEPTH_BASE + 899);
         this.skillsPaneContainer.add(this.skillDragGhostBg);
         this.skillDragGhost = this.add.text(0, 0, '', {
             fontSize: '11px',
@@ -2315,11 +4915,27 @@ export class GameScene extends Phaser.Scene {
         });
         this.skillDragGhost.setOrigin(0.5, 0.5);
         this.skillDragGhost.setVisible(false);
-        this.skillDragGhost.setDepth(1000);
+        this.skillDragGhost.setDepth(UI_DEPTH_BASE + 900);
         this.skillsPaneContainer.add(this.skillDragGhost);
+        // Action-bar slot drag ghost — added directly to scene (visible even when skills pane is closed)
+        this.abDragGhostBg = this.add.rectangle(0, 0, 52, 22, 0x000000, 0.85);
+        this.abDragGhostBg.setStrokeStyle(1, 0xffcc00);
+        this.abDragGhostBg.setScrollFactor(0);
+        this.abDragGhostBg.setVisible(false);
+        this.abDragGhostBg.setDepth(UI_DEPTH_BASE + 899);
+        this.abDragGhost = this.add.text(0, 0, '', {
+            fontSize: '11px',
+            color: '#ffcc00',
+            stroke: '#000000',
+            strokeThickness: 2,
+        });
+        this.abDragGhost.setOrigin(0.5, 0.5);
+        this.abDragGhost.setScrollFactor(0);
+        this.abDragGhost.setVisible(false);
+        this.abDragGhost.setDepth(UI_DEPTH_BASE + 900);
         // Skill tooltip (shown on hover)
         this.skillTooltipContainer = this.add.container(0, 0);
-        this.skillTooltipContainer.setDepth(1100);
+        this.skillTooltipContainer.setDepth(UI_DEPTH_BASE + 1000);
         this.skillTooltipContainer.setVisible(false);
         this.skillsPaneContainer.add(this.skillTooltipContainer);
         this.skillTooltipBg = this.add.graphics();
@@ -2539,6 +5155,477 @@ export class GameScene extends Phaser.Scene {
         this.input.on('pointerdown', onPointerDown);
         this.input.on('pointermove', onPointerMove);
         this.input.on('pointerup', onPointerUp);
+    }
+    // ═══════════════════════════════════════════════════════════
+    // LOOT PANEL
+    // ═══════════════════════════════════════════════════════════
+    get lootPanelW() {
+        return this.LOOT_COLS * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP) + this.LOOT_SLOT_GAP + this.LOOT_PANEL_PAD * 2;
+    }
+    get lootPanelH() {
+        return this.LOOT_ROWS * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP) + this.LOOT_SLOT_GAP + 70; // 34 title + 36 button area
+    }
+    createLootPanel() {
+        const cam = this.cameras.main;
+        this.lootPanelContainer = this.add.container(0, 0);
+        this.lootPanelContainer.setScrollFactor(0);
+        this.lootPanelContainer.setDepth(UI_DEPTH_BASE + 250);
+        this.lootPanelContainer.setVisible(false);
+        this.lootPanelGfx = this.add.graphics();
+        this.lootPanelContainer.add(this.lootPanelGfx);
+        this.lootPanelTitleText = this.add.text(0, 0, 'Loot', {
+            fontSize: '13px',
+            fontStyle: 'bold',
+            color: '#ffcc00',
+            stroke: '#000000',
+            strokeThickness: 2,
+        });
+        this.lootPanelContainer.add(this.lootPanelTitleText);
+        // "Loot All" button text (positioned in renderLootPanel)
+        const lootAllText = this.add.text(0, 0, 'Loot All', {
+            fontSize: '12px',
+            fontStyle: 'bold',
+            color: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 2,
+        });
+        lootAllText.setOrigin(0.5, 0.5);
+        this.lootPanelContainer.add(lootAllText);
+        this._lootAllBtnText = lootAllText;
+        // Create slot texts and qty texts
+        const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+        for (let i = 0; i < maxSlots; i++) {
+            const slotText = this.add.text(0, 0, '', {
+                fontSize: '9px',
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 1,
+            });
+            slotText.setOrigin(0.5, 0.5);
+            this.lootPanelContainer.add(slotText);
+            this.lootPanelSlotTexts.push(slotText);
+            this.lootPanelSlotIcons.push(null);
+            const qtyText = this.add.text(0, 0, '', {
+                fontSize: '9px',
+                color: '#ffffff',
+                stroke: '#000000',
+                strokeThickness: 2,
+            });
+            qtyText.setOrigin(1, 1);
+            this.lootPanelContainer.add(qtyText);
+            this.lootPanelQtyTexts.push(qtyText);
+        }
+        // Register click handlers for loot panel
+        this.input.on('pointerdown', (pointer) => {
+            if (!this.lootPanelOpen || !this.currentLootBagId)
+                return;
+            // Right-click on loot slot = auto-loot
+            if (pointer.button === 2) {
+                const slot = this.getLootSlotAt(pointer.x, pointer.y);
+                if (slot >= 0) {
+                    const item = this.lootPanelItems[slot];
+                    if (item) {
+                        this.network.sendLootItem(this.currentLootBagId, slot, item.quantity);
+                    }
+                }
+                return;
+            }
+            if (pointer.button === 0) {
+                // Shift+left-click on loot slot = inspect item
+                if (pointer.event.shiftKey) {
+                    const slot = this.getLootSlotAt(pointer.x, pointer.y);
+                    if (slot >= 0) {
+                        const item = this.lootPanelItems[slot];
+                        if (item) {
+                            this.showItemDetail(item.itemId);
+                            return;
+                        }
+                    }
+                }
+                // Left-click: close button
+                if (this.isLootPanelCloseBtn(pointer.x, pointer.y)) {
+                    this.closeLootPanel();
+                    return;
+                }
+                // Left-click: Loot All button
+                if (this.isLootAllBtn(pointer.x, pointer.y)) {
+                    this.network.sendLootAll(this.currentLootBagId);
+                    return;
+                }
+            }
+        });
+    }
+    openLootPanel(bagId) {
+        const cached = this.lootBagCache.get(bagId);
+        if (!cached)
+            return;
+        this.currentLootBagId = bagId;
+        this.lootPanelOpen = true;
+        this.lootPanelContainer.setVisible(true);
+        // Auto-open inventory
+        if (!this.inventoryOpen) {
+            this.toggleInventory();
+        }
+        // Parse items from the bag state
+        this.refreshLootPanelItems(cached);
+        this.renderLootPanel();
+    }
+    closeLootPanel() {
+        this.lootPanelOpen = false;
+        this.currentLootBagId = null;
+        this.lootPanelContainer.setVisible(false);
+        this.lootPanelItems = [];
+    }
+    refreshLootPanelItems(bag) {
+        this.lootPanelItems = [];
+        if (bag.items) {
+            // Colyseus ArraySchema — iterate with forEach or indexed access
+            if (typeof bag.items.forEach === 'function') {
+                bag.items.forEach((slot) => {
+                    if (slot && slot.itemId) {
+                        this.lootPanelItems.push({ itemId: slot.itemId, quantity: slot.quantity ?? 1 });
+                    }
+                });
+            }
+            else if (bag.items.length !== undefined) {
+                for (let i = 0; i < bag.items.length; i++) {
+                    const slot = bag.items[i];
+                    if (slot && slot.itemId) {
+                        this.lootPanelItems.push({ itemId: slot.itemId, quantity: slot.quantity ?? 1 });
+                    }
+                }
+            }
+        }
+        // If bag is empty, auto-close
+        if (this.lootPanelItems.length === 0 && this.lootPanelOpen) {
+            this.closeLootPanel();
+            return;
+        }
+        if (this.lootPanelOpen) {
+            this.renderLootPanel();
+        }
+    }
+    renderLootPanel() {
+        const cam = this.cameras.main;
+        const panelW = this.lootPanelW;
+        const panelH = this.lootPanelH;
+        // Position to the left of the inventory panel
+        const px = this.panelStartX + this.invOffset.x - panelW - 8;
+        const py = this.panelY + this.invOffset.y;
+        this.lootPanelContainer.setPosition(px, py);
+        // Draw background
+        this.lootPanelGfx.clear();
+        this.lootPanelGfx.fillStyle(0x1a1a2e, 0.95);
+        this.lootPanelGfx.fillRoundedRect(0, 0, panelW, panelH, 6);
+        this.lootPanelGfx.lineStyle(2, 0xccaa44, 0.8);
+        this.lootPanelGfx.strokeRoundedRect(0, 0, panelW, panelH, 6);
+        // Title bar
+        this.lootPanelGfx.fillStyle(0x2a2a3e, 0.9);
+        this.lootPanelGfx.fillRect(2, 2, panelW - 4, 28);
+        this.lootPanelTitleText.setPosition(this.LOOT_PANEL_PAD, 7);
+        // Close button (X) in title bar
+        this.lootPanelGfx.fillStyle(0xff4444, 0.7);
+        this.lootPanelGfx.fillRect(panelW - 24, 5, 18, 18);
+        this.lootPanelGfx.lineStyle(2, 0xffffff, 0.9);
+        this.lootPanelGfx.lineBetween(panelW - 20, 9, panelW - 10, 19);
+        this.lootPanelGfx.lineBetween(panelW - 10, 9, panelW - 20, 19);
+        const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+        const dm = ClientDataManager.instance;
+        // Draw slots
+        for (let i = 0; i < maxSlots; i++) {
+            const col = i % this.LOOT_COLS;
+            const row = Math.floor(i / this.LOOT_COLS);
+            const sx = this.LOOT_PANEL_PAD + col * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+            const sy = 34 + this.LOOT_SLOT_GAP + row * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+            const item = this.lootPanelItems[i];
+            // Slot background
+            if (item) {
+                const template = dm.getItem(item.itemId);
+                const rarityColor = template ? (RARITY_COLORS[template.rarity] ?? '#333344') : '#333344';
+                const hexColor = parseInt(rarityColor.replace('#', ''), 16);
+                this.lootPanelGfx.fillStyle(hexColor, 0.25);
+            }
+            else {
+                this.lootPanelGfx.fillStyle(0x333344, 0.6);
+            }
+            this.lootPanelGfx.fillRect(sx, sy, this.LOOT_SLOT_SIZE, this.LOOT_SLOT_SIZE);
+            this.lootPanelGfx.lineStyle(1, 0x555566, 0.6);
+            this.lootPanelGfx.strokeRect(sx, sy, this.LOOT_SLOT_SIZE, this.LOOT_SLOT_SIZE);
+            // Destroy old icon if it exists
+            if (this.lootPanelSlotIcons[i]) {
+                this.lootPanelSlotIcons[i].destroy();
+                this.lootPanelSlotIcons[i] = null;
+            }
+            if (item) {
+                const template = dm.getItem(item.itemId);
+                const iconKey = template?.inventoryIcon ? `icon_${template.inventoryIcon}` : null;
+                if (iconKey && this.textures.exists(iconKey)) {
+                    const iconImg = this.add.image(sx + this.LOOT_SLOT_SIZE / 2, sy + this.LOOT_SLOT_SIZE / 2, iconKey);
+                    const maxDim = this.LOOT_SLOT_SIZE - 4;
+                    const scale = Math.min(maxDim / iconImg.width, maxDim / iconImg.height);
+                    iconImg.setScale(scale);
+                    this.lootPanelContainer.add(iconImg);
+                    this.lootPanelSlotIcons[i] = iconImg;
+                    this.lootPanelSlotTexts[i].setText('');
+                }
+                else {
+                    const abbr = template ? template.name.slice(0, 5) : item.itemId.slice(0, 5);
+                    this.lootPanelSlotTexts[i].setText(abbr);
+                    const rarityColor = template ? (RARITY_COLORS[template.rarity] ?? '#ffffff') : '#ffffff';
+                    this.lootPanelSlotTexts[i].setColor(rarityColor);
+                }
+                this.lootPanelSlotTexts[i].setPosition(sx + this.LOOT_SLOT_SIZE / 2, sy + this.LOOT_SLOT_SIZE / 2);
+                // Quantity badge
+                if (item.quantity > 1) {
+                    this.lootPanelQtyTexts[i].setText(`${item.quantity}`);
+                    this.lootPanelQtyTexts[i].setPosition(sx + this.LOOT_SLOT_SIZE - 2, sy + this.LOOT_SLOT_SIZE - 2);
+                }
+                else {
+                    this.lootPanelQtyTexts[i].setText('');
+                }
+            }
+            else {
+                this.lootPanelSlotTexts[i].setText('');
+                this.lootPanelQtyTexts[i].setText('');
+            }
+        }
+        // "Loot All" button at bottom
+        const btnW = 90;
+        const btnH = 24;
+        const btnX = (panelW - btnW) / 2;
+        const btnY = panelH - btnH - 8;
+        this.lootPanelGfx.fillStyle(0x44aa44, 0.8);
+        this.lootPanelGfx.fillRoundedRect(btnX, btnY, btnW, btnH, 4);
+        this.lootPanelGfx.lineStyle(1, 0x66cc66, 0.9);
+        this.lootPanelGfx.strokeRoundedRect(btnX, btnY, btnW, btnH, 4);
+        // Position the "Loot All" text
+        const lootAllText = this._lootAllBtnText;
+        if (lootAllText) {
+            lootAllText.setPosition(btnX + btnW / 2, btnY + btnH / 2);
+        }
+    }
+    /** Get the loot panel slot at a given screen position (absolute, not offset-adjusted). */
+    getLootSlotAt(screenX, screenY) {
+        if (!this.lootPanelOpen)
+            return -1;
+        // Convert from screen to loot panel local coords
+        const px = screenX - this.lootPanelContainer.x;
+        const py = screenY - this.lootPanelContainer.y;
+        const maxSlots = this.LOOT_COLS * this.LOOT_ROWS;
+        for (let i = 0; i < maxSlots; i++) {
+            const col = i % this.LOOT_COLS;
+            const row = Math.floor(i / this.LOOT_COLS);
+            const sx = this.LOOT_PANEL_PAD + col * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+            const sy = 34 + this.LOOT_SLOT_GAP + row * (this.LOOT_SLOT_SIZE + this.LOOT_SLOT_GAP);
+            if (px >= sx && px <= sx + this.LOOT_SLOT_SIZE && py >= sy && py <= sy + this.LOOT_SLOT_SIZE) {
+                return i;
+            }
+        }
+        return -1;
+    }
+    /** Check if a screen position is inside the loot panel. */
+    isInsideLootPanel(screenX, screenY) {
+        const px = screenX - this.lootPanelContainer.x;
+        const py = screenY - this.lootPanelContainer.y;
+        return px >= 0 && px <= this.lootPanelW && py >= 0 && py <= this.lootPanelH;
+    }
+    /** Check if a screen position hits the loot panel close button. */
+    isLootPanelCloseBtn(screenX, screenY) {
+        const px = screenX - this.lootPanelContainer.x;
+        const py = screenY - this.lootPanelContainer.y;
+        return px >= this.lootPanelW - 24 && px <= this.lootPanelW - 6 && py >= 5 && py <= 23;
+    }
+    /** Check if a screen position hits the "Loot All" button. */
+    isLootAllBtn(screenX, screenY) {
+        const px = screenX - this.lootPanelContainer.x;
+        const py = screenY - this.lootPanelContainer.y;
+        const btnW = 90;
+        const btnH = 24;
+        const btnX = (this.lootPanelW - btnW) / 2;
+        const btnY = this.lootPanelH - btnH - 8;
+        return px >= btnX && px <= btnX + btnW && py >= btnY && py <= btnY + btnH;
+    }
+    // ── Item Detail Panel ────────────────────────────────────────
+    /** Create the item detail panel container (hidden on startup). */
+    createItemDetailPanel() {
+        this.itemDetailContainer = this.add.container(0, 0);
+        this.itemDetailContainer.setScrollFactor(0);
+        this.itemDetailContainer.setDepth(UI_DEPTH_BASE + 300);
+        this.itemDetailContainer.setVisible(false);
+        this.itemDetailGfx = this.add.graphics();
+        this.itemDetailContainer.add(this.itemDetailGfx);
+    }
+    /**
+     * Populate and show the item detail panel for the given item ID.
+     * Shift+clicking an inventory or equipment slot calls this.
+     */
+    showItemDetail(itemId) {
+        const template = ClientDataManager.instance.getItem(itemId);
+        if (!template)
+            return;
+        // Destroy any previously created dynamic objects
+        for (const obj of this._itemDetailDynamic) {
+            obj.destroy();
+        }
+        this._itemDetailDynamic = [];
+        this.itemDetailGfx.clear();
+        const PANEL_W = 224;
+        const PADDING = 12;
+        const TITLE_H = 34;
+        const LINE_H = 18;
+        const rarityColor = RARITY_COLORS[template.rarity] ?? '#cccccc';
+        // Build stat bonus lines
+        const statLines = [];
+        // Weapon-specific stats — shown first, before generic stat bonuses
+        if (template.equipSlot === 'weapon') {
+            if (template.attackDamage) {
+                statLines.push(`+${template.attackDamage} Attack Damage`);
+            }
+            if (template.attackSpeedMs) {
+                const speedSec = (template.attackSpeedMs / 1000).toFixed(2);
+                statLines.push(`${speedSec}s Attack Speed`);
+            }
+        }
+        if (template.statBonuses) {
+            const STAT_LABELS = {
+                hp: 'HP',
+                mana: 'Mana',
+                strength: 'Strength',
+                stamina: 'Stamina',
+                dexterity: 'Dexterity',
+                intelligence: 'Intelligence',
+                wisdom: 'Wisdom',
+                physicalResist: 'Phys Resist',
+                spellResist: 'Spell Resist',
+                critChance: 'Crit Chance',
+                critDamage: 'Crit Damage',
+                physicalDefense: 'Phys Defense',
+                blockRating: 'Block',
+                dodgeRating: 'Dodge',
+            };
+            const PCT_STATS = new Set(['critChance', 'critDamage', 'blockRating', 'dodgeRating', 'physicalResist', 'spellResist']);
+            for (const [key, val] of Object.entries(template.statBonuses)) {
+                if (val === undefined || val === 0)
+                    continue;
+                const label = STAT_LABELS[key] ?? key;
+                const numVal = val;
+                const isPct = PCT_STATS.has(key);
+                const display = isPct ? `+${(numVal * 100).toFixed(1)}%` : `+${numVal}`;
+                statLines.push(`${display} ${label}`);
+            }
+        }
+        // Calculate panel height dynamically based on content
+        const DESC_WRAP_W = PANEL_W - PADDING * 2;
+        // Rough estimate: 6.5px average char width at 11px font
+        const charsPerLine = Math.floor(DESC_WRAP_W / 6.5);
+        const descLineCount = Math.ceil(template.description.length / charsPerLine) + 1;
+        const descH = Math.max(descLineCount * 15, 15);
+        const hasDivider = statLines.length > 0;
+        let PANEL_H = TITLE_H +
+            PADDING + LINE_H + // rarity / category row
+            PADDING / 2 + descH + // description
+            (hasDivider ? PADDING + 1 : 0) +
+            statLines.length * LINE_H +
+            PADDING;
+        PANEL_H = Math.max(PANEL_H, 100);
+        // Draw panel background with gold border
+        this.itemDetailGfx.fillStyle(0x1a1a2e, 0.97);
+        this.itemDetailGfx.fillRoundedRect(0, 0, PANEL_W, PANEL_H, 6);
+        this.itemDetailGfx.lineStyle(2, 0xccaa44, 0.9);
+        this.itemDetailGfx.strokeRoundedRect(0, 0, PANEL_W, PANEL_H, 6);
+        // Title bar background
+        this.itemDetailGfx.fillStyle(0x111122, 0.9);
+        this.itemDetailGfx.fillRoundedRect(1, 1, PANEL_W - 2, TITLE_H - 2, { tl: 5, tr: 5, bl: 0, br: 0 });
+        // Item name in rarity colour
+        const titleText = this.add.text(PADDING, TITLE_H / 2, template.name, {
+            fontSize: '13px',
+            fontStyle: 'bold',
+            color: rarityColor,
+            stroke: '#000000',
+            strokeThickness: 2,
+        });
+        titleText.setOrigin(0, 0.5);
+        this.itemDetailContainer.add(titleText);
+        this._itemDetailDynamic.push(titleText);
+        // Close [✕] button — rendered as plain text; click is handled via scene-level
+        // pointerdown + isItemDetailCloseBtn() to avoid the Phaser Container input bug.
+        const closeBtn = this.add.text(PANEL_W - PADDING, TITLE_H / 2, '✕', {
+            fontSize: '13px',
+            color: '#aaaaaa',
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        closeBtn.setOrigin(1, 0.5);
+        this.itemDetailContainer.add(closeBtn);
+        this._itemDetailDynamic.push(closeBtn);
+        // Rarity + category + equip-slot line
+        let curY = TITLE_H + PADDING;
+        const rarityLabel = template.rarity.charAt(0).toUpperCase() + template.rarity.slice(1);
+        const categoryLabel = template.category.charAt(0).toUpperCase() + template.category.slice(1);
+        const slotLabel = template.equipSlot
+            ? ` — ${template.equipSlot.charAt(0).toUpperCase() + template.equipSlot.slice(1)}`
+            : '';
+        const badgeText = this.add.text(PADDING, curY, `${rarityLabel} ${categoryLabel}${slotLabel}`, {
+            fontSize: '11px',
+            fontStyle: 'italic',
+            color: rarityColor,
+            stroke: '#000000',
+            strokeThickness: 1,
+        });
+        this.itemDetailContainer.add(badgeText);
+        this._itemDetailDynamic.push(badgeText);
+        curY += LINE_H + PADDING / 2;
+        // Description (word-wrapped)
+        const descText = this.add.text(PADDING, curY, template.description, {
+            fontSize: '11px',
+            color: '#cccccc',
+            wordWrap: { width: DESC_WRAP_W },
+            lineSpacing: 2,
+        });
+        this.itemDetailContainer.add(descText);
+        this._itemDetailDynamic.push(descText);
+        curY += descText.height + PADDING / 2;
+        // Stat bonuses section
+        if (statLines.length > 0) {
+            // Divider line
+            this.itemDetailGfx.lineStyle(1, 0x444466, 0.9);
+            this.itemDetailGfx.lineBetween(PADDING, curY, PANEL_W - PADDING, curY);
+            curY += PADDING / 2 + 2;
+            for (const line of statLines) {
+                const statText = this.add.text(PADDING, curY, line, {
+                    fontSize: '11px',
+                    color: '#55ff77',
+                    stroke: '#000000',
+                    strokeThickness: 1,
+                });
+                this.itemDetailContainer.add(statText);
+                this._itemDetailDynamic.push(statText);
+                curY += LINE_H;
+            }
+        }
+        // Position to the right of the inventory panel, aligned to its top edge
+        const rightEdge = this.panelStartX + this.invOffset.x + this.totalPanelW + 8;
+        const topY = this.panelY + this.invOffset.y;
+        this.itemDetailContainer.setPosition(rightEdge, topY);
+        this.itemDetailPanelOpen = true;
+        this.itemDetailContainer.setVisible(true);
+    }
+    /** Returns true if the screen position is over the item detail panel's close button. */
+    isItemDetailCloseBtn(screenX, screenY) {
+        const px = screenX - this.itemDetailContainer.x;
+        const py = screenY - this.itemDetailContainer.y;
+        // Hit area covers the right ~32px of the 34px-tall title bar
+        return px >= 192 && px <= 226 && py >= 2 && py <= 32;
+    }
+    /** Hide the item detail panel and clean up its dynamic objects. */
+    closeItemDetailPanel() {
+        this.itemDetailPanelOpen = false;
+        this.itemDetailContainer.setVisible(false);
+        for (const obj of this._itemDetailDynamic) {
+            obj.destroy();
+        }
+        this._itemDetailDynamic = [];
+        this.itemDetailGfx.clear();
     }
 }
 //# sourceMappingURL=GameScene.js.map

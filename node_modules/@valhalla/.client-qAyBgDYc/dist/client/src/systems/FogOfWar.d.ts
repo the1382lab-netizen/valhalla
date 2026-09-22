@@ -20,6 +20,10 @@ interface VisibilityData {
  * - Never seen: dark fog (FOG_HIDDEN_ALPHA)
  * - Previously explored but not currently visible: dim fog (FOG_EXPLORED_ALPHA)
  * - Currently visible: no fog (fully transparent)
+ *
+ * NOTE: The visibility polygon from the server is in **orthogonal** world space.
+ * Tile iteration and point-in-polygon tests all operate in ortho space.
+ * Only the final fog-tile rendering converts to ISO screen coords.
  */
 export declare class FogOfWar {
     private scene;
@@ -30,13 +34,20 @@ export declare class FogOfWar {
     private visibleProjectiles;
     private targetPolygon;
     private lerpFactor;
-    constructor(scene: Phaser.Scene);
+    private tileSize;
+    private mapWidthTiles;
+    private mapHeightTiles;
+    private mapWidthPx;
+    private mapHeightPx;
+    private isIso;
+    constructor(scene: Phaser.Scene, tileSize: number, mapWidthTiles: number, mapHeightTiles: number, isIso?: boolean);
     /**
      * Update the visibility data from the server.
      */
     updateVisibility(data: VisibilityData): void;
     /**
      * Mark tiles covered by the visibility polygon as explored.
+     * Polygon is in orthogonal world space.
      */
     private markExploredTiles;
     /**
@@ -56,6 +67,10 @@ export declare class FogOfWar {
      * Called each frame from GameScene.update().
      */
     render(): void;
+    /**
+     * Render full fog covering the entire ISO map area.
+     */
+    private renderFullFogIso;
     /**
      * Clean up resources.
      */

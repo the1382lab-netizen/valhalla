@@ -1,6 +1,53 @@
 {
   "version": "1.0.0",
   "skills": {
+    "melee_attack": {
+      "id": "melee_attack",
+      "name": "Melee Attack",
+      "description": "A basic melee attack. Automatically strikes the target at your attack speed.",
+      "classId": null,
+      "levelRequired": 1,
+      "resourceType": "none",
+      "resourceCost": 0,
+      "castTimeMs": 0,
+      "cooldownMs": 0,
+      "range": 60,
+      "targetType": "singleEnemy",
+      "category": "offensive",
+      "iconColor": 10027008,
+      "iconAbbrev": "AT",
+      "scalingStat": "strength",
+      "baseDamage": [
+        1,
+        2
+      ],
+      "isAutoAttack": true,
+      "effectNotes": "Auto-attack — damage is stat-driven, not from baseDamage"
+    },
+    "ranged_attack": {
+      "id": "ranged_attack",
+      "name": "Ranged Attack",
+      "description": "A basic ranged attack. Fires at the target at your ranged attack speed. Requires a ranged weapon.",
+      "classId": "ranger",
+      "levelRequired": 1,
+      "resourceType": "none",
+      "resourceCost": 0,
+      "castTimeMs": 0,
+      "cooldownMs": 0,
+      "range": 600,
+      "targetType": "singleEnemy",
+      "category": "offensive",
+      "iconColor": 5592405,
+      "iconAbbrev": "RA",
+      "scalingStat": "dexterity",
+      "baseDamage": [
+        1,
+        2
+      ],
+      "isAutoAttack": true,
+      "requiresWeapon": true,
+      "effectNotes": "Auto-attack ranged — damage is stat-driven, not from baseDamage"
+    },
     "warrior_shield_bash": {
       "id": "warrior_shield_bash",
       "name": "Shield Bash",
@@ -284,7 +331,7 @@
       "iconAbbrev": "AS",
       "scalingStat": "dexterity",
       "baseDamage": [
-        60,
+        30,
         35
       ],
       "effectNotes": "High-damage ranged attack"
@@ -400,7 +447,7 @@
       "name": "Backstab",
       "description": "Strike from behind for massive damage. Extra crit chance.",
       "classId": "rogue",
-      "levelRequired": 1,
+      "levelRequired": 4,
       "resourceType": "energy",
       "resourceCost": 20,
       "castTimeMs": 0,
@@ -422,7 +469,7 @@
       "name": "Poison Blade",
       "description": "Apply poison",
       "classId": "rogue",
-      "levelRequired": 2,
+      "levelRequired": 1,
       "resourceType": "energy",
       "resourceCost": 15,
       "castTimeMs": 0,
@@ -442,7 +489,7 @@
       "name": "Stealth",
       "description": "Vanish from sight. Next attack from stealth deals bonus damage.",
       "classId": "rogue",
-      "levelRequired": 4,
+      "levelRequired": 3,
       "resourceType": "energy",
       "resourceCost": 20,
       "castTimeMs": 0,
@@ -786,14 +833,33 @@
       "iconAbbrev": "MM",
       "scalingStat": "intelligence",
       "baseDamage": [
-        12,
+        25,
         5
       ],
       "effectNotes": "Guaranteed hit — no dodge or miss possible"
+    },
+    "skill_1771786697290": {
+      "id": "skill_1771786697290",
+      "name": "Teleport to Desert",
+      "description": "Teleport your party to the wizard spire in Desert.",
+      "classId": "wizard",
+      "levelRequired": 10,
+      "resourceType": "mana",
+      "resourceCost": 100,
+      "castTimeMs": 0,
+      "cooldownMs": 0,
+      "range": 0,
+      "targetType": "aoeSelf",
+      "category": "utility",
+      "iconColor": 16729224,
+      "iconAbbrev": "TP",
+      "scalingStat": "intelligence",
+      "effectNotes": ""
     }
   },
   "classSkills": {
     "warrior": [
+      "melee_attack",
       "warrior_shield_bash",
       "warrior_taunt",
       "warrior_cleave",
@@ -802,6 +868,7 @@
       "warrior_shield_wall"
     ],
     "cleric": [
+      "melee_attack",
       "cleric_minor_heal",
       "cleric_smite",
       "cleric_shield_of_faith",
@@ -811,6 +878,8 @@
       "cleric_resurrection"
     ],
     "ranger": [
+      "melee_attack",
+      "ranged_attack",
       "ranger_aimed_shot",
       "ranger_serpent_arrow",
       "ranger_trap",
@@ -819,6 +888,7 @@
       "ranger_snipe"
     ],
     "rogue": [
+      "melee_attack",
       "rogue_backstab",
       "rogue_poison_blade",
       "rogue_stealth",
@@ -827,6 +897,7 @@
       "rogue_shadow_dance"
     ],
     "shaman": [
+      "melee_attack",
       "shaman_lightning_bolt",
       "shaman_earth_shield",
       "shaman_hex",
@@ -835,13 +906,15 @@
       "shaman_bloodlust"
     ],
     "wizard": [
+      "melee_attack",
       "wizard_fireball",
       "wizard_magic_missile",
       "wizard_frost_nova",
       "wizard_blink",
       "wizard_arcane_missiles",
       "wizard_mana_shield",
-      "wizard_meteor"
+      "wizard_meteor",
+      "skill_1771786697290"
     ]
   }
 }

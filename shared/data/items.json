@@ -12,7 +12,11 @@
       "maxStack": 1,
       "statBonuses": {
         "strength": 3
-      }
+      },
+      "attackSpeedMs": 1600,
+      "spriteId": "sword_iron",
+      "weaponStyle": "sword",
+      "inventoryIcon": "sword_iron.png"
     },
     "oak_staff": {
       "id": "oak_staff",
@@ -25,7 +29,11 @@
       "maxStack": 1,
       "statBonuses": {
         "intelligence": 3
-      }
+      },
+      "attackSpeedMs": 2200,
+      "spriteId": "staff_apprentice",
+      "weaponStyle": "staff",
+      "inventoryIcon": "staff_apprentice.png"
     },
     "short_bow": {
       "id": "short_bow",
@@ -38,7 +46,13 @@
       "maxStack": 1,
       "statBonuses": {
         "dexterity": 3
-      }
+      },
+      "attackSpeedMs": 4000,
+      "isRangedWeapon": true,
+      "attackDamage": 5,
+      "spriteId": "bow_hunting",
+      "weaponStyle": "bow",
+      "inventoryIcon": "bow_hunting.png"
     },
     "iron_dagger": {
       "id": "iron_dagger",
@@ -53,7 +67,10 @@
         "dexterity": 2,
         "strength": 1
       },
-      "equipSpriteSheet": "WEAPON_shield_cutout_body.png"
+      "attackSpeedMs": 2000,
+      "spriteId": "sword_iron",
+      "weaponStyle": "sword",
+      "inventoryIcon": "sword_iron.png"
     },
     "bone_totem": {
       "id": "bone_totem",
@@ -61,13 +78,17 @@
       "description": "A carved totem channeling primal spirits.",
       "category": "equipment",
       "equipSlot": "weapon",
-      "rarity": "common",
+      "rarity": "epic",
       "stackable": false,
       "maxStack": 1,
       "statBonuses": {
-        "wisdom": 2,
+        "wisdom": 4,
         "intelligence": 1
-      }
+      },
+      "attackSpeedMs": 1800,
+      "spriteId": "mace_priests",
+      "weaponStyle": "mace",
+      "inventoryIcon": "mace_priests.png"
     },
     "iron_mace": {
       "id": "iron_mace",
@@ -81,7 +102,11 @@
       "statBonuses": {
         "wisdom": 2,
         "strength": 1
-      }
+      },
+      "attackSpeedMs": 2000,
+      "spriteId": "mace_priests",
+      "weaponStyle": "mace",
+      "inventoryIcon": "mace_priests.png"
     },
     "leather_helm": {
       "id": "leather_helm",
@@ -95,7 +120,9 @@
       "statBonuses": {
         "stamina": 1,
         "physicalDefense": 1
-      }
+      },
+      "spriteId": "hood_scout",
+      "inventoryIcon": "hood_scout.png"
     },
     "iron_helm": {
       "id": "iron_helm",
@@ -110,7 +137,8 @@
         "stamina": 2,
         "physicalDefense": 2
       },
-      "equipSpriteSheet": "HEAD_plate_armor_helmet.png"
+      "spriteId": "helm_iron_full",
+      "inventoryIcon": "helm_iron_full.png"
     },
     "cloth_hood": {
       "id": "cloth_hood",
@@ -125,7 +153,8 @@
         "intelligence": 1,
         "spellResist": 1
       },
-      "equipSpriteSheet": "HEAD_robe_hood.png"
+      "spriteId": "hat_adept",
+      "inventoryIcon": "hat_adept.png"
     },
     "leather_tunic": {
       "id": "leather_tunic",
@@ -142,7 +171,8 @@
         "dodgeRating": 0.01,
         "strength": 1
       },
-      "equipSpriteSheet": "TORSO_leather_armor_torso.png"
+      "spriteId": "chest_travelers_jerkin",
+      "inventoryIcon": "chest_travelers_jerkin.png"
     },
     "chainmail": {
       "id": "chainmail",
@@ -157,7 +187,8 @@
         "stamina": 3,
         "physicalDefense": 4
       },
-      "equipSpriteSheet": "TORSO_chain_armor_torso.png"
+      "spriteId": "chest_priests_chain",
+      "inventoryIcon": "chest_priests_chain.png"
     },
     "cloth_robe": {
       "id": "cloth_robe",
@@ -173,7 +204,8 @@
         "wisdom": 1,
         "spellResist": 2
       },
-      "equipSpriteSheet": "TORSO_robe_shirt_brown.png"
+      "spriteId": "chest_apprentice_robe",
+      "inventoryIcon": "chest_apprentice_robe.png"
     },
     "leather_leggings": {
       "id": "leather_leggings",
@@ -188,7 +220,8 @@
         "stamina": 1,
         "physicalDefense": 1
       },
-      "equipSpriteSheet": "LEGS_robe_skirt.png"
+      "spriteId": "legs_travelers",
+      "inventoryIcon": "legs_travelers.png"
     },
     "iron_greaves": {
       "id": "iron_greaves",
@@ -203,7 +236,8 @@
         "stamina": 2,
         "physicalDefense": 3
       },
-      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
+      "spriteId": "legs_iron_plate",
+      "inventoryIcon": "legs_iron_plate.png"
     },
     "cloth_pants": {
       "id": "cloth_pants",
@@ -218,7 +252,8 @@
         "wisdom": 1,
         "spellResist": 1
       },
-      "equipSpriteSheet": "LEGS_robe_skirt.png"
+      "spriteId": "legs_apprentice_robe",
+      "inventoryIcon": "legs_apprentice_robe.png"
     },
     "leather_boots": {
       "id": "leather_boots",
@@ -232,7 +267,9 @@
       "statBonuses": {
         "dexterity": 1,
         "dodgeRating": 0.01
-      }
+      },
+      "spriteId": "boots_ranger",
+      "inventoryIcon": "boots_ranger.png"
     },
     "iron_boots": {
       "id": "iron_boots",
@@ -247,7 +284,8 @@
         "stamina": 1,
         "physicalDefense": 2
       },
-      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
+      "spriteId": "boots_iron_sabatons",
+      "inventoryIcon": "boots_iron_sabatons.png"
     },
     "cloth_sandals": {
       "id": "cloth_sandals",
@@ -260,7 +298,9 @@
       "maxStack": 1,
       "statBonuses": {
         "wisdom": 1
-      }
+      },
+      "spriteId": "boots_cloth_slippers",
+      "inventoryIcon": "boots_cloth_slippers.png"
     },
     "ring_of_strength": {
       "id": "ring_of_strength",
@@ -328,14 +368,109 @@
       "id": "item_1771651247461",
       "name": "Iron Boots",
       "description": "Sturdy iron boots.",
-      "category": "armor",
+      "category": "equipment",
       "rarity": "common",
       "stackable": false,
       "maxStack": 1,
       "statBonuses": {
-        "constitution": 2
+        "stamina": 2
       },
-      "equipSpriteSheet": "FEET_plate_armor_shoes.png"
+      "equipSlot": "boots",
+      "spriteId": "boots_iron_sabatons",
+      "inventoryIcon": "boots_iron_sabatons.png"
+    },
+    "leather_gloves": {
+      "id": "leather_gloves",
+      "name": "Leather Gloves",
+      "description": "Supple gloves that keep a grip in the wet.",
+      "category": "equipment",
+      "equipSlot": "gloves",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "dexterity": 1
+      },
+      "spriteId": "gloves_ranger_bracers",
+      "inventoryIcon": "gloves_ranger_bracers.png"
+    },
+    "iron_gauntlets": {
+      "id": "iron_gauntlets",
+      "name": "Iron Gauntlets",
+      "description": "Heavy plated gauntlets.",
+      "category": "equipment",
+      "equipSlot": "gloves",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "physicalDefense": 2,
+        "strength": 1
+      },
+      "spriteId": "gloves_iron_gauntlets",
+      "inventoryIcon": "gloves_iron_gauntlets.png"
+    },
+    "cloth_wraps": {
+      "id": "cloth_wraps",
+      "name": "Cloth Wraps",
+      "description": "Simple wrappings favoured by casters.",
+      "category": "equipment",
+      "equipSlot": "gloves",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "wisdom": 1
+      },
+      "spriteId": "gloves_cloth_wraps",
+      "inventoryIcon": "gloves_cloth_wraps.png"
+    },
+    "iron_buckler": {
+      "id": "iron_buckler",
+      "name": "Iron Buckler",
+      "description": "A small round shield for turning blades aside.",
+      "category": "equipment",
+      "equipSlot": "offhand",
+      "rarity": "common",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "blockRating": 0.03
+      },
+      "spriteId": "shield_buckler_iron",
+      "inventoryIcon": "shield_buckler_iron.png"
+    },
+    "iron_kite_shield": {
+      "id": "iron_kite_shield",
+      "name": "Iron Kite Shield",
+      "description": "A tall shield that covers the flank.",
+      "category": "equipment",
+      "equipSlot": "offhand",
+      "rarity": "uncommon",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "blockRating": 0.05,
+        "physicalDefense": 3
+      },
+      "spriteId": "shield_kite_iron",
+      "inventoryIcon": "shield_kite_iron.png"
+    },
+    "travelers_cloak": {
+      "id": "travelers_cloak",
+      "name": "Traveler's Cloak",
+      "description": "Wool against the wind of the high passes.",
+      "category": "equipment",
+      "equipSlot": "back",
+      "rarity": "rare",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "spellResist": 2,
+        "dexterity": 5
+      },
+      "spriteId": "cloak_warden",
+      "inventoryIcon": "cloak_warden.png"
     }
   }
 }

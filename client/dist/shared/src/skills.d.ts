@@ -2,12 +2,14 @@
  * Skill & Spell Definitions — shared between client and server.
  * This is the single source of truth for all skill data.
  *
- * 37 skills across 6 classes, populated from the design spreadsheet.
+ * 38 skills across 6 classes, populated from the design spreadsheet.
  * Individual skill effect handlers live server-side; this file
  * contains only the data model and catalog.
  */
 import { ClassId } from './classes.js';
 export declare enum SkillId {
+    MELEE_ATTACK = "melee_attack",
+    RANGED_ATTACK = "ranged_attack",
     WARRIOR_SHIELD_BASH = "warrior_shield_bash",
     WARRIOR_TAUNT = "warrior_taunt",
     WARRIOR_CLEAVE = "warrior_cleave",
@@ -40,6 +42,7 @@ export declare enum SkillId {
     SHAMAN_FLAME_SHOCK = "shaman_flame_shock",
     SHAMAN_BLOODLUST = "shaman_bloodlust",
     WIZARD_FIREBALL = "wizard_fireball",
+    WIZARD_MAGIC_MISSILE = "wizard_magic_missile",
     WIZARD_FROST_NOVA = "wizard_frost_nova",
     WIZARD_BLINK = "wizard_blink",
     WIZARD_ARCANE_MISSILES = "wizard_arcane_missiles",
@@ -72,7 +75,7 @@ export interface SkillTemplate {
     id: SkillId;
     name: string;
     description: string;
-    classId: ClassId;
+    classId: ClassId | null;
     levelRequired: number;
     resourceType: ResourceType;
     resourceCost: number;
@@ -89,6 +92,23 @@ export interface SkillTemplate {
     buffDurationMs?: number;
     dotDamagePerSec?: number;
     hotHealPerSec?: number;
+    /** Blast radius in pixels for AOE_GROUND spells (e.g. Fireball, Meteor). */
+    aoeRadius?: number;
+    /** Projectile metadata — if present, the skill spawns a projectile rather than applying damage instantly. */
+    projectile?: {
+        speed: number;
+        radius: number;
+    };
+    /** Cooldown group ID — all skills sharing the same group share a cooldown. */
+    cooldownGroup?: string;
+    /** Buff stacking mode: 'replace' (default), 'stack', or 'extend'. */
+    stackingMode?: 'replace' | 'stack' | 'extend';
+    /** Max stacks for stackable buffs (only used when stackingMode === 'stack'). Default 1. */
+    maxStacks?: number;
+    /** If true, this skill auto-repeats at the player's attack speed interval. */
+    isAutoAttack?: boolean;
+    /** If true, the skill cannot be used without a weapon equipped. */
+    requiresWeapon?: boolean;
     effectNotes: string;
 }
 export declare const SKILL_CATALOG: Record<SkillId, SkillTemplate>;

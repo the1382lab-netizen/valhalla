@@ -1,5 +1,5 @@
 import { Schema, ArraySchema, defineTypes } from '@colyseus/schema';
-import { PLAYER_MAX_HP, SkillId } from '@valhalla/shared';
+import { PLAYER_MAX_HP, SkillId, EquipSlotType } from '@valhalla/shared';
 // ── Inventory Slot Schema (synced to client) ─────────────────
 export class InventorySlotState extends Schema {
     constructor() {
@@ -40,21 +40,38 @@ export class PlayerState extends Schema {
         this.castingSkillId = '';
         this.castingStartedAt = 0;
         this.castingDurationMs = 0;
+        // ── Appearance (synced) ──────────────────────────────
+        /** Paperdoll base body, e.g. 'body_tan'. */
+        this.bodyId = '';
         // ── Equipment (synced) — empty string = nothing equipped ──
         this.equipWeapon = '';
+        this.equipOffhand = '';
         this.equipHelm = '';
         this.equipChest = '';
         this.equipLegs = '';
         this.equipBoots = '';
+        this.equipGloves = '';
+        this.equipBack = '';
         this.equipRing = '';
         // ── Inventory (synced) ───────────────────────────────
         this.inventory = new ArraySchema();
+        // ── Auto-Attack State (synced) ────────────────────────
+        /** Whether auto-attack is currently active */
+        this.autoAttackActive = false;
+        /** Which auto-attack skill is running (melee_attack or ranged_attack) */
+        this.autoAttackSkillId = '';
+        /** Session ID of the auto-attack target */
+        this.autoAttackTargetId = '';
         // ── Server-only (not synced) ──────────────────────────
         this.inputSeq = 0;
+        /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
         this.fireCooldown = 0;
+        /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
         this.meleeCooldown = 0;
         this.invulnerableUntil = 0;
         this.respawnAt = 0;
+        /** Timestamp of next allowed auto-attack swing (server-only) */
+        this.nextAutoAttackAt = 0;
         // ── Skill Server-only State ───────────────────────────
         /** Skill cooldowns: skillId → timestamp when cooldown expires */
         this.skillCooldowns = new Map();
@@ -92,12 +109,19 @@ defineTypes(PlayerState, {
     castingSkillId: 'string',
     castingStartedAt: 'float64',
     castingDurationMs: 'uint16',
+    autoAttackActive: 'boolean',
+    autoAttackSkillId: 'string',
+    autoAttackTargetId: 'string',
     inputSeq: 'uint32',
+    bodyId: 'string',
     equipWeapon: 'string',
+    equipOffhand: 'string',
     equipHelm: 'string',
     equipChest: 'string',
     equipLegs: 'string',
     equipBoots: 'string',
+    equipGloves: 'string',
+    equipBack: 'string',
     equipRing: 'string',
     inventory: [InventorySlotState],
 });
@@ -119,5 +143,41 @@ export function applyShieldAbsorption(player, incomingDamage) {
         player.activeBuffs = player.activeBuffs.filter(b => b.skillId !== SkillId.CLERIC_SHIELD_OF_FAITH);
     }
     return Math.max(0, incomingDamage - absorbed);
+}
+// ── Equipment slot <-> PlayerState field ─────────────────────
+//
+// One map instead of a switch in every consumer, so a new slot is a single
+// edit here plus its `defineTypes` entry above.
+export const PLAYER_EQUIP_FIELD = {
+    [EquipSlotType.WEAPON]: 'equipWeapon',
+    [EquipSlotType.OFFHAND]: 'equipOffhand',
+    [EquipSlotType.HELM]: 'equipHelm',
+    [EquipSlotType.CHEST]: 'equipChest',
+    [EquipSlotType.LEGS]: 'equipLegs',
+    [EquipSlotType.BOOTS]: 'equipBoots',
+    [EquipSlotType.GLOVES]: 'equipGloves',
+    [EquipSlotType.BACK]: 'equipBack',
+    [EquipSlotType.RING]: 'equipRing',
+};
+/** Read the equipped itemId for a slot. Empty string = nothing equipped. */
+export function getEquipped(player, slot) {
+    const field = PLAYER_EQUIP_FIELD[slot];
+    return field ? (player[field] ?? '') : '';
+}
+/** Set the equipped itemId for a slot. */
+export function setEquipped(player, slot, itemId) {
+    const field = PLAYER_EQUIP_FIELD[slot];
+    if (field)
+        player[field] = itemId;
+}
+/** Every non-empty equipped slot, for persistence. */
+export function equippedEntries(player) {
+    const out = [];
+    for (const slot of Object.keys(PLAYER_EQUIP_FIELD)) {
+        const itemId = getEquipped(player, slot);
+        if (itemId)
+            out.push({ slotType: slot, itemId });
+    }
+    return out;
 }
 //# sourceMappingURL=PlayerState.js.map

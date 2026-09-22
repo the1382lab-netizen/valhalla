@@ -8,10 +8,20 @@ export interface InputPayload {
     aimAngle: number;
     /** Monotonically increasing input sequence number */
     seq: number;
-    /** Fire a ranged projectile */
-    fire: boolean;
-    /** Melee attack */
-    melee: boolean;
+}
+export interface StartAutoAttackPayload {
+    skillId: string;
+    targetId: string;
+}
+export interface AutoAttackHitPayload {
+    attackerId: string;
+    targetId: string;
+    damage: number;
+    damageType: 'physical' | 'magical';
+    isCrit: boolean;
+    isBlock: boolean;
+    isDodge: boolean;
+    isMiss: boolean;
 }
 export interface IPlayerState {
     id: string;
@@ -102,6 +112,12 @@ export declare enum MessageType {
     LOOT_ITEM = "lootItem",
     LOOT_ALL = "lootAll",
     LOOT_SUCCESS = "lootSuccess",
+    START_AUTO_ATTACK = "startAutoAttack",
+    STOP_AUTO_ATTACK = "stopAutoAttack",
+    AUTO_ATTACK_HIT = "autoAttackHit",
+    AUTO_ATTACK_STARTED = "autoAttackStarted",
+    AUTO_ATTACK_STOPPED = "autoAttackStopped",
+    XP_GAINED = "xpGained",
     PARTY_INVITE = "partyInvite",
     PARTY_ACCEPT = "partyAccept",
     PARTY_DECLINE = "partyDecline",

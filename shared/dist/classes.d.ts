@@ -48,7 +48,21 @@ export interface ClassTemplate {
     allowedArmor: ArmorType;
     baseSpeed: number;
     canUseMana: boolean;
+    /** Base melee attack speed in ms when no weapon is equipped. Scaled by dexterity. */
+    baseMeleeAttackSpeedMs: number;
+    /** Base ranged attack speed in ms when no weapon is equipped. Only meaningful for Ranger. */
+    baseRangedAttackSpeedMs: number;
     startingItems?: StartingItem[];
+    /**
+     * Default paperdoll body for this class, e.g. `body_tan`. Overridden by the
+     * character's own `bodyId` once appearance selection exists.
+     */
+    bodyId?: string;
+    /** Character sprite sheets per animation type (filename in assets/sprites/characters/). */
+    walkSpriteSheet?: string;
+    meleeSpriteSheet?: string;
+    rangedSpriteSheet?: string;
+    castSpriteSheet?: string;
 }
 export declare const CLASS_TEMPLATES: Record<ClassId, ClassTemplate>;
 /** All valid class IDs for validation */

@@ -1,0 +1,132 @@
+{
+  "version": "2.0",
+  "units": "cm",
+  "zoneId": "desert",
+  "spawnPoints": [
+    {
+      "id": "player_spawn_desert_0",
+      "type": "player_spawn",
+      "x": 608.0,
+      "y": 800.0,
+      "label": "Scorched Desert spawn 0"
+    },
+    {
+      "id": "player_spawn_desert_1",
+      "type": "player_spawn",
+      "x": 608.0,
+      "y": 992.0,
+      "label": "Scorched Desert spawn 1"
+    },
+    {
+      "id": "player_spawn_desert_2",
+      "type": "player_spawn",
+      "x": 800.0,
+      "y": 800.0,
+      "label": "Scorched Desert spawn 2"
+    },
+    {
+      "id": "player_spawn_desert_3",
+      "type": "player_spawn",
+      "x": 800.0,
+      "y": 992.0,
+      "label": "Scorched Desert spawn 3"
+    },
+    {
+      "id": "portal_to_grasslands",
+      "type": "portal",
+      "x": 96.0,
+      "y": 864.0,
+      "targetZone": "grasslands",
+      "targetEntry": "entry_from_desert",
+      "label": "Grasslands"
+    },
+    {
+      "id": "entry_from_grasslands",
+      "type": "zone_entry",
+      "x": 480.0,
+      "y": 864.0,
+      "fromZone": "grasslands",
+      "label": "From Grasslands"
+    },
+    {
+      "id": "enemy_road_east",
+      "type": "enemy_spawn",
+      "x": 1696.0,
+      "y": 800.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 320,
+      "label": "Road east"
+    },
+    {
+      "id": "enemy_cactus_west",
+      "type": "enemy_spawn",
+      "x": 1312.0,
+      "y": 1312.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 300,
+      "label": "West cactus field"
+    },
+    {
+      "id": "enemy_oasis",
+      "type": "enemy_spawn",
+      "x": 2848.0,
+      "y": 1696.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 280,
+      "label": "Oasis approach"
+    },
+    {
+      "id": "enemy_fort_yard",
+      "type": "enemy_spawn",
+      "x": 2016.0,
+      "y": 3296.0,
+      "templateId": "npc_1771431708366",
+      "count": 4,
+      "radius": 340,
+      "label": "Fort courtyard"
+    },
+    {
+      "id": "enemy_fort_gate",
+      "type": "enemy_spawn",
+      "x": 2016.0,
+      "y": 2656.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 220,
+      "label": "Fort gate"
+    },
+    {
+      "id": "enemy_dunes_east",
+      "type": "enemy_spawn",
+      "x": 3360.0,
+      "y": 1312.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 300,
+      "label": "East dunes"
+    },
+    {
+      "id": "enemy_south_sand",
+      "type": "enemy_spawn",
+      "x": 2464.0,
+      "y": 352.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 280,
+      "label": "South sand"
+    },
+    {
+      "id": "enemy_north_west",
+      "type": "enemy_spawn",
+      "x": 800.0,
+      "y": 3232.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 300,
+      "label": "North-west waste"
+    }
+  ]
+}

@@ -8,6 +8,8 @@
  */
 import { ClassId } from './classes.js';
 export declare enum SkillId {
+    MELEE_ATTACK = "melee_attack",
+    RANGED_ATTACK = "ranged_attack",
     WARRIOR_SHIELD_BASH = "warrior_shield_bash",
     WARRIOR_TAUNT = "warrior_taunt",
     WARRIOR_CLEAVE = "warrior_cleave",
@@ -73,7 +75,7 @@ export interface SkillTemplate {
     id: SkillId;
     name: string;
     description: string;
-    classId: ClassId;
+    classId: ClassId | null;
     levelRequired: number;
     resourceType: ResourceType;
     resourceCost: number;
@@ -103,6 +105,10 @@ export interface SkillTemplate {
     stackingMode?: 'replace' | 'stack' | 'extend';
     /** Max stacks for stackable buffs (only used when stackingMode === 'stack'). Default 1. */
     maxStacks?: number;
+    /** If true, this skill auto-repeats at the player's attack speed interval. */
+    isAutoAttack?: boolean;
+    /** If true, the skill cannot be used without a weapon equipped. */
+    requiresWeapon?: boolean;
     effectNotes: string;
 }
 export declare const SKILL_CATALOG: Record<SkillId, SkillTemplate>;

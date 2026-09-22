@@ -35,9 +35,16 @@ import {
   tileToIso,
   ORTHO_TILE_SIZE,
   LOOT_BAG_PICKUP_RANGE,
+  dirFromOrthoVector,
+  dirFromScreenVector,
+  EQUIP_SLOTS,
+  attackAnimFor,
 } from '@valhalla/shared';
+import type { PaperdollAnim, PaperdollDir } from '@valhalla/shared';
 import { ClientDataManager } from '../systems/ClientDataManager.js';
-import { PlayerTargetInfo, NpcTargetInfo, NpcBuffData, ENTITY_DEPTH_BASE, UI_DEPTH_BASE } from '../systems/EntityRenderer.js';
+import { AuthClient } from '../systems/AuthClient.js';
+import { PlayerTargetInfo, NpcTargetInfo, NpcBuffData, ENTITY_DEPTH_BASE, UI_DEPTH_BASE,
+         createCharacterSprite, characterAnimKey, playCharacterAnim, toPaperdollAnim } from '../systems/EntityRenderer.js';
 
 interface PendingInput {
   input: InputPayload;
@@ -49,6 +56,32 @@ interface PendingInput {
  * Handles tile map rendering, local player with client-side prediction,
  * remote player interpolation, projectile rendering, HP, mana, death/respawn.
  */
+
+/** `weapon` -> `equipWeapon`, the flat field name on PlayerState. */
+function equipField(slot: string): string {
+  return `equip${slot.charAt(0).toUpperCase()}${slot.slice(1)}`;
+}
+
+/** Read the flat `equip*` fields off a player state (or cache) into a slot map. */
+function playerEquipmentMap(src: any, fallback?: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const slot of EQUIP_SLOTS) {
+    const f = equipField(slot);
+    out[slot] = src?.[f] ?? fallback?.[f] ?? '';
+  }
+  return out;
+}
+
+/** The same values keyed by field name, for the remote-player cache. */
+function equipFields(src: any, fallback?: any): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const slot of EQUIP_SLOTS) {
+    const f = equipField(slot);
+    out[f] = src?.[f] ?? fallback?.[f] ?? '';
+  }
+  return out;
+}
+
 export class GameScene extends Phaser.Scene {
   private network!: NetworkClient;
   private inputManager!: InputManager;
@@ -65,7 +98,9 @@ export class GameScene extends Phaser.Scene {
   /** True when the current zone uses isometric rendering. */
   private isIso: boolean = false;
   /** Last facing direction for idle animation. */
-  private lastFacingDir: string = 'down';
+  private lastFacingDir: string = 's';
+  /** True while a one-shot or looping action animation is playing on the local player. */
+  private isPlayingActionAnim: boolean = false;
 
   // Local player vitals
   private localHp: number = 100;
@@ -76,6 +111,8 @@ export class GameScene extends Phaser.Scene {
   private localAlive: boolean = true;
   private localSpeed: number = 200;
   private localClassId: string = 'warrior';
+  /** Paperdoll base body for the local character. */
+  private localBodyId: string = '';
   private localLevel: number = 1;
   private localCharacterName: string = '';
   private hpBarGfx!: Phaser.GameObjects.Graphics;
@@ -100,6 +137,18 @@ export class GameScene extends Phaser.Scene {
   private mapWidthPx: number = 4096;
   private mapHeightPx: number = 4096;
   private tileSprites: Phaser.GameObjects.Sprite[] = [];
+  /**
+   * Tile sprites bucketed into fixed squares of the tile grid, with the screen
+   * rectangle each bucket covers. A 128x128 map is ~22k tile sprites; asking
+   * Phaser to consider every one of them each frame is what makes a big map
+   * feel heavy, so whole buckets are switched off when they fall outside the
+   * camera. Buckets, not individual sprites, because the visibility test then
+   * runs a few hundred times per frame instead of tens of thousands.
+   */
+  private tileChunks: {
+    left: number; top: number; right: number; bottom: number;
+    sprites: Phaser.GameObjects.Sprite[]; shown: boolean;
+  }[] = [];
   private currentZoneId: string = 'grasslands';
   // Zone-filtering: track every remote player's zone and last-known data
   // so we only render players in the same zone as us.
@@ -143,8 +192,9 @@ export class GameScene extends Phaser.Scene {
   private actionBarOffset: { x: number; y: number } = { x: 0, y: 0 };
   private invOffset:       { x: number; y: number } = { x: 0, y: 0 };
   private skillsOffset:    { x: number; y: number } = { x: 0, y: 0 };
+  private combatLogOffset:  { x: number; y: number } = { x: 0, y: 0 };
   // Active drag state
-  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | 'target' | 'party' | 'buffs' | null = null;
+  private hudDragTarget: 'chat' | 'actionBar' | 'inventory' | 'skills' | 'target' | 'party' | 'buffs' | 'combatLog' | null = null;
   private hudDragStartMouse:  { x: number; y: number } = { x: 0, y: 0 };
   private hudDragStartOffset: { x: number; y: number } = { x: 0, y: 0 };
   // Cached screen rects for the action bar and skills pane (updated each draw).
@@ -161,7 +211,8 @@ export class GameScene extends Phaser.Scene {
   // Inventory & Character Panel UI
   private inventoryOpen: boolean = false;
   private inventoryItems: { itemId: string; quantity: number }[] = [];
-  private localEquipment: Record<string, string> = { weapon: '', helm: '', chest: '', legs: '', boots: '', ring: '' };
+  private localEquipment: Record<string, string> =
+    Object.fromEntries(EQUIP_SLOTS.map(s => [s, ''])) as Record<string, string>;
   /** Overlay sprites for local player equipped items (managed by EntityRenderer helpers). */
   private localEquipOverlays: { slot: string; itemId: string; sprite: Phaser.GameObjects.Sprite }[] = [];
   private localXp: number = 0;
@@ -217,6 +268,10 @@ export class GameScene extends Phaser.Scene {
   private localCastingStartedAt: number = 0;
   private localCastingDurationMs: number = 0;
 
+  // Auto-attack state (synced from server)
+  private localAutoAttackActive: boolean = false;
+  private localAutoAttackSkillId: string = '';
+
   // Energy
   private localEnergy: number = 0;
   private localMaxEnergy: number = 0;
@@ -232,6 +287,12 @@ export class GameScene extends Phaser.Scene {
   private skillDragId: string = '';
   private skillDragGhost!: Phaser.GameObjects.Text;
   private skillDragGhostBg!: Phaser.GameObjects.Rectangle;
+
+  // Action bar slot drag state (drag skill off bar to remove it)
+  private abDragging: boolean = false;
+  private abDragSourceSlot: number = -1;
+  private abDragGhost!: Phaser.GameObjects.Text;
+  private abDragGhostBg!: Phaser.GameObjects.Rectangle;
 
   // Skills pane tooltip
   private skillTooltipContainer!: Phaser.GameObjects.Container;
@@ -254,6 +315,8 @@ export class GameScene extends Phaser.Scene {
   private chatInputText: string = '';
   /** Default send channel. Whispers are always triggered by /w prefix. */
   private chatCurrentChannel: 'general' | 'world' = 'general';
+  private chatScrollOffset: number = 0; // 0 = bottom (newest)
+  private chatScrollGfx!: Phaser.GameObjects.Graphics;
 
   // ── Targeting System ─────────────────────────────────────
   /** ID of the currently targeted entity (player sessionId or NPC id), or null. */
@@ -304,6 +367,33 @@ export class GameScene extends Phaser.Scene {
   private partyPanelTitleHandle: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 0, h: 0 };
   private partySlotSessionIds: (string | null)[] = [null, null, null, null];
 
+  // ── Options Menu ─────────────────────────────────────────
+  private optionsMenuOpen: boolean = false;
+  private optionsMenuContainer!: Phaser.GameObjects.Container;
+  private optionsDimBg!: Phaser.GameObjects.Rectangle;
+  private optionsButtons: { bg: Phaser.GameObjects.Rectangle; text: Phaser.GameObjects.Text; action: string }[] = [];
+  private optionsCloseText!: Phaser.GameObjects.Text;
+  /** Index of the currently hovered options button (-1 = none, -2 = close btn). */
+  private optionsHoveredIdx: number = -1;
+
+  // ── HUD Edit Mode ──────────────────────────────────────────
+  private hudEditMode: boolean = false;
+  private hudEditLabel!: Phaser.GameObjects.Text;
+  private hudEditSubLabel!: Phaser.GameObjects.Text;
+  /** Per-panel visibility (used in normal gameplay, toggled in edit mode). */
+  private panelVisibility: Record<string, boolean> = {
+    chat: true, actionBar: true, target: true, party: true, buffs: true,
+  };
+  /** Per-panel opacity multiplier (0.5, 0.75, 1.0). */
+  private panelOpacity: Record<string, number> = {
+    chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0,
+  };
+  /** Per-panel scale (0.8, 1.0, 1.2). */
+  private panelScale: Record<string, number> = {
+    chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0,
+  };
+  private hudEditPanelControls: Phaser.GameObjects.GameObject[] = [];
+
   // Layout constants
   private readonly CHAT_MAX_W = 360;   // maximum panel width
   private readonly CHAT_H = 170;
@@ -311,12 +401,49 @@ export class GameScene extends Phaser.Scene {
   private readonly CHAT_LINE_H = 15;
   private readonly CHAT_PAD = 6;
   private readonly CHAT_INPUT_H = 18;
-  private readonly CHAT_MAX_MESSAGES = 50;
+  private readonly CHAT_MAX_MESSAGES = 200;
   private readonly CHAT_VISIBLE_LINES = 9; // (CHAT_H - header - input) / CHAT_LINE_H
+  private readonly CHAT_SCROLLBAR_W = 8;
   /** Left edge of chat panel — 12px gap right of the HP/mana bar (barX=16 + barWidth=200 + border=4 + gap=12) */
   private readonly CHAT_LEFT_X = 232;
   /** Tracks current effective width so word-wrap is only recalculated on change */
   private chatEffectiveW = 200;
+
+  // ── Combat Log Panel ────────────────────────────────────
+  private readonly CL_W = 320;
+  private readonly CL_H = 200;
+  private readonly CL_LINE_H = 14;
+  private readonly CL_PAD = 6;
+  private readonly CL_TITLE_H = 18;
+  private readonly CL_SCROLLBAR_W = 8;
+  private readonly CL_MAX_MESSAGES = 200;
+  private CL_VISIBLE_LINES = 12;
+  private combatLogContainer!: Phaser.GameObjects.Container;
+  private combatLogBgGfx!: Phaser.GameObjects.Graphics;
+  private combatLogScrollGfx!: Phaser.GameObjects.Graphics;
+  private combatLogTitleText!: Phaser.GameObjects.Text;
+  private combatLogMessageTexts: Phaser.GameObjects.Text[] = [];
+  private combatLogMessages: { text: string; color: string; type: string }[] = [];
+  private combatLogScrollOffset: number = 0; // 0 = bottom (newest)
+  private combatLogScrollDragging: boolean = false;
+  private combatLogScrollDragStartY: number = 0;
+  private combatLogScrollDragStartOffset: number = 0;
+  private combatLogFilters: Record<string, boolean> = {
+    outDmg: true,      // Your damage dealt
+    inDmg: true,       // Damage taken
+    misses: true,      // Misses (both directions)
+    dodges: true,      // Dodges
+    blocks: true,      // Blocks
+    deaths: true,      // Deaths
+    heals: true,       // Healing
+    buffs: true,       // Buffs & debuffs
+    xp: true,          // XP rewards
+    party: true,       // Party member combat
+  };
+  private combatLogContextMenuOpen: boolean = false;
+  private combatLogContextMenuPos: { x: number; y: number } = { x: 0, y: 0 };
+  private combatLogContextGfx!: Phaser.GameObjects.Graphics;
+  private combatLogContextTexts: Phaser.GameObjects.Text[] = [];
 
   constructor() {
     super({ key: 'GameScene' });
@@ -326,15 +453,112 @@ export class GameScene extends Phaser.Scene {
   private authToken: string = '';
 
   init(data?: { classId?: string; characterId?: number; token?: string }): void {
-    if (data?.classId) {
-      this.selectedClassId = data.classId;
-    }
-    if (data?.characterId) {
-      this.characterId = data.characterId;
-    }
-    if (data?.token) {
-      this.authToken = data.token;
-    }
+    if (data?.classId)     this.selectedClassId = data.classId;
+    if (data?.characterId) this.characterId     = data.characterId;
+    if (data?.token)       this.authToken       = data.token;
+
+    // ── Full state reset ────────────────────────────────────────────────────
+    // Phaser reuses the same scene instance on scene.start(), so any fields
+    // initialised as class-level defaults carry over from the previous session.
+    // Everything below must be reset here (before create() runs) so that a
+    // second login always starts clean.
+
+    // Local player vitals
+    this.localX             = 0;
+    this.localY             = 0;
+    this.renderX            = 0;
+    this.renderY            = 0;
+    this.localHp            = 100;
+    this.localMaxHp         = 100;
+    this.localShieldHp      = 0;
+    this.localMana          = 0;
+    this.localMaxMana       = 0;
+    this.localEnergy        = 0;
+    this.localMaxEnergy     = 0;
+    this.localAlive         = true;
+    this.localSpeed         = 200;
+    this.localClassId       = 'warrior';
+    this.localBodyId        = '';
+    this.localLevel         = 1;
+    this.localCharacterName = '';
+    this.lastFacingDir      = 's';
+    this.isIso              = false;
+    this.respawnTimer       = 0;
+
+    // Client-side prediction
+    this.pendingInputs  = [];
+    this._lastServerSeq = -1;
+    this.lastServerSeq  = 0;
+
+    // Zone / entity tracking
+    this.currentZoneId           = 'grasslands';
+    this.remotePlayerZones       = new Map();
+    this.remotePlayerCache       = new Map();
+    this.npcZones                = new Map();
+    this.npcCache                = new Map();
+    this.lootBagZones            = new Map();
+    this.lootBagCache            = new Map();
+    this.visibleProjectiles      = new Set();
+    this.visibleSpellProjectiles = new Set();
+    this.visibleNpcs             = new Set();
+    this.visibleLootBags         = new Set();
+
+    // Skill / action bar
+    this.actionBar      = ['', '', '', '', '', '', '', ''];
+    this.skillCooldowns = new Map();
+    this.localCastingSkillId     = '';
+    this.localCastingStartedAt   = 0;
+    this.localCastingDurationMs  = 0;
+
+    // Targeting & combat
+    this.currentTargetId   = null;
+    this.currentTargetType = null;
+    this.localBuffs        = new Map();
+
+    // Combat Log
+    this.combatLogMessages      = [];
+    this.combatLogScrollOffset  = 0;
+    this.combatLogContextMenuOpen = false;
+    this.combatLogScrollDragging = false;
+
+    // Party
+    this.partyMembers        = [];
+    this.partyMemberData     = new Map();
+    this.remotePlayerShieldHp = new Map();
+
+    // Inventory / equipment
+    this.inventoryItems  = [];
+    this.localEquipment  = Object.fromEntries(EQUIP_SLOTS.map(s => [s, ''])) as Record<string, string>;
+    this.localEquipOverlays = [];
+    this.localXp         = 0;
+
+    // Loot
+    this.lootPanelItems  = [];
+    this.currentLootBagId = null;
+
+    // Chat
+    this.chatMessages       = [];
+    this.chatInputText      = '';
+    this.chatInputActive    = false;
+    this.chatCurrentChannel = 'general';
+    this.chatScrollOffset   = 0;
+
+    // UI open states (panels are recreated in create(), but booleans persist)
+    this.inventoryOpen      = false;
+    this.skillsPaneOpen     = false;
+    this.itemDetailPanelOpen = false;
+    this.lootPanelOpen      = false;
+    this.optionsMenuOpen    = false;
+    this.hudEditMode        = false;
+    this.hudDragTarget      = null;
+    this.dragging           = false;
+    this.dragSource         = null;
+    this.skillDragging      = false;
+    this.skillDragId        = '';
+    this.abDragging         = false;
+    this.abDragSourceSlot   = -1;
+    this.entityClickConsumed = false;
+    this.connected          = false;
   }
 
   create(): void {
@@ -408,6 +632,9 @@ export class GameScene extends Phaser.Scene {
     // Create chat panel
     this.createChatPanel();
 
+    // Create combat log panel
+    this.createCombatLogPanel();
+
     // Create target nameplate panel (initially hidden)
     this.createTargetNameplate();
 
@@ -423,6 +650,12 @@ export class GameScene extends Phaser.Scene {
     // Create item detail panel (hidden initially)
     this.createItemDetailPanel();
 
+    // Create options menu (hidden initially)
+    this.createOptionsMenu();
+
+    // Create HUD edit mode labels (hidden initially)
+    this.createHudEditModeUI();
+
     // Suppress browser context menu so right-click works in-game
     this.game.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -432,7 +665,7 @@ export class GameScene extends Phaser.Scene {
 
     // Inventory toggle key (I)
     this.input.keyboard!.on('keydown-I', () => {
-      if (this.chatInputActive) return;
+      if (this.chatInputActive || this.optionsMenuOpen || this.hudEditMode) return;
       this.toggleInventory();
     });
 
@@ -458,6 +691,13 @@ export class GameScene extends Phaser.Scene {
         this.toggleInventory();
       } else if (this.skillsPaneOpen) {
         this.toggleSkillsPane();
+      } else if (this.hudEditMode) {
+        this.exitHudEditMode();
+      } else if (this.currentTargetId) {
+        // Clear target (also stops auto-attack via clearTarget)
+        this.clearTarget();
+      } else {
+        this.toggleOptionsMenu();
       }
     });
 
@@ -482,11 +722,30 @@ export class GameScene extends Phaser.Scene {
 
     // Wire up action bar key presses (1-8)
     this.inputManager.onActionBarKeyPressed = (slotIndex: number) => {
-      if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen) return;
+      if (this.chatInputActive || this.inventoryOpen || this.skillsPaneOpen || this.optionsMenuOpen || this.hudEditMode) return;
       const skillId = this.actionBar[slotIndex];
       if (!skillId) return;
 
       const skill = ClientDataManager.instance.getSkill(skillId);
+
+      // Auto-attack skills: toggle on/off
+      if (skill?.isAutoAttack) {
+        // If this exact auto-attack is already active, pressing the key again stops it
+        if (this.localAutoAttackActive && this.localAutoAttackSkillId === skillId) {
+          this.network.sendStopAutoAttack();
+          return;
+        }
+        const showErr = (msg: string) => {
+          const pos = this.network.sessionId ? this.getCombatTextPosition(this.network.sessionId) : null;
+          if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, msg, '#ff8844');
+        };
+        if (!this.currentTargetId || this.currentTargetType !== 'npc') {
+          showErr('No target');
+          return;
+        }
+        this.network.sendStartAutoAttack(skillId, this.currentTargetId);
+        return;
+      }
 
       // Single-target skills require a target to be selected, and the target
       // must match the skill's target class (ally = player, enemy = NPC).
@@ -530,7 +789,7 @@ export class GameScene extends Phaser.Scene {
 
     // Wire up skills pane toggle (K)
     this.inputManager.onSkillsPaneToggle = () => {
-      if (this.chatInputActive || this.inventoryOpen) return;
+      if (this.chatInputActive || this.inventoryOpen || this.optionsMenuOpen || this.hudEditMode) return;
       this.toggleSkillsPane();
     };
 
@@ -551,7 +810,7 @@ export class GameScene extends Phaser.Scene {
     // ── Entity click-to-target callbacks ─────────────────────
     this.entityRenderer.onPlayerClick = (sessionId: string) => {
       this.entityClickConsumed = true;
-      this.inputManager.suppressNextMelee = true; // prevent melee attack on targeting click
+      this.inputManager.suppressNextClick = true; // prevent melee attack on targeting click
       if (this.currentTargetId === sessionId && this.currentTargetType === 'player') {
         this.clearTarget(); // click same target again = deselect
       } else {
@@ -560,12 +819,18 @@ export class GameScene extends Phaser.Scene {
     };
     this.entityRenderer.onNpcClick = (npcId: string) => {
       this.entityClickConsumed = true;
-      this.inputManager.suppressNextMelee = true; // prevent melee attack on targeting click
+      this.inputManager.suppressNextClick = true;
       if (this.currentTargetId === npcId && this.currentTargetType === 'npc') {
         this.clearTarget(); // click same target again = deselect
       } else {
         this.setTarget(npcId, 'npc');
       }
+    };
+    // Right-click on NPC → set as target (auto-attack must be triggered from action bar)
+    this.entityRenderer.onNpcRightClick = (npcId: string) => {
+      this.entityClickConsumed = true;
+      this.inputManager.suppressNextClick = true;
+      this.setTarget(npcId, 'npc');
     };
 
     // Handle full map data (new multi-layer system)
@@ -689,7 +954,9 @@ export class GameScene extends Phaser.Scene {
             cached.classId ?? 'warrior',
             cached.level ?? 1,
             cached.characterName ?? '',
+            cached.bodyId ?? '',
           );
+          this.entityRenderer.updateRemotePlayerEquipment(sid, playerEquipmentMap(cached));
         }
       }
 
@@ -732,8 +999,8 @@ export class GameScene extends Phaser.Scene {
       if (this.playerSprite) {
         const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
         this.playerSprite.setPosition(playerIso.x, playerIso.y);
-        this.lastFacingDir = 'down';
-        this.playerSprite.play('idle_down', true);
+        this.lastFacingDir = 's';
+        playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle', 's', true);
       }
 
       // 5. Clear pending inputs — server position is authoritative after zone change
@@ -756,6 +1023,7 @@ export class GameScene extends Phaser.Scene {
         this.localAlive = player.alive;
         this.localSpeed = player.speed ?? 200;
         this.localClassId = player.classId ?? 'warrior';
+        this.localBodyId = (player as { bodyId?: string }).bodyId ?? '';
         this.localLevel = player.level ?? 1;
         this.localXp = player.xp ?? 0;
         this.localCharacterName = player.characterName ?? '';
@@ -783,6 +1051,8 @@ export class GameScene extends Phaser.Scene {
           mana: player.mana ?? 0,
           maxMana: player.maxMana ?? 0,
           shieldHp: player.shieldHp ?? 0,
+          bodyId: player.bodyId ?? '',
+          ...equipFields(player),
         });
         if (theirZone === this.currentZoneId) {
           this.entityRenderer.addRemotePlayer(
@@ -792,7 +1062,9 @@ export class GameScene extends Phaser.Scene {
             player.classId ?? 'warrior',
             player.level ?? 1,
             player.characterName ?? '',
+            player.bodyId ?? '',
           );
+          this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
         }
       }
     };
@@ -820,6 +1092,10 @@ export class GameScene extends Phaser.Scene {
           this.localCastingSkillId = '';
           this.localCastingDurationMs = 0;
         }
+
+        // Track auto-attack state from server
+        this.localAutoAttackActive = player.autoAttackActive ?? false;
+        this.localAutoAttackSkillId = player.autoAttackSkillId ?? '';
 
         const wasAlive = this.localAlive;
         this.localAlive = player.alive;
@@ -856,13 +1132,15 @@ export class GameScene extends Phaser.Scene {
           mana: player.mana ?? cached.mana ?? 0,
           maxMana: player.maxMana ?? cached.maxMana ?? 0,
           shieldHp: player.shieldHp ?? cached.shieldHp ?? 0,
+          bodyId: player.bodyId ?? cached.bodyId ?? '',
+          ...equipFields(player, cached),
         });
 
         if (wasInOurZone && !isInOurZone) {
           // Player left our zone — remove their sprite
           this.entityRenderer.removeRemotePlayer(sessionId);
         } else if (!wasInOurZone && isInOurZone) {
-          // Player entered our zone — add their sprite
+          // Player entered our zone — add their sprite and sync equipment immediately
           this.entityRenderer.addRemotePlayer(
             sessionId,
             player.x,
@@ -870,7 +1148,9 @@ export class GameScene extends Phaser.Scene {
             player.classId ?? 'warrior',
             player.level ?? 1,
             player.characterName ?? '',
+            player.bodyId ?? '',
           );
+          this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
         } else if (isInOurZone) {
           // Same zone — normal position/HP update
           this.entityRenderer.updateRemotePlayerTarget(
@@ -887,14 +1167,7 @@ export class GameScene extends Phaser.Scene {
             player.level ?? 1,
           );
           // Sync equipment overlays for remote player
-          this.entityRenderer.updateRemotePlayerEquipment(sessionId, {
-            weapon: player.equipWeapon ?? '',
-            helm: player.equipHelm ?? '',
-            chest: player.equipChest ?? '',
-            legs: player.equipLegs ?? '',
-            boots: player.equipBoots ?? '',
-            ring: player.equipRing ?? '',
-          });
+          this.entityRenderer.updateRemotePlayerEquipment(sessionId, playerEquipmentMap(player));
         }
         // Different zone (and wasn't in ours) → nothing to do
 
@@ -1075,20 +1348,36 @@ export class GameScene extends Phaser.Scene {
         const pos = this.getCombatTextPosition(data.targetId);
         if (pos) this.entityRenderer.showDamageFlash(pos.x, pos.y, data.damage, data.isCrit);
         this.cameras.main.shake(100, data.isCrit ? 0.01 : 0.005);
+        // Combat log — incoming damage
+        const atkName = this.getCombatEntityName(data.attackerId);
+        const critTag = data.isCrit ? ' (Critical!)' : '';
+        this.pushCombatLog(`${atkName} hits you for ${data.damage} damage${critTag}`, '#ff6644', 'inDmg');
       } else {
         this.showRemoteDamageFlash(data.targetId, data.damage, data.isCrit);
+        // Combat log — party member taking damage
+        if (this.isLocalOrParty(data.targetId)) {
+          const tgtName = this.getCombatEntityName(data.targetId);
+          const atkName = this.getCombatEntityName(data.attackerId);
+          const critTag = data.isCrit ? ' (Critical!)' : '';
+          this.pushCombatLog(`${atkName} hits ${tgtName} for ${data.damage}${critTag}`, '#cc8866', 'party');
+        }
       }
     };
 
     this.network.onPlayerDied = (data: PlayerDiedData) => {
-      if (data.targetId !== this.network.sessionId) {
-        console.log(`[Combat] Player ${data.targetId.slice(0, 6)} was killed by ${data.killerId.slice(0, 6)}`);
+      if (data.targetId === this.network.sessionId) {
+        const killerName = this.getCombatEntityName(data.killerId);
+        this.pushCombatLog(`You were killed by ${killerName}`, '#ff4444', 'deaths');
+      } else if (this.isLocalOrParty(data.targetId)) {
+        const tgtName = this.getCombatEntityName(data.targetId);
+        const killerName = this.getCombatEntityName(data.killerId);
+        this.pushCombatLog(`${tgtName} was killed by ${killerName}`, '#ff6666', 'deaths');
       }
     };
 
     this.network.onPlayerRespawned = (data: PlayerRespawnedData) => {
       if (data.playerId === this.network.sessionId) {
-        console.log('[Combat] You respawned!');
+        this.pushCombatLog('You have respawned', '#44ff44', 'deaths');
       }
     };
 
@@ -1105,16 +1394,50 @@ export class GameScene extends Phaser.Scene {
     this.network.onMissed = (data: CombatFeedbackData) => {
       const pos = this.getCombatTextPosition(data.targetId);
       if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'MISS', '#999999');
+      // Combat log
+      if (data.attackerId === this.network.sessionId) {
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`Your attack missed ${tgtName}`, '#999999', 'misses');
+      } else if (data.targetId === this.network.sessionId) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        this.pushCombatLog(`${atkName}'s attack missed you`, '#999999', 'misses');
+      } else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`${atkName}'s attack missed ${tgtName}`, '#888888', 'party');
+      }
     };
 
     this.network.onDodged = (data: CombatFeedbackData) => {
       const pos = this.getCombatTextPosition(data.targetId);
       if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'DODGE', '#ffffff');
+      if (data.targetId === this.network.sessionId) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        this.pushCombatLog(`You dodged ${atkName}'s attack`, '#ffffff', 'dodges');
+      } else if (data.attackerId === this.network.sessionId) {
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`${tgtName} dodged your attack`, '#cccccc', 'dodges');
+      } else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`${tgtName} dodged ${atkName}'s attack`, '#aaaaaa', 'party');
+      }
     };
 
     this.network.onBlocked = (data: CombatFeedbackData) => {
       const pos = this.getCombatTextPosition(data.targetId);
       if (pos) this.entityRenderer.showCombatText(pos.x, pos.y, 'BLOCK', '#4488ff');
+      if (data.targetId === this.network.sessionId) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        this.pushCombatLog(`You blocked ${atkName}'s attack`, '#4488ff', 'blocks');
+      } else if (data.attackerId === this.network.sessionId) {
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`${tgtName} blocked your attack`, '#6688cc', 'blocks');
+      } else if (this.isLocalOrParty(data.attackerId) || this.isLocalOrParty(data.targetId)) {
+        const atkName = this.getCombatEntityName(data.attackerId);
+        const tgtName = this.getCombatEntityName(data.targetId);
+        this.pushCombatLog(`${tgtName} blocked ${atkName}'s attack`, '#5577aa', 'party');
+      }
     };
 
     // NPC combat events
@@ -1130,11 +1453,59 @@ export class GameScene extends Phaser.Scene {
             this.entityRenderer.showMagicMissileVFX(casterPos.x, casterPos.y, pos.x, pos.y);
           }
         }
+
+        // ── Action animation on hit ──
+        const hitAttackerId = data.casterId || data.attackerId;
+        if (hitAttackerId) {
+          const animType = data.skillId === 'melee_attack' ? 'melee'
+            : data.skillId === 'ranged_attack' ? 'ranged'
+            : null; // named skills use cast animation triggered by onSkillStarted
+          if (animType) {
+            const dir = this.getDirectionToTarget(hitAttackerId, pos.x, pos.y);
+            if (hitAttackerId === this.network.sessionId) {
+              this.playActionAnimation(animType, dir);
+            } else {
+              this.entityRenderer.playRemoteActionAnim(hitAttackerId, animType, dir);
+            }
+          }
+        }
+      }
+      // Combat log — outgoing damage (you or party hitting an NPC)
+      const casterId = data.casterId || data.attackerId;
+      if (casterId && this.isLocalOrParty(casterId)) {
+        const atkName = this.getCombatEntityName(casterId);
+        const tgtName = this.getCombatEntityName(data.targetId);
+        const critTag = data.isCrit ? ' (Critical!)' : '';
+        let skillLabel = '';
+        if (data.skillId === 'melee_attack') {
+          skillLabel = ' [Melee]';
+        } else if (data.skillId === 'ranged_attack') {
+          skillLabel = ' [Ranged]';
+        } else if (data.skillId) {
+          skillLabel = ` [${ClientDataManager.instance.getSkill(data.skillId)?.name ?? data.skillId}]`;
+        }
+        if (casterId === this.network.sessionId) {
+          this.pushCombatLog(`You hit ${tgtName} for ${data.damage}${critTag}${skillLabel}`, '#ffcc44', 'outDmg');
+        } else {
+          this.pushCombatLog(`${atkName} hits ${tgtName} for ${data.damage}${critTag}${skillLabel}`, '#aabb88', 'party');
+        }
       }
     };
 
     this.network.onNpcDied = (data) => {
-      console.log(`[Combat] NPC ${data.targetId} was killed by ${data.killerId.slice(0, 6)}, +${data.xpReward} XP`);
+      const tgtName = this.getCombatEntityName(data.targetId);
+      if (data.killerId === this.network.sessionId) {
+        this.pushCombatLog(`You killed ${tgtName}`, '#44ff44', 'deaths');
+      } else if (this.isLocalOrParty(data.killerId)) {
+        const killerName = this.getCombatEntityName(data.killerId);
+        this.pushCombatLog(`${killerName} killed ${tgtName}`, '#88cc88', 'party');
+      }
+    };
+
+    this.network.onXpGained = (amount: number) => {
+      if (amount > 0) {
+        this.pushCombatLog(`+${amount} XP`, '#ffaa00', 'xp');
+      }
     };
 
     // Inventory sync
@@ -1169,10 +1540,11 @@ export class GameScene extends Phaser.Scene {
     this.network.onSkillStarted = (data: { casterId: string; skillId: string; castTimeMs: number }) => {
       if (data.casterId === this.network.sessionId) {
         if (data.castTimeMs > 0) {
-          // Cast-time spell — show cast bar
+          // Cast-time spell — show cast bar + cast animation
           this.localCastingSkillId = data.skillId;
           this.localCastingStartedAt = Date.now();
           this.localCastingDurationMs = data.castTimeMs;
+          this.playActionAnimation('cast', this.lastFacingDir);
         } else {
           // Instant cast — start cooldown immediately
           const skill = ClientDataManager.instance.getSkill(data.skillId);
@@ -1182,6 +1554,11 @@ export class GameScene extends Phaser.Scene {
               durationMs: skill.cooldownMs,
             });
           }
+        }
+      } else {
+        // Remote player started casting
+        if (data.castTimeMs > 0) {
+          this.entityRenderer.playRemoteActionAnim(data.casterId, 'cast');
         }
       }
     };
@@ -1199,6 +1576,11 @@ export class GameScene extends Phaser.Scene {
             });
           }
         }
+        // Stop cast animation when the spell finishes
+        this.stopActionAnimation();
+      } else if (data.casterId) {
+        // Stop remote player's cast animation
+        this.entityRenderer.stopRemoteActionAnim(data.casterId);
       }
 
       // Show damage/heal numbers via entity renderer
@@ -1221,6 +1603,17 @@ export class GameScene extends Phaser.Scene {
         if (pos) {
           this.entityRenderer.showCombatText(pos.x, pos.y, `+${data.amount}`, '#44ff44');
         }
+        // Combat log — healing
+        if (this.isLocalOrParty(data.targetId) || this.isLocalOrParty(data.casterId)) {
+          const casterName = this.getCombatEntityName(data.casterId);
+          const tgtName = this.getCombatEntityName(data.targetId);
+          const skillName = data.skillId ? (ClientDataManager.instance.getSkill(data.skillId)?.name ?? data.skillId) : 'heal';
+          if (data.casterId === data.targetId) {
+            this.pushCombatLog(`${casterName} healed self for ${data.amount} [${skillName}]`, '#44ff44', 'heals');
+          } else {
+            this.pushCombatLog(`${casterName} healed ${tgtName} for ${data.amount} [${skillName}]`, '#44ff44', 'heals');
+          }
+        }
       }
     };
 
@@ -1237,7 +1630,10 @@ export class GameScene extends Phaser.Scene {
       if (data.casterId === this.network.sessionId) {
         this.localCastingSkillId = '';
         this.localCastingDurationMs = 0;
+        this.stopActionAnimation();
         this.entityRenderer.showCombatText(this.localX, this.localY - 30, 'Interrupted!', '#ff8888');
+      } else {
+        this.entityRenderer.stopRemoteActionAnim(data.casterId);
       }
     };
 
@@ -1247,6 +1643,9 @@ export class GameScene extends Phaser.Scene {
         if (skill) {
           const pos = this.getCombatTextPosition(this.network.sessionId);
           if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, `+${skill.name}`, '#88ccff');
+          // Combat log
+          const durSec = (data.durationMs / 1000).toFixed(0);
+          this.pushCombatLog(`+${skill.name} applied (${durSec}s)`, '#88ccff', 'buffs');
         }
         // Track in local buff list for the buffs panel
         const now = Date.now();
@@ -1262,6 +1661,9 @@ export class GameScene extends Phaser.Scene {
           const label = skill.category === 'debuff' ? `☠ ${skill.name}` : `✦ ${skill.name}`;
           const color = skill.category === 'debuff' ? '#88ff44' : '#88ccff';
           this.entityRenderer.showCombatText(npcPos.x, npcPos.y - 30, label, color);
+          // Combat log — debuff on NPC
+          const tgtName = this.getCombatEntityName(data.targetId);
+          this.pushCombatLog(`${skill.name} applied to ${tgtName}`, '#88ff44', 'buffs');
         }
       }
     };
@@ -1272,6 +1674,7 @@ export class GameScene extends Phaser.Scene {
         if (skill) {
           const pos = this.getCombatTextPosition(this.network.sessionId);
           if (pos) this.entityRenderer.showCombatText(pos.x, pos.y - 30, `-${skill.name}`, '#888888');
+          this.pushCombatLog(`-${skill.name} faded`, '#888888', 'buffs');
         }
         this.localBuffs.delete(data.skillId);
       }
@@ -1410,8 +1813,7 @@ export class GameScene extends Phaser.Scene {
 
   private createLocalPlayer(): void {
     const playerIso = this.isIso ? orthoToIso(this.localX, this.localY) : { x: this.localX, y: this.localY };
-    // Use sprite sheet — frame 18 = row 2 (down), col 0 = idle facing down
-    this.playerSprite = this.add.sprite(playerIso.x, playerIso.y, 'player_walk', 18);
+    this.playerSprite = createCharacterSprite(this, playerIso.x, playerIso.y, this.localClassId, this.localBodyId);
     this.playerSprite.setDepth(ENTITY_DEPTH_BASE);
     this.playerSprite.rotation = 0;
 
@@ -1419,7 +1821,7 @@ export class GameScene extends Phaser.Scene {
     this.playerSprite.setInteractive({ useHandCursor: false });
     this.playerSprite.on('pointerdown', () => {
       this.entityClickConsumed = true;
-      this.inputManager.suppressNextMelee = true;
+      this.inputManager.suppressNextClick = true;
       const selfId = this.network.sessionId;
       if (!selfId) return;
       if (this.currentTargetId === selfId && this.currentTargetType === 'self') {
@@ -1450,15 +1852,79 @@ export class GameScene extends Phaser.Scene {
     const my = (input.down ? 1 : 0) - (input.up ? 1 : 0);
     if (mx === 0 && my === 0) return null;
 
-    // Cardinal directions first
-    if (my < 0 && mx === 0) return 'up';
-    if (my > 0 && mx === 0) return 'down';
-    if (mx < 0 && my === 0) return 'left';
-    if (mx > 0 && my === 0) return 'right';
+    // WASD is rotated 45 degrees into the world before it moves the player
+    // (see applyInputLocally / MovementSystem.processInput). Facing has to use
+    // the same rotated vector, otherwise the local player faces one way on
+    // their own screen and another on everyone else's.
+    const orthoMx = mx + my;
+    const orthoMy = -mx + my;
+    return dirFromOrthoVector(orthoMx, orthoMy);
+  }
 
-    // Diagonals — vertical axis takes priority (feels most natural in ISO)
-    if (my < 0) return 'up';
-    return 'down';
+  // ── Action Animation Helpers ───────────────────────────────
+
+  /**
+   * Play an action animation (melee, ranged, cast) on the local player sprite.
+   * Melee/ranged play once then return to idle; cast loops until stopped.
+   */
+  private playActionAnimation(animType: string, direction?: string): void {
+    if (!this.playerSprite) return;
+    const dir = (direction ?? this.lastFacingDir) as PaperdollDir;
+    const anim = toPaperdollAnim(animType);
+    const animKey = characterAnimKey(this, this.playerSprite, this.localClassId, anim, dir);
+    if (!animKey) return;
+
+    this.isPlayingActionAnim = true;
+    this.playerSprite.play(animKey, true);
+
+    if (anim === 'attack' || anim === 'shoot') {
+      // One-shot animation — return to idle when complete
+      this.playerSprite.once('animationcomplete', () => {
+        this.isPlayingActionAnim = false;
+        if (this.playerSprite) {
+          playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle',
+                            this.lastFacingDir as PaperdollDir, true);
+        }
+      });
+    }
+    // 'cast' loops indefinitely — stopped by stopActionAnimation()
+  }
+
+  /** Stop any looping action animation (e.g. cast) and return to idle. */
+  private stopActionAnimation(): void {
+    this.isPlayingActionAnim = false;
+    if (this.playerSprite) {
+      playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle',
+                        this.lastFacingDir as PaperdollDir, true);
+    }
+  }
+
+  /**
+   * Get the facing direction from an attacker toward a target screen position.
+   * Returns 'up', 'down', 'left', or 'right'.
+   */
+  private getDirectionToTarget(attackerId: string, targetScreenX: number, targetScreenY: number): string {
+    let attackerX: number;
+    let attackerY: number;
+
+    if (attackerId === this.network.sessionId) {
+      // Local player
+      const playerIso = this.isIso
+        ? orthoToIso(this.renderX, this.renderY)
+        : { x: this.renderX, y: this.renderY };
+      attackerX = playerIso.x;
+      attackerY = playerIso.y;
+    } else {
+      // Remote player
+      const pos = this.entityRenderer.getPlayerPosition(attackerId);
+      if (!pos) return this.lastFacingDir;
+      attackerX = pos.x;
+      attackerY = pos.y;
+    }
+
+    // Already in ISO screen space, so this is a screen-vector lookup
+    return dirFromScreenVector(targetScreenX - attackerX, targetScreenY - attackerY)
+      ?? this.lastFacingDir;
   }
 
   /**
@@ -1488,6 +1954,27 @@ export class GameScene extends Phaser.Scene {
     18: 'tile_desert_rock',
     19: 'tile_ruins_floor',
     20: 'tile_quicksand',
+    // Town / farm / cave tileset (GID 21-40)
+    21: 'tile_road_cobble',
+    22: 'tile_plaster_wall',
+    23: 'tile_timber_wall',
+    24: 'tile_roof_thatch',
+    25: 'tile_roof_tile',
+    26: 'tile_door_wood',
+    27: 'tile_window_lit',
+    28: 'tile_wood_floor',
+    29: 'tile_signpost',
+    30: 'tile_well',
+    31: 'tile_market_stall',
+    32: 'tile_crop_field',
+    33: 'tile_bridge_wood',
+    34: 'tile_cave_mouth',
+    35: 'tile_cave_floor',
+    36: 'tile_cave_wall',
+    37: 'tile_rock',
+    38: 'tile_flowers',
+    39: 'tile_hedge',
+    40: 'tile_campfire',
   };
 
   /**
@@ -1497,12 +1984,17 @@ export class GameScene extends Phaser.Scene {
   /** Depth stride between tile layers for painter's-algorithm sorting. */
   private static readonly LAYER_DEPTH_STRIDE = 100_000;
 
+  /** Tile-grid squares per cull bucket. */
+  private static readonly CULL_CHUNK = 8;
+
   private buildTileMapFromData(data: MapDataPayload): void {
     // Clear existing tiles
     for (const sprite of this.tileSprites) {
       sprite.destroy();
     }
     this.tileSprites = [];
+    this.tileChunks = [];
+    const chunks = new Map<string, Phaser.GameObjects.Sprite[]>();
 
     const { tileLayers, tileSize } = data;
     const isIso = data.orientation === 'isometric';
@@ -1545,9 +2037,55 @@ export class GameScene extends Phaser.Scene {
             sprite.setAlpha(layer.opacity);
           }
           this.tileSprites.push(sprite);
+
+          const key = `${(x / GameScene.CULL_CHUNK) | 0},${(y / GameScene.CULL_CHUNK) | 0}`;
+          const bucket = chunks.get(key);
+          if (bucket) bucket.push(sprite);
+          else chunks.set(key, [sprite]);
         }
       }
       layerIndex++;
+    }
+
+    // Measure each bucket from the sprites it actually holds rather than from
+    // the tile maths: a tile texture may be taller than its cell (a tree, a
+    // roof), and a bucket sized from the grid would pop those off early.
+    for (const sprites of chunks.values()) {
+      let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+      for (const sp of sprites) {
+        const b = sp.getBounds();
+        if (b.left < left) left = b.left;
+        if (b.top < top) top = b.top;
+        if (b.right > right) right = b.right;
+        if (b.bottom > bottom) bottom = b.bottom;
+      }
+      this.tileChunks.push({ left, top, right, bottom, sprites, shown: true });
+    }
+    this.cullTiles(true);
+  }
+
+  /**
+   * Show only the buckets the camera can see. Called every frame; it early-outs
+   * on the common case where nothing changed, so the cost is one rectangle test
+   * per bucket.
+   */
+  private cullTiles(force = false): void {
+    if (this.tileChunks.length === 0) return;
+    const view = this.cameras.main.worldView;
+    // A margin of one bucket, so a chunk is already on when it slides in.
+    const margin = GameScene.CULL_CHUNK * 128;
+    const left = view.x - margin;
+    const right = view.right + margin;
+    const top = view.y - margin;
+    const bottom = view.bottom + margin;
+
+    for (const chunk of this.tileChunks) {
+      const visible =
+        chunk.right >= left && chunk.left <= right &&
+        chunk.bottom >= top && chunk.top <= bottom;
+      if (!force && visible === chunk.shown) continue;
+      chunk.shown = visible;
+      for (const sp of chunk.sprites) sp.setVisible(visible);
     }
   }
 
@@ -1559,6 +2097,7 @@ export class GameScene extends Phaser.Scene {
       sprite.destroy();
     }
     this.tileSprites = [];
+    this.tileChunks = [];
 
     const { grid, width, height, tileSize } = data;
     for (let y = 0; y < height; y++) {
@@ -1691,7 +2230,7 @@ export class GameScene extends Phaser.Scene {
     return this.INV_COLS * (this.SLOT_SIZE + this.SLOT_GAP) + this.SLOT_GAP + 16;
   }
 
-  private readonly PANEL_H = 340;
+  private readonly PANEL_H = 386;   // 9 equipment rows + stats
 
   private get invPanelH(): number {
     return this.PANEL_H;
@@ -1717,6 +2256,12 @@ export class GameScene extends Phaser.Scene {
       if (saved.target)    this.targetOffset    = saved.target;
       if (saved.party)     this.partyOffset     = saved.party;
       if (saved.buffs)     this.buffsOffset     = saved.buffs;
+      if (saved.combatLog) this.combatLogOffset = saved.combatLog;
+      if (saved.combatLogFilters) Object.assign(this.combatLogFilters, saved.combatLogFilters);
+      if (saved.panelVisibility) Object.assign(this.panelVisibility, saved.panelVisibility);
+      if (saved.panelOpacity)    Object.assign(this.panelOpacity, saved.panelOpacity);
+      if (saved.panelScale)      Object.assign(this.panelScale, saved.panelScale);
+      this.applyPanelCustomisation();
     } catch { /* ignore malformed data */ }
   }
 
@@ -1730,8 +2275,393 @@ export class GameScene extends Phaser.Scene {
         target:    this.targetOffset,
         party:     this.partyOffset,
         buffs:     this.buffsOffset,
+        combatLog: this.combatLogOffset,
+        combatLogFilters: this.combatLogFilters,
+        panelVisibility: this.panelVisibility,
+        panelOpacity:    this.panelOpacity,
+        panelScale:      this.panelScale,
       }));
     } catch { /* ignore */ }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ██  OPTIONS MENU
+  // ══════════════════════════════════════════════════════════
+
+  // Options menu layout constants (shared between create and hit-testing)
+  private readonly OPTS_PANEL_W = 320;
+  private readonly OPTS_PANEL_H = 300;
+  private readonly OPTS_BTN_W = 240;
+  private readonly OPTS_BTN_H = 34;
+  private readonly OPTS_BTN_GAP = 8;
+  private readonly OPTS_TITLE_H = 22;
+  private readonly OPTS_BUTTONS: { label: string; action: string; enabled: boolean }[] = [
+    { label: 'Edit HUD',                   action: 'editHud',    enabled: true },
+    { label: 'Reset HUD Layout',           action: 'resetHud',   enabled: true },
+    { label: 'Toggle Sound (Coming Soon)', action: 'sound',      enabled: false },
+    { label: 'Logout',                     action: 'logout',     enabled: true },
+  ];
+
+  /** Return the screen rect for the options panel. */
+  private getOptionsPanelRect(): { x: number; y: number; w: number; h: number } {
+    const cam = this.cameras.main;
+    return {
+      x: cam.width / 2 - this.OPTS_PANEL_W / 2,
+      y: cam.height / 2 - this.OPTS_PANEL_H / 2,
+      w: this.OPTS_PANEL_W,
+      h: this.OPTS_PANEL_H,
+    };
+  }
+
+  /** Return the screen rect for a specific options button by index. */
+  private getOptionsButtonRect(index: number): { x: number; y: number; w: number; h: number } {
+    const pr = this.getOptionsPanelRect();
+    const startY = pr.y + this.OPTS_TITLE_H + 24;
+    const by = startY + index * (this.OPTS_BTN_H + this.OPTS_BTN_GAP);
+    return {
+      x: pr.x + this.OPTS_PANEL_W / 2 - this.OPTS_BTN_W / 2,
+      y: by,
+      w: this.OPTS_BTN_W,
+      h: this.OPTS_BTN_H,
+    };
+  }
+
+  /** Return the screen rect for the close (✕) button. */
+  private getOptionsCloseRect(): { x: number; y: number; w: number; h: number } {
+    const pr = this.getOptionsPanelRect();
+    return { x: pr.x + this.OPTS_PANEL_W - 28, y: pr.y + 2, w: 24, h: 24 };
+  }
+
+  private createOptionsMenu(): void {
+    const cam = this.cameras.main;
+
+    // Dim overlay — visual only, not interactive.
+    // Click-outside and button clicks are handled via manual hit-rect testing
+    // in the global pointerdown/pointermove handlers (same pattern as all other panels).
+    this.optionsDimBg = this.add.rectangle(cam.width / 2, cam.height / 2, cam.width, cam.height, 0x000000, 0.5);
+    this.optionsDimBg.setScrollFactor(0);
+    this.optionsDimBg.setDepth(UI_DEPTH_BASE + 299);
+    this.optionsDimBg.setVisible(false);
+
+    // Container — holds all visual elements, toggled as a group
+    this.optionsMenuContainer = this.add.container(0, 0);
+    this.optionsMenuContainer.setScrollFactor(0);
+    this.optionsMenuContainer.setDepth(UI_DEPTH_BASE + 300);
+    this.optionsMenuContainer.setVisible(false);
+
+    this.rebuildOptionsMenuVisuals();
+  }
+
+  /**
+   * (Re)build the visual elements inside the options menu container.
+   * Called once at creation and can be called again on resize.
+   */
+  private rebuildOptionsMenuVisuals(): void {
+    // Clear previous contents
+    this.optionsMenuContainer.removeAll(true);
+    this.optionsButtons = [];
+
+    const pr = this.getOptionsPanelRect();
+
+    // Background
+    const bg = this.add.rectangle(
+      pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_PANEL_H / 2,
+      this.OPTS_PANEL_W, this.OPTS_PANEL_H, 0x1a1a2e, 0.95,
+    );
+    bg.setStrokeStyle(2, 0x555588);
+    this.optionsMenuContainer.add(bg);
+
+    // Title
+    const title = this.add.text(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_TITLE_H / 2 + 4, 'Options', {
+      fontSize: '15px', color: '#ffcc00', stroke: '#000000', strokeThickness: 2, fontStyle: 'bold',
+    }).setOrigin(0.5, 0.5);
+    this.optionsMenuContainer.add(title);
+
+    // Separator
+    const sep = this.add.rectangle(
+      pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_TITLE_H + 6,
+      this.OPTS_PANEL_W - 20, 1, 0x555588, 0.6,
+    );
+    this.optionsMenuContainer.add(sep);
+
+    // Buttons (visual only — interaction handled via global pointer handlers)
+    for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+      const btn = this.OPTS_BUTTONS[i];
+      const br = this.getOptionsButtonRect(i);
+      const bx = br.x + br.w / 2;
+      const by = br.y + br.h / 2;
+
+      const btnBg = this.add.rectangle(bx, by, this.OPTS_BTN_W, this.OPTS_BTN_H, btn.enabled ? 0x2a2a3e : 0x1e1e2e, 1);
+      btnBg.setStrokeStyle(1, 0x444466);
+      this.optionsMenuContainer.add(btnBg);
+
+      const textColor = btn.enabled ? '#cccccc' : '#555555';
+      const btnText = this.add.text(bx, by, btn.label, {
+        fontSize: '13px', color: textColor, stroke: '#000000', strokeThickness: 1,
+      }).setOrigin(0.5, 0.5);
+      this.optionsMenuContainer.add(btnText);
+
+      this.optionsButtons.push({ bg: btnBg, text: btnText, action: btn.action });
+    }
+
+    // Close button (✕)
+    const cr = this.getOptionsCloseRect();
+    const closeBtn = this.add.text(cr.x + cr.w / 2, cr.y + cr.h / 2, '✕', {
+      fontSize: '14px', color: '#888888', stroke: '#000000', strokeThickness: 1,
+    }).setOrigin(0.5, 0.5);
+    this.optionsMenuContainer.add(closeBtn);
+    // Store ref for hover styling
+    this.optionsCloseText = closeBtn;
+
+    // Footer
+    const footer = this.add.text(pr.x + this.OPTS_PANEL_W / 2, pr.y + this.OPTS_PANEL_H - 16, '1382 Labs — Valhalla', {
+      fontSize: '10px', color: '#444466',
+    }).setOrigin(0.5, 0.5);
+    this.optionsMenuContainer.add(footer);
+  }
+
+  private toggleOptionsMenu(): void {
+    this.optionsMenuOpen = !this.optionsMenuOpen;
+    this.optionsDimBg.setVisible(this.optionsMenuOpen);
+    this.optionsMenuContainer.setVisible(this.optionsMenuOpen);
+  }
+
+  private handleOptionsAction(action: string): void {
+    switch (action) {
+      case 'editHud':
+        this.toggleOptionsMenu();
+        this.enterHudEditMode();
+        break;
+      case 'resetHud':
+        this.resetHudLayout();
+        break;
+      case 'logout':
+        this.logoutToLoginScreen();
+        break;
+      case 'sound':
+        // Placeholder for future audio system
+        break;
+    }
+  }
+
+  private returnToCharacterSelect(): void {
+    this.saveHudLayout();
+    // Await the full WebSocket leave so the server processes the disconnect
+    // before we attempt a new joinOrCreate from the character select screen.
+    this.network.disconnect()
+      .then(() => AuthClient.getCharactersWithUsername())
+      .then(({ characters, username }) => {
+        this.scene.start('CharacterSelectScene', {
+          characters,
+          username,
+          token: this.authToken,
+        });
+      })
+      .catch(() => {
+        // If the fetch fails (e.g. network error), fall back to LoginScene
+        AuthClient.clearToken();
+        this.scene.start('LoginScene');
+      });
+  }
+
+  private logoutToLoginScreen(): void {
+    this.saveHudLayout();
+    // Release all Phaser keyboard captures before leaving — addKey() registers
+    // WASD in the global KeyboardManager capture list (which calls preventDefault),
+    // so without this, WASD won't type in HTML <input> fields after the scene ends.
+    this.input.keyboard?.clearCaptures();
+    this.network.disconnect().then(() => {
+      AuthClient.clearToken();
+      this.scene.start('LoginScene');
+    }).catch(() => {
+      AuthClient.clearToken();
+      this.scene.start('LoginScene');
+    });
+  }
+
+  private resetHudLayout(): void {
+    this.chatOffset      = { x: 0, y: 0 };
+    this.actionBarOffset = { x: 0, y: 0 };
+    this.invOffset       = { x: 0, y: 0 };
+    this.skillsOffset    = { x: 0, y: 0 };
+    this.targetOffset    = { x: 0, y: 0 };
+    this.partyOffset     = { x: 0, y: 0 };
+    this.buffsOffset     = { x: 0, y: 0 };
+    this.combatLogOffset = { x: 0, y: 0 };
+    this.panelVisibility = { chat: true, actionBar: true, target: true, party: true, buffs: true };
+    this.panelOpacity    = { chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0 };
+    this.panelScale      = { chat: 1.0, actionBar: 1.0, target: 1.0, party: 1.0, buffs: 1.0 };
+    try { localStorage.removeItem(`valhalla_hud_${this.characterId}`); } catch { /* ignore */ }
+    this.applyPanelCustomisation();
+    this.saveHudLayout();
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ██  HUD EDIT MODE
+  // ══════════════════════════════════════════════════════════
+
+  private createHudEditModeUI(): void {
+    const cam = this.cameras.main;
+    this.hudEditLabel = this.add.text(cam.width / 2, 20, 'HUD EDIT MODE', {
+      fontSize: '18px', color: '#ffcc00', stroke: '#000000', strokeThickness: 3, fontStyle: 'bold',
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 310).setVisible(false);
+
+    this.hudEditSubLabel = this.add.text(cam.width / 2, 42, 'Drag panels to reposition  •  Click controls to customise  •  Press Esc to exit', {
+      fontSize: '11px', color: '#aaaacc', stroke: '#000000', strokeThickness: 1,
+    }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 310).setVisible(false);
+  }
+
+  /** Map panel keys to their Phaser containers. */
+  private getPanelContainerMap(): Record<string, Phaser.GameObjects.Container> {
+    return {
+      chat:      this.chatContainer,
+      actionBar: this.actionBarContainer,
+      target:    this.targetNameplateContainer,
+      party:     this.partyPanelContainer,
+      buffs:     this.buffsPanelContainer,
+    };
+  }
+
+  private enterHudEditMode(): void {
+    this.hudEditMode = true;
+    this.hudEditLabel.setVisible(true);
+    this.hudEditSubLabel.setVisible(true);
+
+    // Force show all customisable panels so the user can drag them
+    const containers = this.getPanelContainerMap();
+    for (const key of Object.keys(containers)) {
+      containers[key].setVisible(true);
+    }
+
+    // Build per-panel control strips
+    this.buildHudEditControls();
+  }
+
+  private exitHudEditMode(): void {
+    this.hudEditMode = false;
+    this.hudEditLabel.setVisible(false);
+    this.hudEditSubLabel.setVisible(false);
+
+    // Destroy edit mode controls
+    for (const obj of this.hudEditPanelControls) {
+      obj.destroy();
+    }
+    this.hudEditPanelControls = [];
+
+    // Apply visibility/opacity/scale settings and hide panels that should be hidden
+    this.applyPanelCustomisation();
+    this.saveHudLayout();
+  }
+
+  /**
+   * Apply the stored panelVisibility, panelOpacity and panelScale to the actual containers.
+   * Called when loading layout, exiting edit mode, or resetting layout.
+   */
+  private applyPanelCustomisation(): void {
+    const containers = this.getPanelContainerMap();
+    for (const key of Object.keys(containers)) {
+      const c = containers[key];
+      const scale = this.panelScale[key] ?? 1.0;
+      c.setScale(scale);
+      c.setAlpha(this.panelOpacity[key] ?? 1.0);
+      // Don't force-hide panels that have contextual visibility (target, party).
+      // Those are managed by the game logic. We just store the user preference.
+    }
+  }
+
+  /**
+   * Build floating control strips for each panel during HUD edit mode.
+   * Each panel gets: [Eye] toggle visibility, [O] cycle opacity, [S] cycle scale
+   */
+  private buildHudEditControls(): void {
+    // Clean up any previous controls
+    for (const obj of this.hudEditPanelControls) { obj.destroy(); }
+    this.hudEditPanelControls = [];
+
+    const containers = this.getPanelContainerMap();
+    const cam = this.cameras.main;
+    const CTRL_H = 22;
+    const CTRL_W = 120;
+
+    // Panel-specific screen rect functions (approximate top-left of each panel)
+    const panelRects: Record<string, () => { x: number; y: number }> = {
+      chat: () => ({
+        x: this.CHAT_LEFT_X + this.chatOffset.x,
+        y: cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y,
+      }),
+      actionBar: () => ({
+        x: this.actionBarScreenRect.x + this.actionBarOffset.x,
+        y: this.actionBarScreenRect.y + this.actionBarOffset.y,
+      }),
+      target: () => ({
+        x: 16 + this.targetOffset.x,
+        y: 60 + this.targetOffset.y,
+      }),
+      party: () => ({
+        x: (this.partyPanelTitleHandle?.x ?? 0) + this.partyOffset.x,
+        y: (this.partyPanelTitleHandle?.y ?? 80) + this.partyOffset.y,
+      }),
+      buffs: () => ({
+        x: (this.buffsPanelTitleHandle?.x ?? cam.width - 180) + this.buffsOffset.x,
+        y: (this.buffsPanelTitleHandle?.y ?? 60) + this.buffsOffset.y,
+      }),
+    };
+
+    for (const key of Object.keys(containers)) {
+      const rect = panelRects[key]?.();
+      if (!rect) continue;
+      const ctrlX = rect.x;
+      const ctrlY = rect.y - CTRL_H - 4; // above the panel
+
+      // Background strip
+      const stripBg = this.add.rectangle(ctrlX + CTRL_W / 2, ctrlY + CTRL_H / 2, CTRL_W, CTRL_H, 0x1a1a2e, 0.9)
+        .setStrokeStyle(1, 0x555588).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 311);
+      this.hudEditPanelControls.push(stripBg);
+
+      // [Eye] Visibility toggle
+      const vis = this.panelVisibility[key] ?? true;
+      const eyeBtn = this.add.text(ctrlX + 8, ctrlY + 4, vis ? '👁' : '👁‍🗨', {
+        fontSize: '13px', color: vis ? '#44ff44' : '#ff4444',
+      }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+      eyeBtn.on('pointerdown', () => {
+        this.panelVisibility[key] = !this.panelVisibility[key];
+        eyeBtn.setText(this.panelVisibility[key] ? '👁' : '👁‍🗨');
+        eyeBtn.setColor(this.panelVisibility[key] ? '#44ff44' : '#ff4444');
+        // In edit mode, keep showing the panel even if toggled off (greyed out)
+        containers[key].setAlpha(this.panelVisibility[key] ? (this.panelOpacity[key] ?? 1) : 0.3);
+      });
+      this.hudEditPanelControls.push(eyeBtn);
+
+      // [O] Opacity cycle: 50% → 75% → 100%
+      const opacitySteps = [0.5, 0.75, 1.0];
+      const opLabel = this.add.text(ctrlX + 34, ctrlY + 4, `O:${Math.round((this.panelOpacity[key] ?? 1) * 100)}%`, {
+        fontSize: '11px', color: '#aaaacc',
+      }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+      opLabel.on('pointerdown', () => {
+        const curIdx = opacitySteps.indexOf(this.panelOpacity[key] ?? 1.0);
+        const nextIdx = (curIdx + 1) % opacitySteps.length;
+        this.panelOpacity[key] = opacitySteps[nextIdx];
+        opLabel.setText(`O:${Math.round(opacitySteps[nextIdx] * 100)}%`);
+        if (this.panelVisibility[key]) {
+          containers[key].setAlpha(opacitySteps[nextIdx]);
+        }
+      });
+      this.hudEditPanelControls.push(opLabel);
+
+      // [S] Scale cycle: 0.8x → 1.0x → 1.2x
+      const scaleSteps = [0.8, 1.0, 1.2];
+      const scLabel = this.add.text(ctrlX + 82, ctrlY + 4, `S:${this.panelScale[key] ?? 1.0}x`, {
+        fontSize: '11px', color: '#aaaacc',
+      }).setScrollFactor(0).setDepth(UI_DEPTH_BASE + 312).setInteractive({ useHandCursor: true });
+      scLabel.on('pointerdown', () => {
+        const curIdx = scaleSteps.indexOf(this.panelScale[key] ?? 1.0);
+        const nextIdx = (curIdx + 1) % scaleSteps.length;
+        this.panelScale[key] = scaleSteps[nextIdx];
+        scLabel.setText(`S:${scaleSteps[nextIdx]}x`);
+        containers[key].setScale(scaleSteps[nextIdx]);
+      });
+      this.hudEditPanelControls.push(scLabel);
+    }
   }
 
   /**
@@ -1766,6 +2696,11 @@ export class GameScene extends Phaser.Scene {
       return { x: r.x, y: r.y, w: r.w, h: r.h }; // full bar is the handle
     };
 
+    const getCombatLogHandleRect = () => {
+      const r = this.getCombatLogPanelRect();
+      return { x: r.x, y: r.y, w: r.w, h: this.CL_TITLE_H };
+    };
+
     const getInvHandleRect = () => {
       // Top strip of the combined character+inventory panel block
       return {
@@ -1786,6 +2721,28 @@ export class GameScene extends Phaser.Scene {
       const px = pointer.x;
       const py = pointer.y;
 
+      // ── Options menu interaction (manual hit-rect, same pattern as all panels) ──
+      if (this.optionsMenuOpen) {
+        // Close button (✕)
+        if (hitRect(this.getOptionsCloseRect(), px, py)) {
+          this.toggleOptionsMenu();
+          return;
+        }
+        // Button clicks
+        for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+          if (!this.OPTS_BUTTONS[i].enabled) continue;
+          if (hitRect(this.getOptionsButtonRect(i), px, py)) {
+            this.handleOptionsAction(this.OPTS_BUTTONS[i].action);
+            return;
+          }
+        }
+        // Click outside panel → close
+        if (!hitRect(this.getOptionsPanelRect(), px, py)) {
+          this.toggleOptionsMenu();
+        }
+        return; // don't start panel drags while options menu is open
+      }
+
       // Chat drag handle
       if (hitRect(getChatHandleRect(), px, py)) {
         this.hudDragTarget      = 'chat';
@@ -1795,13 +2752,27 @@ export class GameScene extends Phaser.Scene {
       }
       // Action bar drag handle
       if (hitRect(getActionBarHandleRect(), px, py)) {
-        // Only start drag on the padding area (not on a slot) to avoid blocking skill drops
         const slotHit = this.getActionBarSlotAt(px, py);
         if (slotHit === -1) {
+          // Padding area → reposition the whole bar
           this.hudDragTarget      = 'actionBar';
           this.hudDragStartMouse  = { x: px, y: py };
           this.hudDragStartOffset = { ...this.actionBarOffset };
           return;
+        } else {
+          // Slot area → start skill drag if the slot is occupied
+          const skillId = this.actionBar[slotHit];
+          if (skillId) {
+            const skill = ClientDataManager.instance.getSkill(skillId);
+            this.abDragging = true;
+            this.abDragSourceSlot = slotHit;
+            this.abDragGhost.setText(skill?.iconAbbrev ?? skillId.slice(0, 4));
+            this.abDragGhost.setPosition(px + 16, py);
+            this.abDragGhostBg.setPosition(px + 16, py);
+            this.abDragGhost.setVisible(true);
+            this.abDragGhostBg.setVisible(true);
+            return;
+          }
         }
       }
       // Inventory panel drag handle (only when open)
@@ -1840,9 +2811,109 @@ export class GameScene extends Phaser.Scene {
         this.hudDragStartOffset = { ...this.buffsOffset };
         return;
       }
+      // Combat log: close context menu on left click, or start drag
+      if (this.combatLogContextMenuOpen) {
+        this.handleCombatLogContextClick(px, py);
+        return;
+      }
+      if (hitRect(getCombatLogHandleRect(), px, py)) {
+        this.hudDragTarget      = 'combatLog';
+        this.hudDragStartMouse  = { x: px, y: py };
+        this.hudDragStartOffset = { ...this.combatLogOffset };
+        return;
+      }
+    });
+
+    // ── Combat log: right-click opens context menu ──
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (!pointer.rightButtonDown()) return;
+      const px = pointer.x;
+      const py = pointer.y;
+      const r = this.getCombatLogPanelRect();
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+        this.openCombatLogContextMenu(px, py);
+      } else if (this.combatLogContextMenuOpen) {
+        this.closeCombatLogContextMenu();
+      }
+    });
+
+    // ── Chat + Combat log: mouse wheel scroll ──
+    this.input.on('wheel', (_pointer: Phaser.Input.Pointer, _gos: any[], _dx: number, dy: number) => {
+      const px = _pointer.x;
+      const py = _pointer.y;
+
+      // Chat scroll
+      const cr = this.getChatPanelRect();
+      if (px >= cr.x && px <= cr.x + cr.w && py >= cr.y && py <= cr.y + cr.h) {
+        const maxScroll = Math.max(0, this.chatMessages.length - this.CHAT_VISIBLE_LINES);
+        if (dy < 0) {
+          this.chatScrollOffset = Math.min(maxScroll, this.chatScrollOffset + 3);
+        } else {
+          this.chatScrollOffset = Math.max(0, this.chatScrollOffset - 3);
+        }
+        return;
+      }
+
+      // Combat log scroll
+      const r = this.getCombatLogPanelRect();
+      if (px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h) {
+        const filtered = this.getFilteredCombatLogMessages();
+        const maxScroll = Math.max(0, filtered.length - this.CL_VISIBLE_LINES);
+        if (dy < 0) {
+          // Scroll up (show older messages)
+          this.combatLogScrollOffset = Math.min(maxScroll, this.combatLogScrollOffset + 3);
+        } else {
+          // Scroll down (show newer messages)
+          this.combatLogScrollOffset = Math.max(0, this.combatLogScrollOffset - 3);
+        }
+      }
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      // ── Options menu hover effects ──
+      if (this.optionsMenuOpen) {
+        const mx = pointer.x;
+        const my = pointer.y;
+        let newHover = -1;
+        for (let i = 0; i < this.OPTS_BUTTONS.length; i++) {
+          if (!this.OPTS_BUTTONS[i].enabled) continue;
+          const br = this.getOptionsButtonRect(i);
+          if (mx >= br.x && mx <= br.x + br.w && my >= br.y && my <= br.y + br.h) {
+            newHover = i;
+            break;
+          }
+        }
+        // Check close button
+        const cr = this.getOptionsCloseRect();
+        const overClose = mx >= cr.x && mx <= cr.x + cr.w && my >= cr.y && my <= cr.y + cr.h;
+
+        if (newHover !== this.optionsHoveredIdx) {
+          // Un-hover previous
+          if (this.optionsHoveredIdx >= 0 && this.optionsHoveredIdx < this.optionsButtons.length) {
+            this.optionsButtons[this.optionsHoveredIdx].bg.setFillStyle(0x2a2a3e);
+            this.optionsButtons[this.optionsHoveredIdx].text.setColor('#cccccc');
+          }
+          // Hover new
+          if (newHover >= 0) {
+            this.optionsButtons[newHover].bg.setFillStyle(0x3a3a4e);
+            this.optionsButtons[newHover].text.setColor('#ffcc00');
+          }
+          this.optionsHoveredIdx = newHover;
+        }
+        // Close btn hover
+        if (this.optionsCloseText) {
+          this.optionsCloseText.setColor(overClose ? '#ff6666' : '#888888');
+        }
+        return; // don't process drag while options menu is open
+      }
+
+      // Action-bar slot drag ghost
+      if (this.abDragging) {
+        this.abDragGhost.setPosition(pointer.x + 16, pointer.y);
+        this.abDragGhostBg.setPosition(pointer.x + 16, pointer.y);
+        return;
+      }
+
       if (!this.hudDragTarget) return;
       const dx = pointer.x - this.hudDragStartMouse.x;
       const dy = pointer.y - this.hudDragStartMouse.y;
@@ -1879,10 +2950,37 @@ export class GameScene extends Phaser.Scene {
         case 'buffs':
           this.buffsOffset = newOffset;
           break;
+        case 'combatLog':
+          this.combatLogOffset = newOffset;
+          break;
       }
     });
 
-    this.input.on('pointerup', () => {
+    this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+      // ── Action-bar skill drag drop ──────────────────────────
+      if (this.abDragging) {
+        const src = this.abDragSourceSlot;
+        const dest = this.getActionBarSlotAt(pointer.x, pointer.y);
+        if (dest >= 0 && dest !== src) {
+          // Dropped on another slot → swap
+          const tmp = this.actionBar[dest];
+          this.actionBar[dest] = this.actionBar[src];
+          this.actionBar[src] = tmp;
+          this.network.sendSetActionBar(this.actionBar);
+        } else if (dest === -1) {
+          // Dropped outside the action bar → remove from source slot
+          this.actionBar[src] = '';
+          this.network.sendSetActionBar(this.actionBar);
+        }
+        // dest === src → no-op (dropped back on same slot)
+        this.abDragging = false;
+        this.abDragSourceSlot = -1;
+        this.abDragGhost.setVisible(false);
+        this.abDragGhostBg.setVisible(false);
+        return;
+      }
+
+      // ── HUD panel repositioning drag end ────────────────────
       if (!this.hudDragTarget) return;
       this.hudDragTarget = null;
       this.saveHudLayout();
@@ -2026,7 +3124,7 @@ export class GameScene extends Phaser.Scene {
         const sid = this.partySlotSessionIds[slotIndex];
         if (!sid) return;
         this.entityClickConsumed = true;
-        this.inputManager.suppressNextMelee = true;
+        this.inputManager.suppressNextClick = true;
         if (this.currentTargetId === sid && this.currentTargetType === 'player') {
           this.clearTarget();
         } else {
@@ -2536,6 +3634,8 @@ export class GameScene extends Phaser.Scene {
     this.currentTargetId = null;
     this.currentTargetType = null;
     this.targetNameplateContainer?.setVisible(false);
+    // Stop auto-attack when target is cleared
+    this.network.sendStopAutoAttack();
   }
 
   private createInventoryPanel(): void {
@@ -2710,7 +3810,7 @@ export class GameScene extends Phaser.Scene {
     this.invContainer.add(equipLabel);
     y += 16;
 
-    const slotLabels = ['Weapon', 'Helm', 'Chest', 'Legs', 'Boots', 'Ring'];
+    const slotLabels = EQUIP_SLOTS.map(sl => sl.charAt(0).toUpperCase() + sl.slice(1));
     this.charEquipTexts = [];
     this.equipSlotYPositions = [];
     for (let i = 0; i < slotLabels.length; i++) {
@@ -3002,7 +4102,7 @@ export class GameScene extends Phaser.Scene {
    * Get the equipment slot type at a given screen position, or null if none.
    */
   private getEquipSlotAt(px: number, py: number): string | null {
-    const slotTypes = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+    const slotTypes = EQUIP_SLOTS;
     const rowH = 14;
     for (let i = 0; i < this.equipSlotYPositions.length; i++) {
       const slotY = this.equipSlotYPositions[i];
@@ -3059,8 +4159,7 @@ export class GameScene extends Phaser.Scene {
     // Check equip slot hover
     const equipSlot = this.getEquipSlotAt(px, py);
     if (equipSlot) {
-      const slotTypes = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
-      const idx = slotTypes.indexOf(equipSlot);
+      const idx = (EQUIP_SLOTS as string[]).indexOf(equipSlot);
       if (idx >= 0) {
         const slotY = this.equipSlotYPositions[idx];
         const rx = this.charX + 5;
@@ -3164,7 +4263,7 @@ export class GameScene extends Phaser.Scene {
     this.charInfoText.setText(info);
 
     // ── Equipment Slots ──
-    const slotKeys = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+    const slotKeys = EQUIP_SLOTS;
     for (let i = 0; i < slotKeys.length; i++) {
       const equippedId = this.localEquipment[slotKeys[i]] || '';
       if (equippedId) {
@@ -3329,6 +4428,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // Culling runs before the early-out: the camera can move (and the map
+    // therefore needs re-culling) while the player is dead or still connecting.
+    this.cullTiles();
+
     if (!this.connected || !this.playerSprite) return;
 
     const dt = delta / 1000;
@@ -3341,9 +4444,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     // ── Skip gameplay input while any UI panel or chat is open ─
-    if (this.inventoryOpen || this.skillsPaneOpen || this.chatInputActive) {
+    if (this.inventoryOpen || this.skillsPaneOpen || this.chatInputActive || this.optionsMenuOpen || this.hudEditMode) {
       this.inputManager.clearFire();
-    } else if (!this.inventoryOpen && !this.skillsPaneOpen && !this.chatInputActive) {
+    } else if (!this.inventoryOpen && !this.skillsPaneOpen && !this.chatInputActive && !this.optionsMenuOpen && !this.hudEditMode) {
       // ── Sample input ────────────────────────────────────────
       const input = this.inputManager.getInput(this.localX, this.localY);
 
@@ -3388,16 +4491,20 @@ export class GameScene extends Phaser.Scene {
         // Directional sprite animation based on movement
         const moveDir = this.getMovementDir(input);
         this.playerSprite.rotation = 0;
-        if (moveDir) {
+
+        // Movement cancels action animations
+        if (this.isPlayingActionAnim && moveDir) {
+          this.stopActionAnimation();
+        }
+
+        if (this.isPlayingActionAnim) {
+          // Let action animation play through
+        } else if (moveDir) {
           this.lastFacingDir = moveDir;
-          if (this.playerSprite.anims.getName() !== `walk_${moveDir}` || !this.playerSprite.anims.isPlaying) {
-            this.playerSprite.play(`walk_${moveDir}`, true);
-          }
+          playCharacterAnim(this, this.playerSprite, this.localClassId, 'walk', moveDir as PaperdollDir);
         } else {
-          const idleKey = `idle_${this.lastFacingDir}`;
-          if (this.playerSprite.anims.getName() !== idleKey || !this.playerSprite.anims.isPlaying) {
-            this.playerSprite.play(idleKey, true);
-          }
+          playCharacterAnim(this, this.playerSprite, this.localClassId, 'idle',
+                            this.lastFacingDir as PaperdollDir);
         }
 
         // ── Draw aim line ─────────────────────────────────────
@@ -3428,6 +4535,7 @@ export class GameScene extends Phaser.Scene {
     this.drawActionBar();
     this.drawCastBar();
     this.drawChatPanel();
+    this.drawCombatLogPanel();
     this.updateTargetNameplate();
     this.updatePartyPanel();
     this.updateBuffsPanel();
@@ -3604,6 +4712,12 @@ export class GameScene extends Phaser.Scene {
     this.chatInputBgGfx = this.add.graphics();
     this.chatContainer.add(this.chatInputBgGfx);
 
+    // Scrollbar graphics (drawn on top of background)
+    this.chatScrollGfx = this.add.graphics();
+    this.chatScrollGfx.setScrollFactor(0);
+    this.chatScrollGfx.setDepth(UI_DEPTH_BASE + 22);
+    this.chatContainer.add(this.chatScrollGfx);
+
     // Channel label (e.g. "[General]")
     this.chatChannelLabel = this.add.text(0, 0, '[General]', {
       fontSize: '10px',
@@ -3622,7 +4736,7 @@ export class GameScene extends Phaser.Scene {
         color: '#ffffff',
         stroke: '#000000',
         strokeThickness: 1,
-        wordWrap: { width: this.chatEffectiveW - this.CHAT_PAD * 2 },
+        wordWrap: { width: this.chatEffectiveW - this.CHAT_PAD * 2 - this.CHAT_SCROLLBAR_W },
       });
       t.setScrollFactor(0);
       t.setDepth(UI_DEPTH_BASE + 21);
@@ -3667,6 +4781,327 @@ export class GameScene extends Phaser.Scene {
     this.chatInputDisplay.setPosition(panelX + this.CHAT_PAD + 14, inputY + 3);
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ██  COMBAT LOG PANEL
+  // ══════════════════════════════════════════════════════════
+
+  private createCombatLogPanel(): void {
+    const cam = this.cameras.main;
+    this.CL_VISIBLE_LINES = Math.floor((this.CL_H - this.CL_TITLE_H - this.CL_PAD) / this.CL_LINE_H);
+
+    this.combatLogContainer = this.add.container(0, 0);
+    this.combatLogContainer.setScrollFactor(0);
+    this.combatLogContainer.setDepth(UI_DEPTH_BASE + 22);
+
+    // Background
+    this.combatLogBgGfx = this.add.graphics();
+    this.combatLogContainer.add(this.combatLogBgGfx);
+
+    // Scrollbar
+    this.combatLogScrollGfx = this.add.graphics();
+    this.combatLogContainer.add(this.combatLogScrollGfx);
+
+    // Title text
+    this.combatLogTitleText = this.add.text(0, 0, 'Combat Log', {
+      fontSize: '10px',
+      color: '#cc8844',
+      stroke: '#000000',
+      strokeThickness: 1,
+    });
+    this.combatLogTitleText.setScrollFactor(0);
+    this.combatLogTitleText.setDepth(UI_DEPTH_BASE + 23);
+    this.combatLogContainer.add(this.combatLogTitleText);
+
+    // Pre-allocate message text objects
+    const textW = this.CL_W - this.CL_PAD * 2 - this.CL_SCROLLBAR_W;
+    for (let i = 0; i < this.CL_VISIBLE_LINES; i++) {
+      const t = this.add.text(0, 0, '', {
+        fontSize: '10px',
+        color: '#ffffff',
+        stroke: '#000000',
+        strokeThickness: 1,
+        wordWrap: { width: textW },
+      });
+      t.setScrollFactor(0);
+      t.setDepth(UI_DEPTH_BASE + 23);
+      t.setVisible(false);
+      this.combatLogContainer.add(t);
+      this.combatLogMessageTexts.push(t);
+    }
+
+    // Context menu graphics (starts hidden, positioned on right-click)
+    this.combatLogContextGfx = this.add.graphics();
+    this.combatLogContextGfx.setScrollFactor(0);
+    this.combatLogContextGfx.setDepth(UI_DEPTH_BASE + 310);
+    this.combatLogContextGfx.setVisible(false);
+  }
+
+  /** Get the default screen position of the combat log panel (top-right area). */
+  private getCombatLogDefaultPos(): { x: number; y: number } {
+    const cam = this.cameras.main;
+    return { x: cam.width - this.CL_W - 12, y: 12 };
+  }
+
+  /** Get the chat panel rect (for scroll / drag hit-testing). */
+  private getChatPanelRect(): { x: number; y: number; w: number; h: number } {
+    const cam = this.cameras.main;
+    return {
+      x: this.CHAT_LEFT_X + this.chatOffset.x,
+      y: cam.height - this.CHAT_H - this.CHAT_BOTTOM_MARGIN + this.chatOffset.y,
+      w: this.chatEffectiveW,
+      h: this.CHAT_H,
+    };
+  }
+
+  /** Get the combat log panel rect (for drag detection). */
+  private getCombatLogPanelRect(): { x: number; y: number; w: number; h: number } {
+    const def = this.getCombatLogDefaultPos();
+    return {
+      x: def.x + this.combatLogOffset.x,
+      y: def.y + this.combatLogOffset.y,
+      w: this.CL_W,
+      h: this.CL_H,
+    };
+  }
+
+  /** Resolve an entity ID (player/NPC session or state ID) to a display name. */
+  private getCombatEntityName(id: string): string {
+    if (id === this.network.sessionId) return 'You';
+    // Check party members
+    const partyMember = this.partyMembers.find(m => m.sessionId === id);
+    if (partyMember) return partyMember.characterName;
+    // Check other players
+    const cached = this.remotePlayerCache.get(id);
+    if (cached) return cached.characterName || id.slice(0, 6);
+    // Check NPCs
+    const npc = this.npcCache.get(id);
+    if (npc) return npc.name || 'NPC';
+    return id.slice(0, 6);
+  }
+
+  /** Check if a given entity is the local player or a party member. */
+  private isLocalOrParty(id: string): boolean {
+    if (id === this.network.sessionId) return true;
+    return this.partyMembers.some(m => m.sessionId === id);
+  }
+
+  /** Push a combat log entry. Respects max message cap. */
+  private pushCombatLog(text: string, color: string, type: string): void {
+    this.combatLogMessages.push({ text, color, type });
+    if (this.combatLogMessages.length > this.CL_MAX_MESSAGES) {
+      this.combatLogMessages.shift();
+      // Adjust scroll offset if we pruned from the top
+      if (this.combatLogScrollOffset > 0) {
+        this.combatLogScrollOffset = Math.max(0, this.combatLogScrollOffset - 1);
+      }
+    }
+    // Auto-scroll to bottom if already near the bottom
+    if (this.combatLogScrollOffset <= 2) {
+      this.combatLogScrollOffset = 0;
+    }
+  }
+
+  /** Get filtered messages for display. */
+  private getFilteredCombatLogMessages(): { text: string; color: string; type: string }[] {
+    return this.combatLogMessages.filter(m => this.combatLogFilters[m.type] !== false);
+  }
+
+  private drawCombatLogPanel(): void {
+    const cam = this.cameras.main;
+    const def = this.getCombatLogDefaultPos();
+    const panelX = def.x + this.combatLogOffset.x;
+    const panelY = def.y + this.combatLogOffset.y;
+
+    // Draw background
+    this.combatLogBgGfx.clear();
+    this.combatLogBgGfx.setPosition(panelX, panelY);
+    this.combatLogBgGfx.fillStyle(0x0a0a1a, 0.78);
+    this.combatLogBgGfx.fillRect(0, 0, this.CL_W, this.CL_H);
+    this.combatLogBgGfx.lineStyle(1, 0x553322, 0.9);
+    this.combatLogBgGfx.strokeRect(0, 0, this.CL_W, this.CL_H);
+    // Title strip
+    this.combatLogBgGfx.fillStyle(0x1a1008, 0.6);
+    this.combatLogBgGfx.fillRect(0, 0, this.CL_W, this.CL_TITLE_H);
+
+    this.combatLogTitleText.setPosition(panelX + this.CL_PAD, panelY + 3);
+
+    // Get filtered messages
+    const filtered = this.getFilteredCombatLogMessages();
+    const totalFiltered = filtered.length;
+    const maxScroll = Math.max(0, totalFiltered - this.CL_VISIBLE_LINES);
+    // Clamp scroll offset
+    if (this.combatLogScrollOffset > maxScroll) this.combatLogScrollOffset = maxScroll;
+
+    // Show messages — bottom-up layout so word-wrapped lines don't overlap.
+    const msgAreaTopY    = panelY + this.CL_TITLE_H + 2;
+    const msgAreaBottomY = panelY + this.CL_H - 4;
+    const startIdx = Math.max(0, totalFiltered - this.CL_VISIBLE_LINES - this.combatLogScrollOffset);
+
+    // Pass 1: populate slots with content (slot 0 = oldest visible, slot N-1 = newest).
+    for (let i = 0; i < this.CL_VISIBLE_LINES; i++) {
+      const t = this.combatLogMessageTexts[i];
+      const msgIdx = startIdx + i;
+      if (msgIdx >= 0 && msgIdx < totalFiltered) {
+        const msg = filtered[msgIdx];
+        t.setText(msg.text);
+        t.setColor(msg.color);
+        t.setVisible(true);
+      } else {
+        t.setText('');
+        t.setVisible(false);
+      }
+    }
+
+    // Pass 2: read actual rendered heights and stack from bottom up.
+    let curY = msgAreaBottomY;
+    for (let i = this.CL_VISIBLE_LINES - 1; i >= 0; i--) {
+      const t = this.combatLogMessageTexts[i];
+      if (!t.text) { t.setVisible(false); continue; }
+      const h = Math.max(this.CL_LINE_H, t.height);
+      curY -= h;
+      if (curY < msgAreaTopY) {
+        t.setVisible(false); // would overflow into the title bar — hide it
+      } else {
+        t.setPosition(panelX + this.CL_PAD, curY);
+        t.setVisible(true);
+      }
+    }
+
+    // Draw scrollbar
+    this.combatLogScrollGfx.clear();
+    this.combatLogScrollGfx.setPosition(panelX, panelY);
+    const sbX = this.CL_W - this.CL_SCROLLBAR_W - 2;
+    const sbY = this.CL_TITLE_H + 2;
+    const sbH = this.CL_H - this.CL_TITLE_H - 4;
+
+    // Track background
+    this.combatLogScrollGfx.fillStyle(0x222233, 0.5);
+    this.combatLogScrollGfx.fillRect(sbX, sbY, this.CL_SCROLLBAR_W, sbH);
+
+    if (totalFiltered > this.CL_VISIBLE_LINES) {
+      // Thumb
+      const thumbRatio = this.CL_VISIBLE_LINES / totalFiltered;
+      const thumbH = Math.max(16, sbH * thumbRatio);
+      const scrollFraction = maxScroll > 0 ? (maxScroll - this.combatLogScrollOffset) / maxScroll : 1;
+      const thumbY = sbY + (sbH - thumbH) * scrollFraction;
+
+      this.combatLogScrollGfx.fillStyle(0x886644, 0.8);
+      this.combatLogScrollGfx.fillRoundedRect(sbX, thumbY, this.CL_SCROLLBAR_W, thumbH, 3);
+    }
+
+    // Draw context menu if open
+    if (this.combatLogContextMenuOpen) {
+      this.drawCombatLogContextMenu();
+    }
+  }
+
+  // ── Combat Log: Context Menu (right-click filter toggles) ──
+
+  private readonly CL_FILTER_LABELS: { key: string; label: string; color: string }[] = [
+    { key: 'outDmg', label: 'Your Damage', color: '#ffcc44' },
+    { key: 'inDmg',  label: 'Damage Taken', color: '#ff6644' },
+    { key: 'misses', label: 'Misses', color: '#999999' },
+    { key: 'dodges', label: 'Dodges', color: '#ffffff' },
+    { key: 'blocks', label: 'Blocks', color: '#4488ff' },
+    { key: 'deaths', label: 'Deaths', color: '#ff4444' },
+    { key: 'heals',  label: 'Healing', color: '#44ff44' },
+    { key: 'buffs',  label: 'Buffs & Debuffs', color: '#88ccff' },
+    { key: 'xp',     label: 'XP Rewards', color: '#ffaa00' },
+    { key: 'party',  label: 'Party Combat', color: '#aabb88' },
+  ];
+
+  private openCombatLogContextMenu(x: number, y: number): void {
+    this.combatLogContextMenuOpen = true;
+    this.combatLogContextMenuPos = { x, y };
+    this.combatLogContextGfx.setVisible(true);
+
+    // Destroy old text objects
+    for (const t of this.combatLogContextTexts) t.destroy();
+    this.combatLogContextTexts = [];
+
+    const rowH = 20;
+    const menuW = 150;
+    const menuH = this.CL_FILTER_LABELS.length * rowH + 8;
+
+    // Clamp menu position to screen
+    const cam = this.cameras.main;
+    const menuX = Math.min(x, cam.width - menuW - 4);
+    const menuY = Math.min(y, cam.height - menuH - 4);
+
+    this.combatLogContextGfx.clear();
+    this.combatLogContextGfx.fillStyle(0x1a1a2e, 0.97);
+    this.combatLogContextGfx.fillRoundedRect(menuX, menuY, menuW, menuH, 4);
+    this.combatLogContextGfx.lineStyle(1, 0x886644, 1);
+    this.combatLogContextGfx.strokeRoundedRect(menuX, menuY, menuW, menuH, 4);
+
+    for (let i = 0; i < this.CL_FILTER_LABELS.length; i++) {
+      const f = this.CL_FILTER_LABELS[i];
+      const ry = menuY + 4 + i * rowH;
+
+      // Checkbox square
+      const checked = this.combatLogFilters[f.key] !== false;
+      this.combatLogContextGfx.fillStyle(checked ? 0x886644 : 0x333344, 1);
+      this.combatLogContextGfx.fillRect(menuX + 8, ry + 4, 12, 12);
+      if (checked) {
+        this.combatLogContextGfx.lineStyle(2, 0xffffff, 1);
+        this.combatLogContextGfx.lineBetween(menuX + 10, ry + 10, menuX + 13, ry + 14);
+        this.combatLogContextGfx.lineBetween(menuX + 13, ry + 14, menuX + 18, ry + 6);
+        this.combatLogContextGfx.lineStyle(1, 0x886644, 1); // reset
+      }
+
+      const label = this.add.text(menuX + 26, ry + 3, f.label, {
+        fontSize: '10px',
+        color: f.color,
+        stroke: '#000000',
+        strokeThickness: 1,
+      });
+      label.setScrollFactor(0);
+      label.setDepth(UI_DEPTH_BASE + 311);
+      this.combatLogContextTexts.push(label);
+    }
+  }
+
+  private closeCombatLogContextMenu(): void {
+    this.combatLogContextMenuOpen = false;
+    this.combatLogContextGfx.setVisible(false);
+    for (const t of this.combatLogContextTexts) t.destroy();
+    this.combatLogContextTexts = [];
+  }
+
+  private drawCombatLogContextMenu(): void {
+    // The menu is drawn in openCombatLogContextMenu and stays static until closed
+    // This is called from drawCombatLogPanel to keep it visible
+  }
+
+  /** Handle a click inside the context menu. Returns true if consumed. */
+  private handleCombatLogContextClick(px: number, py: number): boolean {
+    if (!this.combatLogContextMenuOpen) return false;
+
+    const rowH = 20;
+    const menuW = 150;
+    const menuH = this.CL_FILTER_LABELS.length * rowH + 8;
+    const cam = this.cameras.main;
+    const menuX = Math.min(this.combatLogContextMenuPos.x, cam.width - menuW - 4);
+    const menuY = Math.min(this.combatLogContextMenuPos.y, cam.height - menuH - 4);
+
+    // Check if click is inside menu
+    if (px >= menuX && px <= menuX + menuW && py >= menuY && py <= menuY + menuH) {
+      // Which row?
+      const rowIdx = Math.floor((py - menuY - 4) / rowH);
+      if (rowIdx >= 0 && rowIdx < this.CL_FILTER_LABELS.length) {
+        const key = this.CL_FILTER_LABELS[rowIdx].key;
+        this.combatLogFilters[key] = !this.combatLogFilters[key];
+        // Redraw menu
+        this.closeCombatLogContextMenu();
+        this.openCombatLogContextMenu(this.combatLogContextMenuPos.x, this.combatLogContextMenuPos.y);
+      }
+      return true;
+    }
+    // Clicked outside menu — close it
+    this.closeCombatLogContextMenu();
+    return true;
+  }
+
   private drawChatPanel(): void {
     const cam = this.cameras.main;
     const panelX = this.CHAT_LEFT_X + this.chatOffset.x;
@@ -3681,7 +5116,7 @@ export class GameScene extends Phaser.Scene {
     // Update word-wrap on text objects only when width actually changes
     if (newW !== this.chatEffectiveW) {
       this.chatEffectiveW = newW;
-      const wrapW = newW - this.CHAT_PAD * 2;
+      const wrapW = newW - this.CHAT_PAD * 2 - this.CHAT_SCROLLBAR_W;
       for (const t of this.chatMessageTexts) {
         t.setWordWrapWidth(wrapW);
       }
@@ -3701,14 +5136,18 @@ export class GameScene extends Phaser.Scene {
     this.chatChannelLabel.setPosition(panelX + this.CHAT_PAD, panelY + 3);
 
     // Messages — bottom-up layout so word-wrapped lines don't overlap.
-    // Pass 1: populate slots with content (slot N-1 = newest = bottom).
     const msgAreaTopY    = panelY + 18;
     const msgAreaBottomY = panelY + this.CHAT_H - this.CHAT_INPUT_H - 4;
-    const start = Math.max(0, this.chatMessages.length - this.CHAT_VISIBLE_LINES);
+    const totalMsgs = this.chatMessages.length;
+    const maxScroll = Math.max(0, totalMsgs - this.CHAT_VISIBLE_LINES);
+    if (this.chatScrollOffset > maxScroll) this.chatScrollOffset = maxScroll;
+
+    // Pass 1: populate slots (slot 0 = oldest visible, slot N-1 = newest visible).
+    const start = Math.max(0, totalMsgs - this.CHAT_VISIBLE_LINES - this.chatScrollOffset);
     for (let i = 0; i < this.CHAT_VISIBLE_LINES; i++) {
       const t = this.chatMessageTexts[i];
       const msgIndex = start + i;
-      if (msgIndex < this.chatMessages.length) {
+      if (msgIndex < totalMsgs) {
         const msg = this.chatMessages[msgIndex];
         t.setText(msg.text);
         t.setColor(msg.color);
@@ -3731,6 +5170,23 @@ export class GameScene extends Phaser.Scene {
         t.setPosition(panelX + this.CHAT_PAD, curY);
         t.setVisible(true);
       }
+    }
+
+    // Scrollbar
+    this.chatScrollGfx.clear();
+    this.chatScrollGfx.setPosition(panelX, panelY);
+    const sbX = this.chatEffectiveW - this.CHAT_SCROLLBAR_W - 2;
+    const sbY = 18;
+    const sbH = this.CHAT_H - 18 - this.CHAT_INPUT_H - 4;
+    this.chatScrollGfx.fillStyle(0x222233, 0.5);
+    this.chatScrollGfx.fillRect(sbX, sbY, this.CHAT_SCROLLBAR_W, sbH);
+    if (totalMsgs > this.CHAT_VISIBLE_LINES) {
+      const thumbRatio = this.CHAT_VISIBLE_LINES / totalMsgs;
+      const thumbH = Math.max(16, sbH * thumbRatio);
+      const scrollFraction = maxScroll > 0 ? (maxScroll - this.chatScrollOffset) / maxScroll : 1;
+      const thumbY = sbY + (sbH - thumbH) * scrollFraction;
+      this.chatScrollGfx.fillStyle(0x446688, 0.8);
+      this.chatScrollGfx.fillRoundedRect(sbX, thumbY, this.CHAT_SCROLLBAR_W, thumbH, 3);
     }
 
     // Input area
@@ -3852,6 +5308,14 @@ export class GameScene extends Phaser.Scene {
     this.chatMessages.push({ text, color });
     if (this.chatMessages.length > this.CHAT_MAX_MESSAGES) {
       this.chatMessages.shift();
+      // Adjust scroll offset if we pruned from the top
+      if (this.chatScrollOffset > 0) {
+        this.chatScrollOffset = Math.max(0, this.chatScrollOffset - 1);
+      }
+    }
+    // Auto-scroll to bottom if already near the bottom
+    if (this.chatScrollOffset <= 2) {
+      this.chatScrollOffset = 0;
     }
   }
 
@@ -3957,8 +5421,13 @@ export class GameScene extends Phaser.Scene {
       }
       this.actionBarGfx.fillRect(sx, sy, this.AB_SLOT_SIZE, this.AB_SLOT_SIZE);
 
-      // Slot border
-      this.actionBarGfx.lineStyle(1, skill ? 0x888888 : 0x444466, 1);
+      // Slot border — glow green when auto-attack is active on this slot
+      const isActiveAutoAttack = skill?.isAutoAttack && this.localAutoAttackActive && this.localAutoAttackSkillId === skillId;
+      if (isActiveAutoAttack) {
+        this.actionBarGfx.lineStyle(2, 0x44ff44, 1);
+      } else {
+        this.actionBarGfx.lineStyle(1, skill ? 0x888888 : 0x444466, 1);
+      }
       this.actionBarGfx.strokeRect(sx, sy, this.AB_SLOT_SIZE, this.AB_SLOT_SIZE);
 
       // Skill text
@@ -4140,6 +5609,24 @@ export class GameScene extends Phaser.Scene {
     this.skillDragGhost.setVisible(false);
     this.skillDragGhost.setDepth(UI_DEPTH_BASE + 900);
     this.skillsPaneContainer.add(this.skillDragGhost);
+
+    // Action-bar slot drag ghost — added directly to scene (visible even when skills pane is closed)
+    this.abDragGhostBg = this.add.rectangle(0, 0, 52, 22, 0x000000, 0.85);
+    this.abDragGhostBg.setStrokeStyle(1, 0xffcc00);
+    this.abDragGhostBg.setScrollFactor(0);
+    this.abDragGhostBg.setVisible(false);
+    this.abDragGhostBg.setDepth(UI_DEPTH_BASE + 899);
+
+    this.abDragGhost = this.add.text(0, 0, '', {
+      fontSize: '11px',
+      color: '#ffcc00',
+      stroke: '#000000',
+      strokeThickness: 2,
+    });
+    this.abDragGhost.setOrigin(0.5, 0.5);
+    this.abDragGhost.setScrollFactor(0);
+    this.abDragGhost.setVisible(false);
+    this.abDragGhost.setDepth(UI_DEPTH_BASE + 900);
 
     // Skill tooltip (shown on hover)
     this.skillTooltipContainer = this.add.container(0, 0);
@@ -4757,6 +6244,18 @@ export class GameScene extends Phaser.Scene {
 
     // Build stat bonus lines
     const statLines: string[] = [];
+
+    // Weapon-specific stats — shown first, before generic stat bonuses
+    if (template.equipSlot === 'weapon') {
+      if (template.attackDamage) {
+        statLines.push(`+${template.attackDamage} Attack Damage`);
+      }
+      if (template.attackSpeedMs) {
+        const speedSec = (template.attackSpeedMs / 1000).toFixed(2);
+        statLines.push(`${speedSec}s Attack Speed`);
+      }
+    }
+
     if (template.statBonuses) {
       const STAT_LABELS: Record<string, string> = {
         hp: 'HP',

@@ -34,5 +34,27 @@ export var MessageType;
     MessageType["NPC_DIED"] = "npcDied";
     // ── Chat ──
     MessageType["CHAT_MESSAGE"] = "chatMessage";
+    // ── Leveling ──
+    MessageType["LEVEL_UP"] = "levelUp";
+    // ── Loot ──
+    MessageType["LOOT_ITEM"] = "lootItem";
+    MessageType["LOOT_ALL"] = "lootAll";
+    // Server → client confirmation: refresh loot panel + inventory immediately
+    MessageType["LOOT_SUCCESS"] = "lootSuccess";
+    // ── Auto-Attack ──
+    MessageType["START_AUTO_ATTACK"] = "startAutoAttack";
+    MessageType["STOP_AUTO_ATTACK"] = "stopAutoAttack";
+    MessageType["AUTO_ATTACK_HIT"] = "autoAttackHit";
+    MessageType["AUTO_ATTACK_STARTED"] = "autoAttackStarted";
+    MessageType["AUTO_ATTACK_STOPPED"] = "autoAttackStopped";
+    // ── XP ──
+    MessageType["XP_GAINED"] = "xpGained";
+    // ── Party ──
+    MessageType["PARTY_INVITE"] = "partyInvite";
+    MessageType["PARTY_ACCEPT"] = "partyAccept";
+    MessageType["PARTY_DECLINE"] = "partyDecline";
+    MessageType["PARTY_LEAVE"] = "partyLeave";
+    MessageType["PARTY_UPDATE"] = "partyUpdate";
+    MessageType["PARTY_KICKED"] = "partyKicked";
 })(MessageType || (MessageType = {}));
 //# sourceMappingURL=types.js.map

@@ -19,6 +19,12 @@ const BCRYPT_ROUNDS = 10;
 export interface JwtPayload {
   userId: number;
   username: string;
+  /**
+   * Token expiry as a unix-ms timestamp. Present on payloads returned by
+   * verifyToken(); never passed in when signing (the `exp` claim is set from
+   * JWT_EXPIRY instead).
+   */
+  expiresAt?: number;
 }
 
 export interface AuthResult {
@@ -105,12 +111,17 @@ export async function login(username: string, password: string): Promise<AuthRes
 
 /**
  * Verify and decode a JWT token.
+ * `expiresAt` is the `exp` claim converted to unix ms (undefined if absent).
  * @throws Error if token is invalid or expired.
  */
 export function verifyToken(token: string): JwtPayload {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    return { userId: decoded.userId, username: decoded.username };
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload & { exp?: number };
+    return {
+      userId: decoded.userId,
+      username: decoded.username,
+      expiresAt: typeof decoded.exp === 'number' ? decoded.exp * 1000 : undefined,
+    };
   } catch {
     throw new Error('Invalid or expired token.');
   }

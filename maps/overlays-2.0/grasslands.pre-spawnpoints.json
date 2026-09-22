@@ -1,0 +1,132 @@
+{
+  "version": "2.0",
+  "units": "cm",
+  "zoneId": "grasslands",
+  "spawnPoints": [
+    {
+      "id": "player_spawn_grasslands_0",
+      "type": "player_spawn",
+      "x": 1952.0,
+      "y": 672.0,
+      "label": "Grasslands spawn 0"
+    },
+    {
+      "id": "player_spawn_grasslands_1",
+      "type": "player_spawn",
+      "x": 2144.0,
+      "y": 672.0,
+      "label": "Grasslands spawn 1"
+    },
+    {
+      "id": "player_spawn_grasslands_2",
+      "type": "player_spawn",
+      "x": 1952.0,
+      "y": 1120.0,
+      "label": "Grasslands spawn 2"
+    },
+    {
+      "id": "player_spawn_grasslands_3",
+      "type": "player_spawn",
+      "x": 2144.0,
+      "y": 1120.0,
+      "label": "Grasslands spawn 3"
+    },
+    {
+      "id": "portal_to_desert",
+      "type": "portal",
+      "x": 4000.0,
+      "y": 864.0,
+      "targetZone": "desert",
+      "targetEntry": "entry_from_grasslands",
+      "label": "Scorched Desert"
+    },
+    {
+      "id": "entry_from_desert",
+      "type": "zone_entry",
+      "x": 3680.0,
+      "y": 864.0,
+      "fromZone": "desert",
+      "label": "From Scorched Desert"
+    },
+    {
+      "id": "enemy_field_west",
+      "type": "enemy_spawn",
+      "x": 672.0,
+      "y": 1440.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 320,
+      "label": "West field"
+    },
+    {
+      "id": "enemy_field_east",
+      "type": "enemy_spawn",
+      "x": 3232.0,
+      "y": 1696.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 320,
+      "label": "East field"
+    },
+    {
+      "id": "enemy_lakeside",
+      "type": "enemy_spawn",
+      "x": 1120.0,
+      "y": 2720.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 260,
+      "label": "Lakeside"
+    },
+    {
+      "id": "enemy_north_road",
+      "type": "enemy_spawn",
+      "x": 2080.0,
+      "y": 2336.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 220,
+      "label": "North road"
+    },
+    {
+      "id": "enemy_ruin_yard",
+      "type": "enemy_spawn",
+      "x": 3360.0,
+      "y": 3296.0,
+      "templateId": "npc_1771431708366",
+      "count": 3,
+      "radius": 300,
+      "label": "Ruin courtyard"
+    },
+    {
+      "id": "enemy_woods",
+      "type": "enemy_spawn",
+      "x": 1376.0,
+      "y": 3680.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 280,
+      "label": "North woods"
+    },
+    {
+      "id": "enemy_south_road",
+      "type": "enemy_spawn",
+      "x": 2080.0,
+      "y": 224.0,
+      "templateId": "npc_1771431708366",
+      "count": 2,
+      "radius": 200,
+      "label": "South gate road"
+    },
+    {
+      "id": "npc_merchant",
+      "type": "npc_spawn",
+      "x": 2208.0,
+      "y": 800.0,
+      "templateId": "npc_1771709765831",
+      "count": 1,
+      "radius": 0,
+      "label": "Bjorn the Trader"
+    }
+  ]
+}

@@ -2,8 +2,12 @@ import Phaser from 'phaser';
 import { InputPayload, isoToOrtho } from '@valhalla/shared';
 
 /**
- * Captures WASD keyboard input, mouse aim, combat inputs (fire/melee),
+ * Captures WASD keyboard input, mouse aim,
  * action bar keys (1-8), and UI toggle keys (K for skills pane).
+ *
+ * Auto-attack (melee/ranged) is now triggered via the action bar or
+ * entity-click handlers in GameScene, which send START_AUTO_ATTACK
+ * messages directly. This class no longer queues fire/melee flags.
  */
 export class InputManager {
   private scene: Phaser.Scene;
@@ -16,17 +20,17 @@ export class InputManager {
   };
   private seq: number = 0;
 
-  // Fire state: true on the frame the right mouse button was pressed (Ranger only)
-  private fireQueued: boolean = false;
-  // Melee state: true on the frame the left mouse button was pressed
-  private meleeQueued: boolean = false;
-
   /**
    * Set to true by entity click handlers (e.g. click-to-target) to prevent
-   * the same left-click from also queuing a melee attack. Consumed on the
+   * the same left-click from also triggering auto-attack. Consumed on the
    * next pointerdown event.
    */
-  public suppressNextMelee: boolean = false;
+  public suppressNextClick: boolean = false;
+
+  /** True on the frame a left-click on the world (non-entity) was detected. */
+  public leftClickQueued: boolean = false;
+  /** True on the frame a right-click on the world was detected. */
+  public rightClickQueued: boolean = false;
 
   // Action bar keys (1-8)
   private actionBarKeys: Phaser.Input.Keyboard.Key[] = [];
@@ -74,22 +78,24 @@ export class InputManager {
       this.onSkillsPaneToggle?.();
     });
 
-    // Left click to melee; right click to fire ranged (Ranger only — server enforces class check)
+    // Left-click and right-click queue for auto-attack initiation
+    // (GameScene reads these to decide whether to start auto-attack on a target)
     scene.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
       if (pointer.leftButtonDown()) {
-        if (this.suppressNextMelee) {
-          this.suppressNextMelee = false; // consume the suppression, skip melee
+        if (this.suppressNextClick) {
+          this.suppressNextClick = false;
         } else {
-          this.meleeQueued = true;
+          this.leftClickQueued = true;
         }
       } else if (pointer.rightButtonDown()) {
-        this.fireQueued = true;
+        this.rightClickQueued = true;
       }
     });
   }
 
   /**
    * Sample the current input state and return an InputPayload.
+   * Note: fire/melee flags removed — auto-attack is handled via messages now.
    */
   getInput(playerWorldX: number, playerWorldY: number): InputPayload {
     const pointer = this.scene.input.activePointer;
@@ -100,12 +106,6 @@ export class InputManager {
     const orthoMouse = isoToOrtho(worldPoint.x, worldPoint.y);
     const aimAngle = Math.atan2(orthoMouse.y - playerWorldY, orthoMouse.x - playerWorldX);
 
-    const fire = this.fireQueued;
-    this.fireQueued = false;
-
-    const melee = this.meleeQueued;
-    this.meleeQueued = false;
-
     return {
       up: this.keys.W.isDown,
       down: this.keys.S.isDown,
@@ -113,15 +113,27 @@ export class InputManager {
       right: this.keys.D.isDown,
       aimAngle,
       seq: ++this.seq,
-      fire,
-      melee,
     };
   }
 
-  /** Drain the fire/melee queues without acting on them (call when UI panels block input). */
+  /** Drain the click queues without acting on them (call when UI panels block input). */
   clearFire(): void {
-    this.fireQueued = false;
-    this.meleeQueued = false;
+    this.leftClickQueued = false;
+    this.rightClickQueued = false;
+  }
+
+  /** Consume and return the left-click state. */
+  consumeLeftClick(): boolean {
+    const val = this.leftClickQueued;
+    this.leftClickQueued = false;
+    return val;
+  }
+
+  /** Consume and return the right-click state. */
+  consumeRightClick(): boolean {
+    const val = this.rightClickQueued;
+    this.rightClickQueued = false;
+    return val;
   }
 
   /** Check if any movement key is pressed. */

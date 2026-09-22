@@ -2,8 +2,8 @@
  * Stateless inventory helper functions.
  * Operates on a PlayerState's inventory ArraySchema.
  */
-import { INVENTORY_MAX_SLOTS, EquipSlotType, } from '@valhalla/shared';
-import { InventorySlotState } from '../schema/PlayerState.js';
+import { INVENTORY_MAX_SLOTS, } from '@valhalla/shared';
+import { InventorySlotState, getEquipped, setEquipped } from '../schema/PlayerState.js';
 import { DataManager } from './DataManager.js';
 /**
  * Add an item to a player's inventory.
@@ -88,38 +88,11 @@ export function getItemCount(player, itemId) {
 // ── Equipment Helpers ─────────────────────────────────────────
 /** Read the equipped itemId for a given slot type. */
 function getEquipField(player, slotType) {
-    switch (slotType) {
-        case EquipSlotType.WEAPON: return player.equipWeapon;
-        case EquipSlotType.HELM: return player.equipHelm;
-        case EquipSlotType.CHEST: return player.equipChest;
-        case EquipSlotType.LEGS: return player.equipLegs;
-        case EquipSlotType.BOOTS: return player.equipBoots;
-        case EquipSlotType.RING: return player.equipRing;
-        default: return '';
-    }
+    return getEquipped(player, slotType);
 }
 /** Set the equipped itemId for a given slot type. */
 function setEquipField(player, slotType, itemId) {
-    switch (slotType) {
-        case EquipSlotType.WEAPON:
-            player.equipWeapon = itemId;
-            break;
-        case EquipSlotType.HELM:
-            player.equipHelm = itemId;
-            break;
-        case EquipSlotType.CHEST:
-            player.equipChest = itemId;
-            break;
-        case EquipSlotType.LEGS:
-            player.equipLegs = itemId;
-            break;
-        case EquipSlotType.BOOTS:
-            player.equipBoots = itemId;
-            break;
-        case EquipSlotType.RING:
-            player.equipRing = itemId;
-            break;
-    }
+    setEquipped(player, slotType, itemId);
 }
 /**
  * Equip an item from inventory.

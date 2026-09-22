@@ -2,7 +2,7 @@
  * Skill & Spell Definitions — shared between client and server.
  * This is the single source of truth for all skill data.
  *
- * 37 skills across 6 classes, populated from the design spreadsheet.
+ * 38 skills across 6 classes, populated from the design spreadsheet.
  * Individual skill effect handlers live server-side; this file
  * contains only the data model and catalog.
  */
@@ -10,6 +10,9 @@ import { ClassId } from './classes.js';
 // ── Enums ──────────────────────────────────────────────────
 export var SkillId;
 (function (SkillId) {
+    // Auto-attack skills (available to all / specific classes)
+    SkillId["MELEE_ATTACK"] = "melee_attack";
+    SkillId["RANGED_ATTACK"] = "ranged_attack";
     // Warrior (6)
     SkillId["WARRIOR_SHIELD_BASH"] = "warrior_shield_bash";
     SkillId["WARRIOR_TAUNT"] = "warrior_taunt";
@@ -46,8 +49,9 @@ export var SkillId;
     SkillId["SHAMAN_ANCESTRAL_SPIRIT"] = "shaman_ancestral_spirit";
     SkillId["SHAMAN_FLAME_SHOCK"] = "shaman_flame_shock";
     SkillId["SHAMAN_BLOODLUST"] = "shaman_bloodlust";
-    // Wizard (6)
+    // Wizard (7)
     SkillId["WIZARD_FIREBALL"] = "wizard_fireball";
+    SkillId["WIZARD_MAGIC_MISSILE"] = "wizard_magic_missile";
     SkillId["WIZARD_FROST_NOVA"] = "wizard_frost_nova";
     SkillId["WIZARD_BLINK"] = "wizard_blink";
     SkillId["WIZARD_ARCANE_MISSILES"] = "wizard_arcane_missiles";
@@ -79,8 +83,50 @@ export var SkillCategory;
     SkillCategory["DEBUFF"] = "debuff";
     SkillCategory["UTILITY"] = "utility";
 })(SkillCategory || (SkillCategory = {}));
-// ── Skill Catalog (37 skills) ──────────────────────────────
+// ── Skill Catalog (39 skills) ──────────────────────────────
 export const SKILL_CATALOG = {
+    // ═══════════════════════════════════════════════════════════
+    // AUTO-ATTACK SKILLS — Available across classes
+    // ═══════════════════════════════════════════════════════════
+    [SkillId.MELEE_ATTACK]: {
+        id: SkillId.MELEE_ATTACK,
+        name: 'Melee Attack',
+        description: 'A basic melee strike. Auto-repeats at your attack speed.',
+        classId: null, // available to all classes
+        levelRequired: 1,
+        resourceType: ResourceType.NONE,
+        resourceCost: 0,
+        castTimeMs: 0,
+        cooldownMs: 0, // attack speed is handled by the auto-attack system
+        range: 60, // MELEE_RANGE
+        targetType: SkillTargetType.SINGLE_ENEMY,
+        category: SkillCategory.OFFENSIVE,
+        iconColor: 0xcccccc,
+        iconAbbrev: 'MA',
+        scalingStat: 'strength',
+        isAutoAttack: true,
+        effectNotes: 'Basic melee auto-attack. Speed scales with dexterity.',
+    },
+    [SkillId.RANGED_ATTACK]: {
+        id: SkillId.RANGED_ATTACK,
+        name: 'Ranged Attack',
+        description: 'Fire a ranged projectile. Requires a ranged weapon. Auto-repeats at your attack speed.',
+        classId: ClassId.RANGER,
+        levelRequired: 1,
+        resourceType: ResourceType.NONE,
+        resourceCost: 0,
+        castTimeMs: 0,
+        cooldownMs: 0,
+        range: 600, // PROJECTILE_MAX_RANGE
+        targetType: SkillTargetType.SINGLE_ENEMY,
+        category: SkillCategory.OFFENSIVE,
+        iconColor: 0x44aa44,
+        iconAbbrev: 'RA',
+        scalingStat: 'dexterity',
+        isAutoAttack: true,
+        requiresWeapon: true,
+        effectNotes: 'Basic ranged auto-attack. Requires bow. Speed scales with dexterity.',
+    },
     // ═══════════════════════════════════════════════════════════
     // WARRIOR SKILLS (6) — Energy resource
     // ═══════════════════════════════════════════════════════════
@@ -476,7 +522,7 @@ export const SKILL_CATALOG = {
     [SkillId.ROGUE_POISON_BLADE]: {
         id: SkillId.ROGUE_POISON_BLADE,
         name: 'Poison Blade',
-        description: 'Coat your weapon in poison, adding DoT to attacks.',
+        description: 'Stab the target with a poisoned blade, applying a poison that deals damage every second.',
         classId: ClassId.ROGUE,
         levelRequired: 2,
         resourceType: ResourceType.ENERGY,
@@ -484,14 +530,14 @@ export const SKILL_CATALOG = {
         castTimeMs: 0,
         cooldownMs: 20000,
         range: 0,
-        targetType: SkillTargetType.SELF,
-        category: SkillCategory.BUFF,
+        targetType: SkillTargetType.SINGLE_ENEMY,
+        category: SkillCategory.DEBUFF,
         iconColor: 0x66cc66,
         iconAbbrev: 'PB',
         scalingStat: 'dexterity',
-        buffDurationMs: 30000,
+        buffDurationMs: 6000,
         dotDamagePerSec: 4,
-        effectNotes: 'Next 5 attacks apply poison (4 dps for 6s)',
+        effectNotes: 'Poisons the target for 4+ dps (scales with DEX) for 6s',
     },
     [SkillId.ROGUE_STEALTH]: {
         id: SkillId.ROGUE_STEALTH,
@@ -692,7 +738,7 @@ export const SKILL_CATALOG = {
         effectNotes: '+30% attack speed and +10% movement for all nearby allies for 20s',
     },
     // ═══════════════════════════════════════════════════════════
-    // WIZARD SKILLS (6) — Mana resource
+    // WIZARD SKILLS (7) — Mana resource
     // ═══════════════════════════════════════════════════════════
     [SkillId.WIZARD_FIREBALL]: {
         id: SkillId.WIZARD_FIREBALL,
@@ -711,7 +757,28 @@ export const SKILL_CATALOG = {
         iconAbbrev: 'FB',
         scalingStat: 'intelligence',
         baseDamage: [22, 34],
+        aoeRadius: 96,
+        projectile: { speed: 350, radius: 10 },
         effectNotes: 'AoE fire damage at target location',
+    },
+    [SkillId.WIZARD_MAGIC_MISSILE]: {
+        id: SkillId.WIZARD_MAGIC_MISSILE,
+        name: 'Magic Missile',
+        description: 'Fires an arcane bolt that always hits its target.',
+        classId: ClassId.WIZARD,
+        levelRequired: 2,
+        resourceType: ResourceType.MANA,
+        resourceCost: 8,
+        castTimeMs: 0,
+        cooldownMs: 2500,
+        range: 320,
+        targetType: SkillTargetType.SINGLE_ENEMY,
+        category: SkillCategory.OFFENSIVE,
+        iconColor: 0x88aaff,
+        iconAbbrev: 'MM',
+        scalingStat: 'intelligence',
+        baseDamage: [12, 20],
+        effectNotes: 'Guaranteed hit — no dodge or miss possible',
     },
     [SkillId.WIZARD_FROST_NOVA]: {
         id: SkillId.WIZARD_FROST_NOVA,
@@ -806,6 +873,8 @@ export const SKILL_CATALOG = {
         iconAbbrev: 'MT',
         scalingStat: 'intelligence',
         baseDamage: [60, 90],
+        aoeRadius: 160,
+        projectile: { speed: 250, radius: 14 },
         effectNotes: 'Massive AoE fire damage at target location',
     },
 };
@@ -813,6 +882,7 @@ export const SKILL_CATALOG = {
 /** Maps each class to its skill list, ordered by level requirement. */
 export const CLASS_SKILLS = {
     [ClassId.WARRIOR]: [
+        SkillId.MELEE_ATTACK,
         SkillId.WARRIOR_SHIELD_BASH,
         SkillId.WARRIOR_TAUNT,
         SkillId.WARRIOR_CLEAVE,
@@ -821,6 +891,7 @@ export const CLASS_SKILLS = {
         SkillId.WARRIOR_SHIELD_WALL,
     ],
     [ClassId.CLERIC]: [
+        SkillId.MELEE_ATTACK,
         SkillId.CLERIC_MINOR_HEAL,
         SkillId.CLERIC_SMITE,
         SkillId.CLERIC_SHIELD_OF_FAITH,
@@ -830,6 +901,8 @@ export const CLASS_SKILLS = {
         SkillId.CLERIC_RESURRECTION,
     ],
     [ClassId.RANGER]: [
+        SkillId.MELEE_ATTACK,
+        SkillId.RANGED_ATTACK,
         SkillId.RANGER_AIMED_SHOT,
         SkillId.RANGER_SERPENT_ARROW,
         SkillId.RANGER_TRAP,
@@ -838,6 +911,7 @@ export const CLASS_SKILLS = {
         SkillId.RANGER_SNIPE,
     ],
     [ClassId.ROGUE]: [
+        SkillId.MELEE_ATTACK,
         SkillId.ROGUE_BACKSTAB,
         SkillId.ROGUE_POISON_BLADE,
         SkillId.ROGUE_STEALTH,
@@ -846,6 +920,7 @@ export const CLASS_SKILLS = {
         SkillId.ROGUE_SHADOW_DANCE,
     ],
     [ClassId.SHAMAN]: [
+        SkillId.MELEE_ATTACK,
         SkillId.SHAMAN_LIGHTNING_BOLT,
         SkillId.SHAMAN_EARTH_SHIELD,
         SkillId.SHAMAN_HEX,
@@ -854,7 +929,9 @@ export const CLASS_SKILLS = {
         SkillId.SHAMAN_BLOODLUST,
     ],
     [ClassId.WIZARD]: [
+        SkillId.MELEE_ATTACK,
         SkillId.WIZARD_FIREBALL,
+        SkillId.WIZARD_MAGIC_MISSILE,
         SkillId.WIZARD_FROST_NOVA,
         SkillId.WIZARD_BLINK,
         SkillId.WIZARD_ARCANE_MISSILES,

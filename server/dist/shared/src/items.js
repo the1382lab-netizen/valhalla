@@ -48,12 +48,35 @@ export var ItemId;
 export var EquipSlotType;
 (function (EquipSlotType) {
     EquipSlotType["WEAPON"] = "weapon";
+    EquipSlotType["OFFHAND"] = "offhand";
     EquipSlotType["HELM"] = "helm";
     EquipSlotType["CHEST"] = "chest";
     EquipSlotType["LEGS"] = "legs";
     EquipSlotType["BOOTS"] = "boots";
+    EquipSlotType["GLOVES"] = "gloves";
+    EquipSlotType["BACK"] = "back";
     EquipSlotType["RING"] = "ring";
 })(EquipSlotType || (EquipSlotType = {}));
+/** Every equip slot, in the order the character panel lists them. */
+export const EQUIP_SLOTS = [
+    EquipSlotType.WEAPON, EquipSlotType.OFFHAND, EquipSlotType.HELM,
+    EquipSlotType.CHEST, EquipSlotType.LEGS, EquipSlotType.BOOTS,
+    EquipSlotType.GLOVES, EquipSlotType.BACK, EquipSlotType.RING,
+];
+/**
+ * Equip slot -> paperdoll layer slot. `ring` has no visual layer, and the
+ * weapon hand is called `mainhand` in the sprite pack.
+ */
+export const EQUIP_SLOT_TO_PAPERDOLL = {
+    [EquipSlotType.WEAPON]: 'mainhand',
+    [EquipSlotType.OFFHAND]: 'offhand',
+    [EquipSlotType.HELM]: 'helm',
+    [EquipSlotType.CHEST]: 'chest',
+    [EquipSlotType.LEGS]: 'legs',
+    [EquipSlotType.BOOTS]: 'boots',
+    [EquipSlotType.GLOVES]: 'gloves',
+    [EquipSlotType.BACK]: 'back',
+};
 export var ItemCategory;
 (function (ItemCategory) {
     ItemCategory["EQUIPMENT"] = "equipment";
@@ -97,6 +120,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { strength: 3 },
+        attackSpeedMs: 1600,
+        attackDamage: 5,
     },
     [ItemId.OAK_STAFF]: {
         id: ItemId.OAK_STAFF,
@@ -108,6 +133,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { intelligence: 3 },
+        attackSpeedMs: 2200,
+        attackDamage: 4,
     },
     [ItemId.SHORT_BOW]: {
         id: ItemId.SHORT_BOW,
@@ -119,6 +146,9 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { dexterity: 3 },
+        attackSpeedMs: 1800,
+        attackDamage: 4,
+        isRangedWeapon: true,
     },
     [ItemId.IRON_DAGGER]: {
         id: ItemId.IRON_DAGGER,
@@ -130,6 +160,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { dexterity: 2, strength: 1 },
+        attackSpeedMs: 1000,
+        attackDamage: 3,
     },
     [ItemId.BONE_TOTEM]: {
         id: ItemId.BONE_TOTEM,
@@ -141,6 +173,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { wisdom: 2, intelligence: 1 },
+        attackSpeedMs: 1800,
+        attackDamage: 4,
     },
     [ItemId.IRON_MACE]: {
         id: ItemId.IRON_MACE,
@@ -152,6 +186,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { wisdom: 2, strength: 1 },
+        attackSpeedMs: 2000,
+        attackDamage: 6,
     },
     // ── Helms ─────────────────────────────────────────────
     [ItemId.LEATHER_HELM]: {

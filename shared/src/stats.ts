@@ -48,7 +48,7 @@ export function computeDerivedStats(classId: ClassId, level: number): ResolvedSt
 
   // Energy for non-casters, 0 for casters
   const maxEnergy = template.canUseMana ? 0 : 100 + stats.stamina * 2;
-  const energyRegenRate = template.canUseMana ? 0 : 10 + stats.stamina * 0.5;
+  const energyRegenRate = template.canUseMana ? 0 : stats.stamina * 0.25;
 
   // Mana regen for casters, 0 for non-casters (base reduced 5 → 2.5 → 1.25; intel scaling 0.4 → 0.2 → 0.1)
   const manaRegenRate = template.canUseMana ? 1.25 + stats.intelligence * 0.1 : 0;
@@ -165,10 +165,25 @@ export function computeFireCooldown(baseCooldownMs: number, dexterity: number): 
 /**
  * Compute melee cooldown modified by dexterity.
  * Same formula as fire cooldown.
+ * @deprecated Use computeAutoAttackSpeed() for auto-attack system.
  */
 export function computeMeleeCooldown(baseCooldownMs: number, dexterity: number): number {
   const reduction = Math.min(0.4, dexterity * 0.012);
   return baseCooldownMs * (1 - reduction);
+}
+
+/**
+ * Compute the effective auto-attack interval in ms, modified by dexterity.
+ * Uses the same diminishing-returns formula: max 40% reduction.
+ *
+ * @param baseMs  The base attack speed: from weapon.attackSpeedMs (if weapon equipped)
+ *                or class.baseMeleeAttackSpeedMs / class.baseRangedAttackSpeedMs (if not).
+ * @param dexterity  The attacker's dexterity stat.
+ * @returns Effective interval in ms between auto-attacks.
+ */
+export function computeAutoAttackSpeed(baseMs: number, dexterity: number): number {
+  const reduction = Math.min(0.4, dexterity * 0.012);
+  return baseMs * (1 - reduction);
 }
 
 // ── XP & Leveling ──────────────────────────────────────────

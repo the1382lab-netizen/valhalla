@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { Overlay2MapEditor } from './MapEditor2';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -79,14 +80,21 @@ const TOOL_LABELS: Record<PlaceTool, string> = {
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export const MapEditor: React.FC = () => {
+interface LegacyMapEditorProps {
+  selectedZoneId: string | null;
+  setSelectedZoneId: (id: string | null) => void;
+  /** Rendered in the toolbar — the 1.0 / 2.0 switch owned by the wrapper below. */
+  modeToggle?: React.ReactNode;
+}
+
+/** Valhalla 1.0 map editor: Tiled map + overlay 1.0, coordinates in world pixels. */
+const LegacyMapEditor: React.FC<LegacyMapEditorProps> = ({ selectedZoneId, setSelectedZoneId, modeToggle }) => {
   const zones = useEditorStore(s => s.zones.data);
   const npcTemplates = useEditorStore(s => s.npcTemplates.data);
   const updateData = useEditorStore(s => s.updateData);
   const saveSection = useEditorStore(s => s.saveSection);
 
   // Zone / map state
-  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
   const [mapData, setMapData] = useState<MapData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
@@ -195,13 +203,6 @@ export const MapEditor: React.FC = () => {
   };
 
   // ── Zone / map loading ──────────────────────────────────────────────────────
-
-  useEffect(() => {
-    if (zoneList.length > 0 && !selectedZoneId) {
-      const firstId = Object.keys(zones || {})[0];
-      setSelectedZoneId(firstId);
-    }
-  }, [zones]);
 
   // Reset portal target zone whenever the edited zone changes.
   // Without this, a stale portalTargetZone value from a previous zone could be
@@ -796,6 +797,8 @@ export const MapEditor: React.FC = () => {
           ))}
         </select>
 
+        {modeToggle}
+
         <div style={{ width: 1, height: 22, background: 'var(--border-color)', margin: '0 4px' }} />
 
         <span style={{ fontWeight: 600, color: 'var(--text-secondary)', fontSize: 12 }}>MAP FILE:</span>
@@ -1313,4 +1316,97 @@ export const MapEditor: React.FC = () => {
       </div>
     </div>
   );
+};
+
+// ─── Mode wrapper: Valhalla 2.0 (Unreal captures) vs 1.0 (Tiled maps) ────────
+
+type EditorMode = '1.0' | '2.0';
+const MODE_STORAGE_KEY = 'valhalla.mapEditor.mode';
+
+function readStoredMode(): EditorMode | null {
+  try {
+    const v = localStorage.getItem(MODE_STORAGE_KEY);
+    return v === '1.0' || v === '2.0' ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Picks the editor for the selected zone. 2.0 is the default whenever that zone
+ * has a top-down capture in maps/thumbs; the toolbar switch overrides it and the
+ * choice is remembered in localStorage.
+ */
+export const MapEditor: React.FC = () => {
+  const zones = useEditorStore(s => s.zones.data);
+  const [selectedZoneId, setSelectedZoneId] = useState<string | null>(null);
+  const [thumbZones, setThumbZones] = useState<string[] | null>(null);
+  const [modePref, setModePref] = useState<EditorMode | null>(readStoredMode);
+
+  useEffect(() => {
+    fetch('/api/thumbs')
+      .then(r => r.ok ? r.json() : { zones: [] })
+      .then(d => setThumbZones(Array.isArray(d.zones) ? d.zones : []))
+      .catch(() => setThumbZones([]));
+  }, []);
+
+  useEffect(() => {
+    if (!selectedZoneId) {
+      const firstId = Object.keys(zones || {})[0];
+      if (firstId) setSelectedZoneId(firstId);
+    }
+  }, [zones]);
+
+  const hasThumb = !!(selectedZoneId && thumbZones?.includes(selectedZoneId));
+  // The 1.0 client is retired: the Tiled/isometric editor is no longer offered.
+  // (LegacyMapEditor is kept in this file only until it is deleted outright.)
+  void modePref;
+  const mode: EditorMode = '2.0';
+
+  const chooseMode = (m: EditorMode) => {
+    setModePref(m);
+    try { localStorage.setItem(MODE_STORAGE_KEY, m); } catch { /* private mode — session only */ }
+  };
+
+  const modeToggle = (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ display: 'none', border: '1px solid var(--border-color)', borderRadius: 4, overflow: 'hidden' }}>
+        {(['2.0'] as EditorMode[]).map(m => (
+          <button
+            key={m}
+            onClick={() => chooseMode(m)}
+            title={m === '2.0'
+              ? 'Unreal zone capture + overlay 2.0 (centimetres)'
+              : 'Tiled map + overlay 1.0 (world pixels)'}
+            style={{
+              padding: '3px 10px', fontSize: 11, cursor: 'pointer', border: 'none',
+              background: mode === m ? 'var(--accent-dim)' : 'transparent',
+              color: mode === m ? 'var(--text-primary)' : 'var(--text-muted)',
+              fontWeight: mode === m ? 700 : 400,
+            }}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+      {!hasThumb && (
+        <span style={{ fontSize: 10, color: 'var(--text-muted)' }} title="maps/thumbs/<zone>.png is missing">
+          no capture
+        </span>
+      )}
+    </div>
+  );
+
+  // Wait for the thumb list so the default mode does not flip after mount
+  if (thumbZones === null) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-muted)' }}>
+        Loading zone captures…
+      </div>
+    );
+  }
+
+  return mode === '2.0'
+    ? <Overlay2MapEditor selectedZoneId={selectedZoneId} setSelectedZoneId={setSelectedZoneId} modeToggle={modeToggle} />
+    : <LegacyMapEditor selectedZoneId={selectedZoneId} setSelectedZoneId={setSelectedZoneId} modeToggle={modeToggle} />;
 };

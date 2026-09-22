@@ -8,7 +8,7 @@
       "type": "enemy",
       "level": 1,
       "stats": {},
-      "hp": 300,
+      "hp": 150,
       "mana": 0,
       "behaviorType": "aggressive",
       "aggroRange": 100,
@@ -20,9 +20,10 @@
       "dialogue": [],
       "vendorInventory": [],
       "damage": 10,
-      "leashRange": 600,
+      "leashRange": 1200,
       "lootTableId": "loot_1771620382459",
-      "moveSpeed": 80
+      "moveSpeed": 80,
+      "attackSpeed": 4000
     },
     "npc_1771709765831": {
       "id": "npc_1771709765831",
@@ -44,7 +45,48 @@
       "dialogue": [],
       "vendorInventory": [],
       "damage": 40,
-      "canAggro": true
+      "canAggro": true,
+      "attackSpeed": 4000,
+      "leashRange": 1200,
+      "aggroRange": 100
+    },
+    "npc_1771781907844": {
+      "id": "npc_1771781907844",
+      "name": "New NPC",
+      "description": "",
+      "type": "npc",
+      "level": 1,
+      "stats": {},
+      "hp": 10,
+      "mana": 0,
+      "behaviorType": "passive",
+      "respawnMs": 60000,
+      "skills": [],
+      "spriteColor": 16777215,
+      "spriteSize": 1,
+      "xpReward": 0,
+      "dialogue": [],
+      "vendorInventory": []
+    },
+    "merchant_bjorn": {
+      "id": "merchant_bjorn",
+      "name": "Bjorn the Trader",
+      "description": "The grasslands town merchant. Friendly: players cannot attack him and he never aggroes.",
+      "type": "npc",
+      "level": 10,
+      "stats": {},
+      "hp": 1000,
+      "mana": 0,
+      "behaviorType": "stationary",
+      "respawnMs": 300000,
+      "skills": [],
+      "spriteColor": 16777215,
+      "spriteSize": 1,
+      "xpReward": 0,
+      "dialogue": [
+        "Welcome, traveler! Take a look at my wares."
+      ],
+      "vendorInventory": []
     }
   }
 }

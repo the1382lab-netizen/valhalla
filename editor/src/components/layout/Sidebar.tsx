@@ -21,7 +21,6 @@ const sections: { label: string; items: NavItem[] }[] = [
   {
     label: 'World',
     items: [
-      { id: 'zones', label: 'Zones', icon: '🌍' },
       { id: 'maps', label: 'Map Objects', icon: '📍' },
     ],
   },

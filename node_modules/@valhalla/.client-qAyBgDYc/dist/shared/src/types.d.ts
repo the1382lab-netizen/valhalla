@@ -8,10 +8,20 @@ export interface InputPayload {
     aimAngle: number;
     /** Monotonically increasing input sequence number */
     seq: number;
-    /** Fire a ranged projectile */
-    fire: boolean;
-    /** Melee attack */
-    melee: boolean;
+}
+export interface StartAutoAttackPayload {
+    skillId: string;
+    targetId: string;
+}
+export interface AutoAttackHitPayload {
+    attackerId: string;
+    targetId: string;
+    damage: number;
+    damageType: 'physical' | 'magical';
+    isCrit: boolean;
+    isBlock: boolean;
+    isDodge: boolean;
+    isMiss: boolean;
 }
 export interface IPlayerState {
     id: string;
@@ -97,7 +107,30 @@ export declare enum MessageType {
     SPELL_IMPACT = "spellImpact",
     NPC_HIT = "npcHit",
     NPC_DIED = "npcDied",
-    CHAT_MESSAGE = "chatMessage"
+    CHAT_MESSAGE = "chatMessage",
+    LEVEL_UP = "levelUp",
+    LOOT_ITEM = "lootItem",
+    LOOT_ALL = "lootAll",
+    LOOT_SUCCESS = "lootSuccess",
+    START_AUTO_ATTACK = "startAutoAttack",
+    STOP_AUTO_ATTACK = "stopAutoAttack",
+    AUTO_ATTACK_HIT = "autoAttackHit",
+    AUTO_ATTACK_STARTED = "autoAttackStarted",
+    AUTO_ATTACK_STOPPED = "autoAttackStopped",
+    XP_GAINED = "xpGained",
+    PARTY_INVITE = "partyInvite",
+    PARTY_ACCEPT = "partyAccept",
+    PARTY_DECLINE = "partyDecline",
+    PARTY_LEAVE = "partyLeave",
+    PARTY_UPDATE = "partyUpdate",
+    PARTY_KICKED = "partyKicked"
+}
+export interface PartyMemberInfo {
+    sessionId: string;
+    characterName: string;
+}
+export interface PartyUpdatePayload {
+    members: PartyMemberInfo[];
 }
 export interface ChatMessagePayload {
     /** Channel the message was sent on. 'system' is server-generated. */

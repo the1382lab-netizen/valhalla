@@ -22,6 +22,8 @@ export interface LoadedCharacter {
     userId: number;
     name: string;
     classId: string;
+    /** Paperdoll base body, e.g. 'body_tan'. Falls back to the class default. */
+    bodyId: string;
     level: number;
     xp: number;
     hp: number;

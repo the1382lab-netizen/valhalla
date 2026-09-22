@@ -5,7 +5,8 @@
 export declare enum ZoneId {
     GRASSLANDS = "grasslands",
     DESERT = "desert",
-    CAVE_DUNGEON = "cave_dungeon"
+    CAVE_DUNGEON = "cave_dungeon",
+    GRASSLANDS_V2 = "grasslands_v2"
 }
 export interface ZoneConnection {
     /** Unique id for this portal (from Tiled object name) */

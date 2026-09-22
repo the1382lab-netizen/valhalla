@@ -85,6 +85,16 @@ export async function initDatabase(filePath = 'valhalla.db') {
       PRIMARY KEY (character_id, slot_index)
     );
   `);
+    // ── Migrations for databases created before a column existed ──
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`, so check the table info first.
+    const charCols = db.exec('PRAGMA table_info(characters);');
+    const charColNames = charCols.length
+        ? charCols[0].values.map(row => String(row[1]))
+        : [];
+    if (!charColNames.includes('body_id')) {
+        db.run("ALTER TABLE characters ADD COLUMN body_id TEXT NOT NULL DEFAULT '';");
+        console.log('[db] migrated: characters.body_id');
+    }
     // Create indexes
     db.run('CREATE INDEX IF NOT EXISTS idx_characters_user_id ON characters(user_id);');
     db.run('CREATE INDEX IF NOT EXISTS idx_inventory_character_id ON inventory_items(character_id);');

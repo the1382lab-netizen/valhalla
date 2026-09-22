@@ -6,6 +6,9 @@ import { initDatabase } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
 import { adminRouter } from './routes/admin.js';
+import { internalRouter } from './routes/internal.js';
+import { logServerSecretStatus } from './middleware/serverSecret.js';
+import { DataManager } from './systems/DataManager.js';
 import express from 'express';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -16,8 +19,21 @@ const __dirname = dirname(__filename);
 const DATA_DIR = resolve(__dirname, '..', '..', 'shared', 'data');
 const SPRITES_DIR = resolve(__dirname, '..', '..', 'public', 'assets', 'sprites');
 
-// Initialize database (async — sql.js loads WASM) then start the server
-await initDatabase();
+// Initialize database (async — sql.js loads WASM) then start the server.
+// VALHALLA_DB overrides the database file (used by scripts/smoke-internal.ts).
+await initDatabase(process.env.VALHALLA_DB || 'valhalla.db');
+
+// Load the editor's JSON now and keep it current. Every route below — the
+// Unreal server's character load/save and player character creation — reads
+// DataManager.instance; before this it was only initialized when a 1.0
+// Colyseus room opened, which the Unreal server never does.
+DataManager.initializeAndWatch();
+
+// Report whether the server-to-server (Unreal) routes are enabled
+logServerSecretStatus();
+
+// Listen port: PORT env wins, otherwise the shared default (2567)
+const PORT = Number.parseInt(process.env.PORT ?? '', 10) || SERVER_PORT;
 
 const server = defineServer({
   transport: new WebSocketTransport({}),
@@ -36,7 +52,7 @@ const server = defineServer({
       if (origin) {
         res.header('Access-Control-Allow-Origin', origin);
       }
-      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+      res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Server-Secret');
       res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.header('Access-Control-Allow-Credentials', 'true');
       if (req.method === 'OPTIONS') {
@@ -58,7 +74,7 @@ const server = defineServer({
     app.get('/api/assets/sprites/:subfolder', (req, res) => {
       const subfolder = req.params.subfolder;
       // Only allow known subfolders to prevent directory traversal
-      if (!['equipment', 'icons'].includes(subfolder)) {
+      if (!['equipment', 'icons', 'characters'].includes(subfolder)) {
         res.status(400).json({ error: 'Invalid subfolder' });
         return;
       }
@@ -75,6 +91,12 @@ const server = defineServer({
       }
     });
 
+    // Server-to-server routes for the Unreal dedicated server (X-Server-Secret),
+    // plus the unauthenticated /api/health probe. Mounted BEFORE the player
+    // routers so /api/characters/:id/load|save is not intercepted by the
+    // JWT-protected charactersRouter; unmatched paths fall through untouched.
+    app.use('/api', internalRouter);
+
     // Auth & character API routes
     app.use('/api/auth', authRouter);
     app.use('/api/characters', charactersRouter);
@@ -84,6 +106,6 @@ const server = defineServer({
   },
 });
 
-server.listen(SERVER_PORT, '0.0.0.0').then(() => {
-  console.log(`⚔️  Valhalla server listening on 0.0.0.0:${SERVER_PORT}`);
+server.listen(PORT, '0.0.0.0').then(() => {
+  console.log(`⚔️  Valhalla server listening on 0.0.0.0:${PORT}`);
 });

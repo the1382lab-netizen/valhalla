@@ -21,11 +21,20 @@
     },
     "cave_dungeon": {
       "id": "cave_dungeon",
-      "name": "Cave Dungeon",
+      "name": "Greyfell Cave",
       "mapFile": "cave_dungeon.json",
       "defaultSpawn": {
-        "x": 224,
-        "y": 224
+        "x": 2080,
+        "y": 3808
+      }
+    },
+    "grasslands_v2": {
+      "id": "grasslands_v2",
+      "name": "Eldmoor Grasslands",
+      "mapFile": "grasslands_v2.json",
+      "defaultSpawn": {
+        "x": 2208,
+        "y": 1824
       }
     }
   }

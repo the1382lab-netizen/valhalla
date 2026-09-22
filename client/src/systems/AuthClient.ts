@@ -87,6 +87,26 @@ export class AuthClient {
   }
 
   /**
+   * Fetch the current user's characters and username together.
+   * Used when returning to character select from an active game session.
+   */
+  static async getCharactersWithUsername(): Promise<{ characters: CharacterSummary[]; username: string }> {
+    const token = this.getToken();
+    if (!token) throw new Error('Not logged in.');
+
+    const res = await fetch(`${this.baseUrl}/api/characters`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Failed to fetch characters.');
+    }
+
+    return { characters: data.characters, username: data.username ?? '' };
+  }
+
+  /**
    * Create a new character.
    * Returns the created character summary.
    */

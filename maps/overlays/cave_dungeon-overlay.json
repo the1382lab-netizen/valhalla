@@ -1,0 +1,178 @@
+{
+  "version": "1.0.0",
+  "spawnPoints": [
+    {
+      "id": "cave_dungeon_player_spawn_001",
+      "type": "player_spawn",
+      "x": 2080,
+      "y": 3808,
+      "properties": {},
+      "label": "Cave entrance"
+    },
+    {
+      "id": "cave_dungeon_portal_002",
+      "type": "portal",
+      "label": "Grasslands",
+      "templateId": "grasslands_v2",
+      "x": 1984,
+      "y": 3904,
+      "width": 192,
+      "height": 64,
+      "properties": {}
+    },
+    {
+      "id": "cave_dungeon_entry_003",
+      "type": "zone_entry",
+      "x": 2016,
+      "y": 3552,
+      "label": "From the Greyfell hills",
+      "templateId": "grasslands_v2",
+      "fromZone": "grasslands_v2",
+      "properties": {}
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_004",
+      "type": "enemy_spawn",
+      "x": 2080,
+      "y": 2976,
+      "properties": {},
+      "label": "Cave bat",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_005",
+      "type": "enemy_spawn",
+      "x": 1824,
+      "y": 2720,
+      "properties": {},
+      "label": "Cave bat",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_006",
+      "type": "enemy_spawn",
+      "x": 2336,
+      "y": 3040,
+      "properties": {},
+      "label": "Cave bat",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_007",
+      "type": "enemy_spawn",
+      "x": 672,
+      "y": 2592,
+      "properties": {},
+      "label": "Warren spider",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_008",
+      "type": "enemy_spawn",
+      "x": 1056,
+      "y": 2976,
+      "properties": {},
+      "label": "Warren spider",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_009",
+      "type": "enemy_spawn",
+      "x": 480,
+      "y": 2848,
+      "properties": {},
+      "label": "Warren spider",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_010",
+      "type": "enemy_spawn",
+      "x": 3104,
+      "y": 2720,
+      "properties": {},
+      "label": "Deep miner",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_011",
+      "type": "enemy_spawn",
+      "x": 3552,
+      "y": 3040,
+      "properties": {},
+      "label": "Deep miner",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_012",
+      "type": "enemy_spawn",
+      "x": 1760,
+      "y": 1696,
+      "properties": {},
+      "label": "Gallery ghoul",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_013",
+      "type": "enemy_spawn",
+      "x": 2464,
+      "y": 2016,
+      "properties": {},
+      "label": "Gallery ghoul",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_014",
+      "type": "enemy_spawn",
+      "x": 608,
+      "y": 1888,
+      "properties": {},
+      "label": "Cistern crawler",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_015",
+      "type": "enemy_spawn",
+      "x": 3040,
+      "y": 1440,
+      "properties": {},
+      "label": "Collapsed shade",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_016",
+      "type": "enemy_spawn",
+      "x": 3552,
+      "y": 1824,
+      "properties": {},
+      "label": "Collapsed shade",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_017",
+      "type": "enemy_spawn",
+      "x": 1504,
+      "y": 352,
+      "properties": {},
+      "label": "Drowned knight",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_018",
+      "type": "enemy_spawn",
+      "x": 2592,
+      "y": 928,
+      "properties": {},
+      "label": "Drowned knight",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "cave_dungeon_enemy_spawn_019",
+      "type": "enemy_spawn",
+      "x": 2080,
+      "y": 352,
+      "properties": {},
+      "label": "Drowned knight",
+      "templateId": "npc_1771431708366"
+    }
+  ]
+}

@@ -32,6 +32,14 @@ export declare class AuthClient {
      */
     static getCharacters(): Promise<CharacterSummary[]>;
     /**
+     * Fetch the current user's characters and username together.
+     * Used when returning to character select from an active game session.
+     */
+    static getCharactersWithUsername(): Promise<{
+        characters: CharacterSummary[];
+        username: string;
+    }>;
+    /**
      * Create a new character.
      * Returns the created character summary.
      */

@@ -1,4 +1,5 @@
 import { Schema, ArraySchema } from '@colyseus/schema';
+import { EquipSlotType } from '@valhalla/shared';
 import type { ResolvedStats } from '@valhalla/shared';
 export interface ActiveBuff {
     skillId: string;
@@ -38,18 +39,33 @@ export declare class PlayerState extends Schema {
     castingSkillId: string;
     castingStartedAt: number;
     castingDurationMs: number;
+    /** Paperdoll base body, e.g. 'body_tan'. */
+    bodyId: string;
     equipWeapon: string;
+    equipOffhand: string;
     equipHelm: string;
     equipChest: string;
     equipLegs: string;
     equipBoots: string;
+    equipGloves: string;
+    equipBack: string;
     equipRing: string;
     inventory: ArraySchema<InventorySlotState>;
+    /** Whether auto-attack is currently active */
+    autoAttackActive: boolean;
+    /** Which auto-attack skill is running (melee_attack or ranged_attack) */
+    autoAttackSkillId: string;
+    /** Session ID of the auto-attack target */
+    autoAttackTargetId: string;
     inputSeq: number;
+    /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
     fireCooldown: number;
+    /** @deprecated Replaced by auto-attack system. Kept for backward compat during transition. */
     meleeCooldown: number;
     invulnerableUntil: number;
     respawnAt: number;
+    /** Timestamp of next allowed auto-attack swing (server-only) */
+    nextAutoAttackAt: number;
     /** Skill cooldowns: skillId → timestamp when cooldown expires */
     skillCooldowns: Map<string, number>;
     /** Active buffs on this player */
@@ -70,4 +86,14 @@ export declare class PlayerState extends Schema {
  * resets shieldHp to 0.
  */
 export declare function applyShieldAbsorption(player: PlayerState, incomingDamage: number): number;
+export declare const PLAYER_EQUIP_FIELD: Record<EquipSlotType, keyof PlayerState>;
+/** Read the equipped itemId for a slot. Empty string = nothing equipped. */
+export declare function getEquipped(player: PlayerState, slot: EquipSlotType): string;
+/** Set the equipped itemId for a slot. */
+export declare function setEquipped(player: PlayerState, slot: EquipSlotType, itemId: string): void;
+/** Every non-empty equipped slot, for persistence. */
+export declare function equippedEntries(player: PlayerState): {
+    slotType: EquipSlotType;
+    itemId: string;
+}[];
 //# sourceMappingURL=PlayerState.d.ts.map

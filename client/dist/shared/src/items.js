@@ -4,6 +4,11 @@
  */
 // ── Constants ────────────────────────────────────────────────
 export const INVENTORY_MAX_SLOTS = 32;
+// ── Loot Bag Constants ──────────────────────────────────────
+export const LOOT_BAG_MERGE_RANGE = 80; // pixels: nearby bags merge within this radius
+export const LOOT_BAG_PICKUP_RANGE = 200; // pixels: max distance to loot from a bag
+export const LOOT_BAG_DESPAWN_MS = 300_000; // 5 minutes
+export const LOOT_BAG_MAX_SLOTS = 18; // max items per bag
 // ── Enums ────────────────────────────────────────────────────
 export var ItemId;
 (function (ItemId) {
@@ -43,12 +48,35 @@ export var ItemId;
 export var EquipSlotType;
 (function (EquipSlotType) {
     EquipSlotType["WEAPON"] = "weapon";
+    EquipSlotType["OFFHAND"] = "offhand";
     EquipSlotType["HELM"] = "helm";
     EquipSlotType["CHEST"] = "chest";
     EquipSlotType["LEGS"] = "legs";
     EquipSlotType["BOOTS"] = "boots";
+    EquipSlotType["GLOVES"] = "gloves";
+    EquipSlotType["BACK"] = "back";
     EquipSlotType["RING"] = "ring";
 })(EquipSlotType || (EquipSlotType = {}));
+/** Every equip slot, in the order the character panel lists them. */
+export const EQUIP_SLOTS = [
+    EquipSlotType.WEAPON, EquipSlotType.OFFHAND, EquipSlotType.HELM,
+    EquipSlotType.CHEST, EquipSlotType.LEGS, EquipSlotType.BOOTS,
+    EquipSlotType.GLOVES, EquipSlotType.BACK, EquipSlotType.RING,
+];
+/**
+ * Equip slot -> paperdoll layer slot. `ring` has no visual layer, and the
+ * weapon hand is called `mainhand` in the sprite pack.
+ */
+export const EQUIP_SLOT_TO_PAPERDOLL = {
+    [EquipSlotType.WEAPON]: 'mainhand',
+    [EquipSlotType.OFFHAND]: 'offhand',
+    [EquipSlotType.HELM]: 'helm',
+    [EquipSlotType.CHEST]: 'chest',
+    [EquipSlotType.LEGS]: 'legs',
+    [EquipSlotType.BOOTS]: 'boots',
+    [EquipSlotType.GLOVES]: 'gloves',
+    [EquipSlotType.BACK]: 'back',
+};
 export var ItemCategory;
 (function (ItemCategory) {
     ItemCategory["EQUIPMENT"] = "equipment";
@@ -72,6 +100,13 @@ export const RARITY_COLORS = {
     [ItemRarity.EPIC]: '#aa44ff',
     [ItemRarity.LEGENDARY]: '#ff8800',
 };
+/** Default sprite config matching the character body sheet (4×9, 64×64). */
+export const DEFAULT_EQUIP_SPRITE_CONFIG = {
+    frameWidth: 64,
+    frameHeight: 64,
+    framesPerRow: 9,
+    rows: 4,
+};
 // ── Item Catalog ─────────────────────────────────────────────
 export const ITEM_CATALOG = {
     // ── Weapons ───────────────────────────────────────────
@@ -85,6 +120,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { strength: 3 },
+        attackSpeedMs: 1600,
+        attackDamage: 5,
     },
     [ItemId.OAK_STAFF]: {
         id: ItemId.OAK_STAFF,
@@ -96,6 +133,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { intelligence: 3 },
+        attackSpeedMs: 2200,
+        attackDamage: 4,
     },
     [ItemId.SHORT_BOW]: {
         id: ItemId.SHORT_BOW,
@@ -107,6 +146,9 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { dexterity: 3 },
+        attackSpeedMs: 1800,
+        attackDamage: 4,
+        isRangedWeapon: true,
     },
     [ItemId.IRON_DAGGER]: {
         id: ItemId.IRON_DAGGER,
@@ -118,6 +160,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { dexterity: 2, strength: 1 },
+        attackSpeedMs: 1000,
+        attackDamage: 3,
     },
     [ItemId.BONE_TOTEM]: {
         id: ItemId.BONE_TOTEM,
@@ -129,6 +173,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { wisdom: 2, intelligence: 1 },
+        attackSpeedMs: 1800,
+        attackDamage: 4,
     },
     [ItemId.IRON_MACE]: {
         id: ItemId.IRON_MACE,
@@ -140,6 +186,8 @@ export const ITEM_CATALOG = {
         stackable: false,
         maxStack: 1,
         statBonuses: { wisdom: 2, strength: 1 },
+        attackSpeedMs: 2000,
+        attackDamage: 6,
     },
     // ── Helms ─────────────────────────────────────────────
     [ItemId.LEATHER_HELM]: {

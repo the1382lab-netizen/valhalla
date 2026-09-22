@@ -6,11 +6,12 @@
  * edits made in the game editor are saved to JSON files, and the server
  * picks them up on next restart.
  *
- * Usage: call DataManager.initialize() once at room creation,
- * then use DataManager.instance to access catalogs.
+ * Usage: index.ts calls DataManager.initializeAndWatch() once at startup,
+ * which also reloads on every JSON change; use DataManager.instance to
+ * access catalogs.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, watch, type FSWatcher } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -55,6 +56,11 @@ export class DataManager {
   /** Whether data was loaded from JSON (true) or hardcoded fallback (false). */
   private _loadedFromJson: Record<string, boolean> = {};
 
+  /** Files that exist but could not be parsed during the last load. */
+  private _parseFailures: string[] = [];
+
+  private static _watcher: FSWatcher | null = null;
+
   private constructor() {}
 
   static get instance(): DataManager {
@@ -72,6 +78,55 @@ export class DataManager {
     const dm = new DataManager();
     dm.loadAll();
     DataManager._instance = dm;
+    return dm;
+  }
+
+  /**
+   * Re-read every data file. The new catalogs replace the old ones only if
+   * every file that exists parsed cleanly, so a file caught half-written by
+   * the editor never swaps a good catalog for the hardcoded fallback.
+   * Returns true when the new data was applied.
+   */
+  static reload(): boolean {
+    const next = new DataManager();
+    next.loadAll();
+    if (next._parseFailures.length > 0 && DataManager._instance) {
+      console.warn(`[DataManager] Reload skipped; could not parse: ${next._parseFailures.join(', ')}. Keeping the previous data.`);
+      return false;
+    }
+    DataManager._instance = next;
+    return true;
+  }
+
+  /**
+   * Initialize now and reload whenever a JSON file in shared/data changes.
+   *
+   * Called once at process start (index.ts), not per game room: the Unreal
+   * server never opens a Colyseus room, and before this the auth/character
+   * routes silently validated against the hardcoded catalogs instead of the
+   * editor's JSON — which rejected every save carrying an editor-only item.
+   */
+  static initializeAndWatch(): DataManager {
+    const dm = DataManager._instance ?? DataManager.initialize();
+    if (DataManager._watcher) return dm;
+
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      DataManager._watcher = watch(DATA_DIR, (_event, filename) => {
+        if (filename && !String(filename).endsWith('.json')) return;
+        if (timer) clearTimeout(timer);
+        // Debounced: the editor writes a file in more than one chunk.
+        timer = setTimeout(() => {
+          timer = null;
+          if (DataManager.reload()) {
+            console.log(`[DataManager] Reloaded after a change to ${filename ?? 'shared/data'}.`);
+          }
+        }, 400);
+      });
+      console.log(`[DataManager] Watching ${DATA_DIR} for changes.`);
+    } catch (err) {
+      console.warn('[DataManager] Could not watch the data directory; edits need a server restart.', err);
+    }
     return dm;
   }
 
@@ -127,39 +182,52 @@ export class DataManager {
       return JSON.parse(readFileSync(filePath, 'utf-8'));
     } catch (err) {
       console.warn(`[DataManager] Failed to parse ${filename}:`, err);
+      this._parseFailures.push(filename);
       return null;
     }
   }
 
   private loadItems(): void {
+    // Always seed with hardcoded catalog so items defined there are always
+    // available even if missing from (or not yet saved to) the JSON file.
+    const baseItems = { ...ITEM_CATALOG } as Record<string, ItemTemplate>;
+
     const json = this.loadJsonFile('items.json');
     if (json) {
       const loaded = loadItemsFromJson(json);
       if (loaded && Object.keys(loaded).length > 0) {
-        this._items = loaded;
+        // JSON takes precedence; hardcoded entries fill any gaps.
+        this._items = { ...baseItems, ...loaded };
         this._loadedFromJson['items'] = true;
         return;
       }
     }
-    // Fallback to hardcoded
-    this._items = { ...ITEM_CATALOG } as Record<string, ItemTemplate>;
+    // Pure hardcoded fallback
+    this._items = baseItems;
     this._loadedFromJson['items'] = false;
   }
 
   private loadSkills(): void {
+    // Always seed with hardcoded catalog so system skills (melee_attack,
+    // ranged_attack, etc.) are available even if missing from the JSON.
+    const baseSkills = { ...SKILL_CATALOG } as Record<string, SkillTemplate>;
+    const baseClassSkills = { ...CLASS_SKILLS } as Record<string, string[]>;
+
     const json = this.loadJsonFile('skills.json');
     if (json) {
       const loaded = loadSkillsFromJson(json);
       if (loaded && Object.keys(loaded.skills).length > 0) {
-        this._skills = loaded.skills;
-        this._classSkills = loaded.classSkills;
+        // JSON takes precedence; hardcoded entries fill any gaps.
+        this._skills = { ...baseSkills, ...loaded.skills };
+        // Per-class lists: JSON takes precedence per class.
+        this._classSkills = { ...baseClassSkills, ...loaded.classSkills };
         this._loadedFromJson['skills'] = true;
         return;
       }
     }
-    // Fallback to hardcoded
-    this._skills = { ...SKILL_CATALOG } as Record<string, SkillTemplate>;
-    this._classSkills = { ...CLASS_SKILLS } as Record<string, string[]>;
+    // Pure hardcoded fallback
+    this._skills = baseSkills;
+    this._classSkills = baseClassSkills;
     this._loadedFromJson['skills'] = false;
   }
 

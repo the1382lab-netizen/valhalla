@@ -2,8 +2,14 @@
  * Item definitions, enums, and catalog for the inventory system.
  * Follows the same pattern as classes.ts: enum IDs + Record lookup table.
  */
+import type { PaperdollSlot } from './paperdoll.js';
+import { WeaponStyle } from './paperdoll.js';
 import type { StatBlock } from './classes.js';
 export declare const INVENTORY_MAX_SLOTS = 32;
+export declare const LOOT_BAG_MERGE_RANGE = 80;
+export declare const LOOT_BAG_PICKUP_RANGE = 200;
+export declare const LOOT_BAG_DESPAWN_MS = 300000;
+export declare const LOOT_BAG_MAX_SLOTS = 18;
 export declare enum ItemId {
     IRON_SWORD = "iron_sword",
     OAK_STAFF = "oak_staff",
@@ -32,12 +38,22 @@ export declare enum ItemId {
 }
 export declare enum EquipSlotType {
     WEAPON = "weapon",
+    OFFHAND = "offhand",
     HELM = "helm",
     CHEST = "chest",
     LEGS = "legs",
     BOOTS = "boots",
+    GLOVES = "gloves",
+    BACK = "back",
     RING = "ring"
 }
+/** Every equip slot, in the order the character panel lists them. */
+export declare const EQUIP_SLOTS: EquipSlotType[];
+/**
+ * Equip slot -> paperdoll layer slot. `ring` has no visual layer, and the
+ * weapon hand is called `mainhand` in the sprite pack.
+ */
+export declare const EQUIP_SLOT_TO_PAPERDOLL: Partial<Record<EquipSlotType, PaperdollSlot>>;
 export declare enum ItemCategory {
     EQUIPMENT = "equipment",
     CONSUMABLE = "consumable",
@@ -52,6 +68,15 @@ export declare enum ItemRarity {
     LEGENDARY = "legendary"
 }
 export declare const RARITY_COLORS: Record<ItemRarity, string>;
+/** Configuration for how an equipment sprite sheet is structured. */
+export interface EquipSpriteConfig {
+    frameWidth: number;
+    frameHeight: number;
+    framesPerRow: number;
+    rows: number;
+}
+/** Default sprite config matching the character body sheet (4×9, 64×64). */
+export declare const DEFAULT_EQUIP_SPRITE_CONFIG: EquipSpriteConfig;
 export interface ItemTemplate {
     id: ItemId;
     name: string;
@@ -63,6 +88,40 @@ export interface ItemTemplate {
     maxStack: number;
     /** Stat bonuses when equipped (equipment only) */
     statBonuses?: Partial<StatBlock>;
+    /** Attack speed in ms when this weapon is equipped. Overrides class base attack speed. */
+    attackSpeedMs?: number;
+    /**
+     * Flat bonus added to the base damage constant before stat scaling.
+     * Stacks on top of BASE_MELEE_DAMAGE / BASE_RANGED_DAMAGE / BASE_SPELL_DAMAGE.
+     * Configurable per-item in the game editor.
+     */
+    attackDamage?: number;
+    /** Whether this is a ranged weapon (bow, crossbow). Enables ranged auto-attack when equipped. */
+    isRangedWeapon?: boolean;
+    /** Filename of walk/idle equipment sprite sheet overlay (in assets/sprites/equipment/) */
+    equipSpriteSheet?: string;
+    /** Filename of melee animation equipment sprite sheet overlay */
+    meleeSpriteSheet?: string;
+    /** Filename of ranged animation equipment sprite sheet overlay */
+    rangedSpriteSheet?: string;
+    /** Filename of cast animation equipment sprite sheet overlay */
+    castSpriteSheet?: string;
+    /** Sprite sheet layout config — defaults to matching the character body sheet */
+    equipSpriteConfig?: EquipSpriteConfig;
+    /** Filename of inventory icon image (in assets/sprites/icons/) */
+    inventoryIcon?: string;
+    /**
+     * Layer id in `assets/sprites/paperdoll/manifest.json`, e.g.
+     * `chest_iron_plate`. When set, the client draws this item as a paperdoll
+     * layer and ignores the four LPC sheet fields.
+     */
+    spriteId?: string;
+    /**
+     * How a weapon reads, and therefore which attack cycle the character plays:
+     * sword/greatsword/mace -> `attack`, bow -> `shoot`, staff -> `cast`.
+     * Weapons only.
+     */
+    weaponStyle?: WeaponStyle;
 }
 /** A single inventory slot (shared interface, not Colyseus schema). */
 export interface InventorySlot {

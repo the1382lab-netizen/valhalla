@@ -32,6 +32,10 @@ interface SkillTemplate {
   stackingMode?: 'replace' | 'stack' | 'extend';
   /** Max stacks (when stackingMode is 'stack'). */
   maxStacks?: number;
+  /** Whether this skill is an auto-attack (melee or ranged). */
+  isAutoAttack?: boolean;
+  /** Whether this skill requires a weapon to be equipped. */
+  requiresWeapon?: boolean;
   effectNotes: string;
 }
 
@@ -56,6 +60,45 @@ const DEFAULT_SKILL: Omit<SkillTemplate, 'id'> = {
 const RESOURCE_TYPES = ['mana', 'energy', 'none'] as const;
 const TARGET_TYPES = ['self', 'singleEnemy', 'singleAlly', 'aoeGround', 'aoeSelf', 'cone', 'passiveToggle'] as const;
 const CATEGORIES = ['offensive', 'defensive', 'healing', 'buff', 'debuff', 'utility'] as const;
+
+/**
+ * Reconcile classSkills arrays against the current skill definitions.
+ *
+ * Rules:
+ *  - Skills that no longer exist are removed from all class arrays.
+ *  - Skills whose classId changed are moved to their new class array (and
+ *    removed from any old ones).
+ *  - Skills whose classId is set but missing from their class array are
+ *    appended to it.
+ *  - Skills with no classId (e.g. shared skills like melee_attack) are left
+ *    wherever ClassEditor placed them — we don't touch those entries.
+ */
+function syncClassSkills(
+  skills: Record<string, SkillTemplate>,
+  existingClassSkills: Record<string, string[]>,
+): Record<string, string[]> {
+  // Step 1: copy + clean existing arrays
+  const result: Record<string, string[]> = {};
+  for (const [classId, skillIds] of Object.entries(existingClassSkills)) {
+    result[classId] = skillIds.filter((id) => {
+      const skill = skills[id];
+      if (!skill) return false;                            // deleted — drop
+      if (skill.classId && skill.classId !== classId) return false; // moved — drop
+      return true;
+    });
+  }
+
+  // Step 2: ensure every skill with a classId appears in its class array
+  for (const [skillId, skill] of Object.entries(skills)) {
+    if (!skill.classId) continue;
+    if (!result[skill.classId]) result[skill.classId] = [];
+    if (!result[skill.classId].includes(skillId)) {
+      result[skill.classId].push(skillId);
+    }
+  }
+
+  return result;
+}
 
 export const SkillEditor: React.FC = () => {
   const { skills, classes, selectedSkillId, setSelectedSkillId, updateData, markDirty, saveSection } = useEditorStore();
@@ -119,7 +162,9 @@ export const SkillEditor: React.FC = () => {
   const handleDeleteSkill = () => {
     if (!selectedSkill) return;
     const { [selectedSkillId!]: _, ...remaining } = skillsData;
-    updateData('skills', { ...skills.data, skills: remaining });
+    // Also purge the deleted skill from all classSkills arrays immediately.
+    const syncedClassSkills = syncClassSkills(remaining, skills.data.classSkills);
+    updateData('skills', { skills: remaining, classSkills: syncedClassSkills });
     setSelectedSkillId(null);
   };
 
@@ -131,6 +176,9 @@ export const SkillEditor: React.FC = () => {
   };
 
   const handleSave = async () => {
+    // Reconcile classSkills against current skill definitions before writing to disk.
+    const syncedClassSkills = syncClassSkills(skillsData, skills.data.classSkills);
+    updateData('skills', { ...skills.data, classSkills: syncedClassSkills });
     await saveSection('skills');
   };
 
@@ -324,9 +372,10 @@ export const SkillEditor: React.FC = () => {
                   <label className="form-label">Class</label>
                   <select
                     className="form-select"
-                    value={selectedSkill.classId}
-                    onChange={(e) => handleUpdateSkill({ classId: e.target.value })}
+                    value={selectedSkill.classId || ''}
+                    onChange={(e) => handleUpdateSkill({ classId: e.target.value || null as any })}
                   >
+                    <option value="">All Classes</option>
                     {classList.map((cid) => (
                       <option key={cid} value={cid}>
                         {cid}
@@ -660,6 +709,30 @@ export const SkillEditor: React.FC = () => {
                   )}
                 </div>
               ) : null}
+
+              {/* Auto-Attack Flags */}
+              <div className="form-row">
+                <div className="form-group">
+                  <label className="form-label form-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedSkill.isAutoAttack || false}
+                      onChange={(e) => handleUpdateSkill({ isAutoAttack: e.target.checked || undefined })}
+                    />
+                    <span>Auto-Attack Skill</span>
+                  </label>
+                </div>
+                <div className="form-group">
+                  <label className="form-label form-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedSkill.requiresWeapon || false}
+                      onChange={(e) => handleUpdateSkill({ requiresWeapon: e.target.checked || undefined })}
+                    />
+                    <span>Requires Weapon</span>
+                  </label>
+                </div>
+              </div>
 
               {/* Effect Notes */}
               <div className="form-group">

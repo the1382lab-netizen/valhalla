@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { PaperdollPreview, usePaperdollManifest } from '../../shared/PaperdollPreview';
 import { StatBlockEditor, StatBlock } from '../../shared/StatBlockEditor';
 
 interface StartingItem {
@@ -17,7 +18,16 @@ interface ClassTemplate {
   allowedArmor: 'cloth' | 'leather' | 'mail' | 'plate';
   baseSpeed: number;
   canUseMana: boolean;
+  baseMeleeAttackSpeedMs: number;
+  baseRangedAttackSpeedMs: number;
+  /** Line-of-sight vision range in UE units (cm) */
+  visionRange: number;
   startingItems?: StartingItem[];
+  bodyId?: string;
+  walkSpriteSheet?: string;
+  meleeSpriteSheet?: string;
+  rangedSpriteSheet?: string;
+  castSpriteSheet?: string;
 }
 
 const DEFAULT_CLASS: Omit<ClassTemplate, 'id'> = {
@@ -58,6 +68,9 @@ const DEFAULT_CLASS: Omit<ClassTemplate, 'id'> = {
   allowedArmor: 'cloth',
   baseSpeed: 5.5,
   canUseMana: true,
+  baseMeleeAttackSpeedMs: 2000,
+  baseRangedAttackSpeedMs: 0,
+  visionRange: 1200,
 };
 
 const ARMOR_TYPES = ['cloth', 'leather', 'mail', 'plate'] as const;
@@ -72,6 +85,16 @@ export const ClassEditor: React.FC = () => {
   const [newItemId, setNewItemId] = useState('');
   const [newItemQty, setNewItemQty] = useState(1);
   const [newItemEquipped, setNewItemEquipped] = useState(false);
+
+  // Character sprite sheet file list
+  const [characterSprites, setCharacterSprites] = useState<string[]>([]);
+  const paperdoll = usePaperdollManifest();
+  useEffect(() => {
+    fetch('/api/assets/sprites/characters')
+      .then(r => r.json())
+      .then(d => setCharacterSprites(d.files ?? []))
+      .catch(() => setCharacterSprites([]));
+  }, []);
 
   const classesData = classes.data.classes;
   const classSkillsData = skills.data.classSkills;
@@ -122,7 +145,7 @@ export const ClassEditor: React.FC = () => {
     if (!selectedClass || !newItemId) return;
     const existing = selectedClass.startingItems ?? [];
     // Prevent duplicate item entries
-    if (existing.some((si) => si.itemId === newItemId)) return;
+    if (existing.some((si: StartingItem) => si.itemId === newItemId)) return;
     const updated: StartingItem[] = [...existing, { itemId: newItemId, quantity: newItemQty, equipped: newItemEquipped }];
     handleUpdateClass({ startingItems: updated });
     setNewItemId('');
@@ -132,13 +155,13 @@ export const ClassEditor: React.FC = () => {
 
   const handleRemoveStartingItem = (itemId: string) => {
     if (!selectedClass) return;
-    const updated = (selectedClass.startingItems ?? []).filter((si) => si.itemId !== itemId);
+    const updated = (selectedClass.startingItems ?? []).filter((si: StartingItem) => si.itemId !== itemId);
     handleUpdateClass({ startingItems: updated });
   };
 
   const handleUpdateStartingItem = (itemId: string, changes: Partial<StartingItem>) => {
     if (!selectedClass) return;
-    const updated = (selectedClass.startingItems ?? []).map((si) =>
+    const updated = (selectedClass.startingItems ?? []).map((si: StartingItem) =>
       si.itemId === itemId ? { ...si, ...changes } : si
     );
     handleUpdateClass({ startingItems: updated });
@@ -287,6 +310,17 @@ export const ClassEditor: React.FC = () => {
                         onChange={(e) => handleUpdateClass({ baseSpeed: parseFloat(e.target.value) || 5.5 })}
                       />
                     </div>
+                    <div className="form-group">
+                      <label className="form-label">Vision Range (cm)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={0}
+                        step={50}
+                        value={selectedClass.visionRange ?? 1200}
+                        onChange={(e) => handleUpdateClass({ visionRange: parseInt(e.target.value, 10) || 0 })}
+                      />
+                    </div>
                   </div>
 
                   <div className="form-group">
@@ -298,6 +332,84 @@ export const ClassEditor: React.FC = () => {
                       />
                       <span>Can Use Mana</span>
                     </label>
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Base Melee Attack Speed (ms)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={0}
+                        step={100}
+                        value={selectedClass.baseMeleeAttackSpeedMs ?? 2000}
+                        onChange={(e) => handleUpdateClass({ baseMeleeAttackSpeedMs: parseInt(e.target.value, 10) || 0 })}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">Base Ranged Attack Speed (ms)</label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={0}
+                        step={100}
+                        value={selectedClass.baseRangedAttackSpeedMs ?? 0}
+                        onChange={(e) => handleUpdateClass({ baseRangedAttackSpeedMs: parseInt(e.target.value, 10) || 0 })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* ── Paperdoll body ───────────────────────── */}
+                  <div style={{ marginTop: 16, borderTop: '1px solid #444', paddingTop: 12 }}>
+                    <label className="form-label" style={{ fontWeight: 'bold', marginBottom: 8 }}>
+                      Default Body
+                    </label>
+                    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                      <select
+                        className="form-select"
+                        style={{ flex: 1 }}
+                        value={selectedClass.bodyId || ''}
+                        onChange={(e) => handleUpdateClass({ bodyId: e.target.value || undefined })}
+                      >
+                        <option value="">Default</option>
+                        {(paperdoll?.bodies ?? []).map(b => (
+                          <option key={b.id} value={b.id}>{b.label}</option>
+                        ))}
+                      </select>
+                      <PaperdollPreview
+                        manifest={paperdoll}
+                        bodyId={selectedClass.bodyId || 'body_tan'}
+                        anim="walk"
+                        dir="se"
+                        scale={2}
+                      />
+                    </div>
+                    <div style={{ fontSize: '0.8em', color: '#888', marginTop: 6 }}>
+                      New characters of this class start with this body.
+                    </div>
+                  </div>
+
+                  {/* ── Character Sprite Sheets ──────────────── */}
+                  <div style={{ marginTop: 16, borderTop: '1px solid #444', paddingTop: 12 }}>
+                    <label className="form-label" style={{ fontWeight: 'bold', marginBottom: 8 }}>Character Sprites</label>
+                    {(['walk', 'melee', 'ranged', 'cast'] as const).map(animType => {
+                      const field = `${animType}SpriteSheet` as keyof ClassTemplate;
+                      return (
+                        <div key={animType} className="form-group" style={{ marginBottom: 6 }}>
+                          <label className="form-label" style={{ textTransform: 'capitalize' }}>{animType} Sprite</label>
+                          <select
+                            className="form-select"
+                            value={(selectedClass as any)[field] || ''}
+                            onChange={(e) => handleUpdateClass({ [field]: e.target.value || undefined })}
+                          >
+                            <option value="">None (fallback)</option>
+                            {characterSprites.map(f => (
+                              <option key={f} value={f}>{f}</option>
+                            ))}
+                          </select>
+                        </div>
+                      );
+                    })}
                   </div>
                 </form>
               )}
@@ -479,7 +591,7 @@ export const ClassEditor: React.FC = () => {
                         No starting items configured
                       </div>
                     ) : (
-                      (selectedClass.startingItems ?? []).map((si) => {
+                      (selectedClass.startingItems ?? []).map((si: StartingItem) => {
                         const itemData = itemCatalog[si.itemId];
                         const itemName = itemData?.name || si.itemId;
                         return (

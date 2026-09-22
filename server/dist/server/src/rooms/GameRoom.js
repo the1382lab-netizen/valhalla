@@ -1,6 +1,6 @@
 import { Room } from '@colyseus/core';
 import { GameState } from '../schema/GameState.js';
-import { PlayerState, InventorySlotState } from '../schema/PlayerState.js';
+import { PlayerState, InventorySlotState, setEquipped, equippedEntries } from '../schema/PlayerState.js';
 import { CollisionSystem } from '../systems/CollisionSystem.js';
 import { MovementSystem } from '../systems/MovementSystem.js';
 import { CombatSystem } from '../systems/CombatSystem.js';
@@ -10,7 +10,7 @@ import { DataManager } from '../systems/DataManager.js';
 import { NPCSystem } from '../systems/NPCSystem.js';
 import { SpellProjectileSystem } from '../systems/SpellProjectileSystem.js';
 import { LootBagSystem } from '../systems/LootBagSystem.js';
-import { MessageType, SERVER_TICK_RATE, EquipSlotType, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, hasRangedAttack, xpRequiredForLevel, MAX_LEVEL, } from '@valhalla/shared';
+import { MessageType, SERVER_TICK_RATE, SAVE_INTERVAL_MS, computeDerivedStats, ZoneId, ACTION_BAR_SLOTS, xpRequiredForLevel, MAX_LEVEL, } from '@valhalla/shared';
 import { equipItem, unequipItem, unequipItemToSlot, dropInventoryItem, dropEquippedItem, swapInventorySlots } from '../systems/InventorySystem.js';
 import { verifyToken } from '../services/AuthService.js';
 import { loadCharacter, saveCharacter, } from '../services/CharacterService.js';
@@ -165,21 +165,47 @@ export class GameRoom extends Room {
             const events = this.skillSystem.cancelCast(player, Date.now());
             this.broadcastSkillEvents(events, client);
         });
+        // ── Auto-Attack Messages ──
+        this.onMessage(MessageType.START_AUTO_ATTACK, (client, data) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            const now = Date.now();
+            const events = this.skillSystem.startAutoAttack(player, data.skillId, data.targetId, this.state.players, this.state.npcs, now);
+            this.broadcastSkillEvents(events, client);
+        });
+        this.onMessage(MessageType.STOP_AUTO_ATTACK, (client) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player)
+                return;
+            const events = this.skillSystem.stopAutoAttack(player);
+            this.broadcastSkillEvents(events);
+        });
         // Set action bar slots
         this.onMessage(MessageType.SET_ACTION_BAR, (client, data) => {
             const player = this.state.players.get(client.sessionId);
             if (!player)
                 return;
-            // Validate: each skill must belong to the player's class (or be empty)
+            // Validate: each skill must belong to the player's class (or be empty or a cross-class skill)
             const classSkills = DataManager.instance.getClassSkills(player.classId);
             const validated = [];
             for (let i = 0; i < ACTION_BAR_SLOTS; i++) {
                 const skillId = data.slots?.[i] ?? '';
-                if (skillId === '' || classSkills.includes(skillId)) {
+                if (skillId === '') {
+                    validated.push('');
+                }
+                else if (classSkills.includes(skillId)) {
                     validated.push(skillId);
                 }
                 else {
-                    validated.push(''); // Invalid skill — clear the slot
+                    // Check if it's a cross-class skill (classId: null, like melee_attack)
+                    const skill = DataManager.instance.getSkill(skillId);
+                    if (skill && skill.classId === null) {
+                        validated.push(skillId);
+                    }
+                    else {
+                        validated.push(''); // Invalid skill — clear the slot
+                    }
                 }
             }
             player.actionBar = validated;
@@ -427,8 +453,13 @@ export class GameRoom extends Room {
                 const existingClient = this.clients.find(c => c.sessionId === existingSessionId);
                 if (existingClient) {
                     console.log(`[GameRoom] Kicking duplicate session for user ${auth.userId}`);
-                    existingClient.send('kicked', { reason: 'Logged in from another location.' });
-                    existingClient.leave(4001); // Custom close code
+                    try {
+                        existingClient.send('kicked', { reason: 'Logged in from another location.' });
+                        existingClient.leave(4001); // Custom close code
+                    }
+                    catch {
+                        // Connection may already be closed — safe to ignore
+                    }
                 }
                 // Clean up old session data
                 this.state.players.delete(existingSessionId);
@@ -487,28 +518,11 @@ export class GameRoom extends Room {
         const safePos = this.findSafeSpawn(player.x, player.y, playerZone.collision, playerZone.respawnPoint);
         player.x = safePos.x;
         player.y = safePos.y;
+        // ── Restore appearance ──
+        player.bodyId = charData.bodyId || '';
         // ── Restore equipment ──
         for (const equip of charData.equipment) {
-            switch (equip.slotType) {
-                case EquipSlotType.WEAPON:
-                    player.equipWeapon = equip.itemId;
-                    break;
-                case EquipSlotType.HELM:
-                    player.equipHelm = equip.itemId;
-                    break;
-                case EquipSlotType.CHEST:
-                    player.equipChest = equip.itemId;
-                    break;
-                case EquipSlotType.LEGS:
-                    player.equipLegs = equip.itemId;
-                    break;
-                case EquipSlotType.BOOTS:
-                    player.equipBoots = equip.itemId;
-                    break;
-                case EquipSlotType.RING:
-                    player.equipRing = equip.itemId;
-                    break;
-            }
+            setEquipped(player, equip.slotType, equip.itemId);
         }
         // ── Restore inventory ──
         // Sort by slotIndex to maintain order
@@ -593,18 +607,8 @@ export class GameRoom extends Room {
                 if (player.alive) {
                     this.movement.processInput(player, input, dtSec, zoneEntry.collision);
                 }
-                // Handle fire input — only Rangers support a ranged basic attack
-                if (input.fire && player.alive && hasRangedAttack(player.classId)) {
-                    const proj = this.combat.tryFire(player, now);
-                    if (proj) {
-                        this.state.projectiles.set(proj.id, proj);
-                    }
-                }
-                // Handle melee input
-                if (input.melee && player.alive) {
-                    const events = this.combat.tryMelee(player, this.state.players, this.state.npcs, this.npcSystem, now, (a, b) => this.isPartyMember(a, b));
-                    this.broadcastCombatEvents(events);
-                }
+                // NOTE: Melee and ranged attacks are now handled by the auto-attack system
+                // via START_AUTO_ATTACK / STOP_AUTO_ATTACK messages (see SkillSystem).
             }
             // Clear the queue
             queue.length = 0;
@@ -626,6 +630,9 @@ export class GameRoom extends Room {
         // 4. Skill system update (cast progression, energy regen, buff ticking)
         const skillEvents = this.skillSystem.update(this.state.players, dtSec, now, this.state.spellProjectiles, this.state.npcs, this.npcSystem, (pid, xp) => this.awardKillXP(pid, xp), (a, b) => this.isPartyMember(a, b));
         this.broadcastSkillEvents(skillEvents);
+        // 4b. Auto-attack update
+        const autoAttackEvents = this.skillSystem.updateAutoAttacks(this.state.players, this.state.npcs, this.npcSystem, now, (a, b) => this.isPartyMember(a, b), (pid, xp) => this.awardKillXP(pid, xp));
+        this.broadcastSkillEvents(autoAttackEvents);
         // 5. Check respawns — handle per-player zone respawn points
         const respawnEvents = this.checkRespawnsMultiZone(now);
         this.broadcastCombatEvents(respawnEvents);
@@ -683,6 +690,11 @@ export class GameRoom extends Room {
                     // Load the target zone and find a safe spawn position
                     const targetEntry = this.loadZoneCache(toZone);
                     const safeSpawn = this.findSafeSpawn(portal.targetSpawn.x, portal.targetSpawn.y, targetEntry.collision, targetEntry.respawnPoint);
+                    // Stop auto-attack on zone change
+                    if (player.autoAttackActive) {
+                        const stopEvents = this.skillSystem.stopAutoAttack(player);
+                        this.broadcastSkillEvents(stopEvents);
+                    }
                     player.zoneId = toZone;
                     player.x = safeSpawn.x;
                     player.y = safeSpawn.y;
@@ -858,6 +870,79 @@ export class GameRoom extends Room {
                         amount: event.heal,
                     });
                     break;
+                case 'autoAttackStarted':
+                    this.broadcast(MessageType.AUTO_ATTACK_STARTED, {
+                        playerId: event.playerId,
+                        skillId: event.skillId,
+                        targetId: event.targetId,
+                    });
+                    break;
+                case 'autoAttackStopped':
+                    this.broadcast(MessageType.AUTO_ATTACK_STOPPED, {
+                        playerId: event.playerId,
+                    });
+                    break;
+                case 'autoAttackHit': {
+                    // Broadcast the hit for client-side VFX (damage numbers, cosmetic projectile, etc.)
+                    this.broadcast(MessageType.AUTO_ATTACK_HIT, {
+                        attackerId: event.attackerId,
+                        targetId: event.targetId,
+                        damage: event.damage,
+                        damageType: event.damageType,
+                        isCrit: event.isCrit,
+                        isBlock: event.isBlock,
+                        isDodge: event.isDodge,
+                        isMiss: event.isMiss,
+                    });
+                    // Also send standard playerHit / npcHit so existing client damage flash works
+                    if (event.damage > 0 && !event.isMiss && !event.isDodge) {
+                        const isNpc = this.state.npcs.has(event.targetId);
+                        if (isNpc) {
+                            const npc = this.state.npcs.get(event.targetId);
+                            this.broadcast(MessageType.NPC_HIT, {
+                                targetId: event.targetId,
+                                attackerId: event.attackerId,
+                                damage: event.damage,
+                                remainingHp: npc?.hp ?? 0,
+                                isCrit: event.isCrit,
+                                blocked: event.isBlock,
+                                skillId: event.skillId,
+                            });
+                            if (npc && !npc.alive) {
+                                this.broadcast('npcDied', {
+                                    targetId: event.targetId,
+                                    killerId: event.attackerId,
+                                    xpReward: event.xpReward ?? 0,
+                                });
+                                this.spawnNpcLoot(event.targetId);
+                            }
+                        }
+                        else {
+                            const targetPlayer = this.state.players.get(event.targetId);
+                            this.broadcast(MessageType.PLAYER_HIT, {
+                                targetId: event.targetId,
+                                attackerId: event.attackerId,
+                                damage: event.damage,
+                                remainingHp: targetPlayer?.hp ?? 0,
+                                isCrit: event.isCrit,
+                                blocked: event.isBlock,
+                            });
+                            if (targetPlayer && !targetPlayer.alive) {
+                                this.broadcast(MessageType.PLAYER_DIED, {
+                                    targetId: event.targetId,
+                                    killerId: event.attackerId,
+                                });
+                            }
+                        }
+                    }
+                    else if (event.isMiss) {
+                        this.broadcast(MessageType.MISSED, { targetId: event.targetId, attackerId: event.attackerId });
+                    }
+                    else if (event.isDodge) {
+                        this.broadcast(MessageType.DODGED, { targetId: event.targetId, attackerId: event.attackerId });
+                    }
+                    break;
+                }
             }
         }
     }
@@ -965,22 +1050,30 @@ export class GameRoom extends Room {
             const members = this.parties.get(partyId);
             if (members && members.size > 1) {
                 const bonusXP = Math.floor(baseXP * 1.10);
-                const zoneMembers = [];
+                const zoneSids = [];
                 for (const sid of members) {
                     const p = this.state.players.get(sid);
                     if (p && p.alive && p.zoneId === killer.zoneId)
-                        zoneMembers.push(p);
+                        zoneSids.push(sid);
                 }
-                if (zoneMembers.length > 0) {
-                    const share = Math.max(1, Math.floor(bonusXP / zoneMembers.length));
-                    for (const p of zoneMembers)
+                if (zoneSids.length > 0) {
+                    const share = Math.max(1, Math.floor(bonusXP / zoneSids.length));
+                    for (const sid of zoneSids) {
+                        const p = this.state.players.get(sid);
                         p.xp = (p.xp ?? 0) + share;
+                        const client = this.clients.find(c => c.sessionId === sid);
+                        if (client)
+                            client.send(MessageType.XP_GAINED, { amount: share });
+                    }
                     return;
                 }
             }
         }
         // Solo or no zone-mates: full XP to killer
         killer.xp = (killer.xp ?? 0) + baseXP;
+        const killerClient = this.clients.find(c => c.sessionId === killerId);
+        if (killerClient)
+            killerClient.send(MessageType.XP_GAINED, { amount: baseXP });
     }
     // ── Persistence Helpers ──────────────────────────────────
     /**
@@ -999,19 +1092,7 @@ export class GameRoom extends Room {
                 });
             }
             // Build equipment data
-            const equipment = [];
-            if (player.equipWeapon)
-                equipment.push({ slotType: EquipSlotType.WEAPON, itemId: player.equipWeapon });
-            if (player.equipHelm)
-                equipment.push({ slotType: EquipSlotType.HELM, itemId: player.equipHelm });
-            if (player.equipChest)
-                equipment.push({ slotType: EquipSlotType.CHEST, itemId: player.equipChest });
-            if (player.equipLegs)
-                equipment.push({ slotType: EquipSlotType.LEGS, itemId: player.equipLegs });
-            if (player.equipBoots)
-                equipment.push({ slotType: EquipSlotType.BOOTS, itemId: player.equipBoots });
-            if (player.equipRing)
-                equipment.push({ slotType: EquipSlotType.RING, itemId: player.equipRing });
+            const equipment = equippedEntries(player);
             const data = {
                 hp: player.hp,
                 mana: player.mana,

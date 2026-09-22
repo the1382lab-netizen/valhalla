@@ -38,6 +38,14 @@
       "fromZone": "grasslands",
       "width": 128,
       "height": 64
+    },
+    {
+      "id": "spawn_1771783052807",
+      "type": "enemy_spawn",
+      "x": 3392,
+      "y": 739,
+      "label": "Tough Guy",
+      "templateId": "npc_1771709765831"
     }
   ]
 }

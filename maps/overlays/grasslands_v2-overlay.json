@@ -1,0 +1,256 @@
+{
+  "version": "1.0.0",
+  "spawnPoints": [
+    {
+      "id": "grasslands_v2_player_spawn_001",
+      "type": "player_spawn",
+      "x": 2208,
+      "y": 1824,
+      "properties": {},
+      "label": "Eldmoor market"
+    },
+    {
+      "id": "grasslands_v2_portal_002",
+      "type": "portal",
+      "label": "Greyfell Cave",
+      "templateId": "cave_dungeon",
+      "x": 6336,
+      "y": 5632,
+      "width": 192,
+      "height": 192,
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_entry_003",
+      "type": "zone_entry",
+      "x": 6432,
+      "y": 6048,
+      "label": "From Greyfell Cave",
+      "templateId": "cave_dungeon",
+      "fromZone": "cave_dungeon",
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_portal_004",
+      "type": "portal",
+      "label": "Scorched Desert",
+      "templateId": "desert",
+      "x": 7552,
+      "y": 3712,
+      "width": 448,
+      "height": 576,
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_entry_005",
+      "type": "zone_entry",
+      "x": 7456,
+      "y": 4000,
+      "label": "From Scorched Desert",
+      "templateId": "desert",
+      "fromZone": "desert",
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_portal_006",
+      "type": "portal",
+      "label": "Grasslands (old road)",
+      "templateId": "grasslands",
+      "x": 1984,
+      "y": 128,
+      "width": 384,
+      "height": 256,
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_entry_007",
+      "type": "zone_entry",
+      "x": 2208,
+      "y": 480,
+      "label": "From the old road",
+      "templateId": "grasslands",
+      "fromZone": "grasslands",
+      "properties": {}
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_008",
+      "type": "npc_spawn",
+      "x": 1312,
+      "y": 1248,
+      "properties": {},
+      "label": "Innkeeper, Gilded Stag",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_009",
+      "type": "npc_spawn",
+      "x": 3104,
+      "y": 2016,
+      "properties": {},
+      "label": "Innkeeper, Wandering Boar",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_010",
+      "type": "npc_spawn",
+      "x": 1248,
+      "y": 2080,
+      "properties": {},
+      "label": "Shopkeeper",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_011",
+      "type": "npc_spawn",
+      "x": 2016,
+      "y": 1440,
+      "properties": {},
+      "label": "Market trader",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_012",
+      "type": "npc_spawn",
+      "x": 2400,
+      "y": 1824,
+      "properties": {},
+      "label": "Market trader",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_013",
+      "type": "npc_spawn",
+      "x": 2208,
+      "y": 2784,
+      "properties": {},
+      "label": "Town guard",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_014",
+      "type": "npc_spawn",
+      "x": 3360,
+      "y": 1696,
+      "properties": {},
+      "label": "Town guard",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_npc_spawn_015",
+      "type": "npc_spawn",
+      "x": 5856,
+      "y": 1440,
+      "properties": {},
+      "label": "Farmer",
+      "templateId": "npc_1771781907844"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_016",
+      "type": "enemy_spawn",
+      "x": 1952,
+      "y": 4000,
+      "properties": {},
+      "label": "Wolf",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_017",
+      "type": "enemy_spawn",
+      "x": 1184,
+      "y": 4640,
+      "properties": {},
+      "label": "Wolf",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_018",
+      "type": "enemy_spawn",
+      "x": 1696,
+      "y": 5664,
+      "properties": {},
+      "label": "Bandit",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_019",
+      "type": "enemy_spawn",
+      "x": 1248,
+      "y": 6112,
+      "properties": {},
+      "label": "Bandit",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_020",
+      "type": "enemy_spawn",
+      "x": 3808,
+      "y": 3872,
+      "properties": {},
+      "label": "Boar",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_021",
+      "type": "enemy_spawn",
+      "x": 4768,
+      "y": 4512,
+      "properties": {},
+      "label": "Boar",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_022",
+      "type": "enemy_spawn",
+      "x": 5920,
+      "y": 5152,
+      "properties": {},
+      "label": "Hill raider",
+      "templateId": "npc_1771709765831"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_023",
+      "type": "enemy_spawn",
+      "x": 7072,
+      "y": 6176,
+      "properties": {},
+      "label": "Hill raider",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_024",
+      "type": "enemy_spawn",
+      "x": 6624,
+      "y": 7008,
+      "properties": {},
+      "label": "Hill raider",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_025",
+      "type": "enemy_spawn",
+      "x": 5536,
+      "y": 2208,
+      "properties": {},
+      "label": "Crow",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_026",
+      "type": "enemy_spawn",
+      "x": 6944,
+      "y": 1824,
+      "properties": {},
+      "label": "Crow",
+      "templateId": "npc_1771431708366"
+    },
+    {
+      "id": "grasslands_v2_enemy_spawn_027",
+      "type": "enemy_spawn",
+      "x": 4448,
+      "y": 5344,
+      "properties": {},
+      "label": "River lurker",
+      "templateId": "npc_1771709765831"
+    }
+  ]
+}

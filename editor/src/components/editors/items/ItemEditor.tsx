@@ -1,9 +1,18 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { PaperdollPreview, usePaperdollManifest } from '../../shared/PaperdollPreview';
 
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
-const CATEGORIES = ['weapon', 'armor', 'accessory', 'consumable', 'misc', 'quest'];
-const EQUIP_SLOTS = ['weapon', 'helm', 'chest', 'legs', 'boots', 'ring'];
+// Must match ItemCategory in shared/src/items.ts
+const CATEGORIES = ['equipment', 'consumable', 'quest', 'misc'];
+// Must match EquipSlotType in shared/src/items.ts
+const EQUIP_SLOTS = ['weapon', 'offhand', 'helm', 'chest', 'legs', 'boots', 'gloves', 'back', 'ring'];
+const WEAPON_STYLES = ['sword', 'greatsword', 'mace', 'bow', 'staff'];
+/** Equip slot -> paperdoll layer slot; `ring` has no visual layer. */
+const SLOT_TO_PAPERDOLL: Record<string, string> = {
+  weapon: 'mainhand', offhand: 'offhand', helm: 'helm', chest: 'chest',
+  legs: 'legs', boots: 'boots', gloves: 'gloves', back: 'back',
+};
 const STAT_TYPES: { key: string; label: string; step: string }[] = [
   { key: 'hp',              label: 'HP',               step: '1'    },
   { key: 'mana',            label: 'Mana',             step: '1'    },
@@ -39,8 +48,18 @@ interface ItemTemplate {
   maxStack: number;
   statBonuses: Record<string, number>;
   equipSpriteSheet?: string;
+  meleeSpriteSheet?: string;
+  rangedSpriteSheet?: string;
+  castSpriteSheet?: string;
   equipSpriteConfig?: EquipSpriteConfig;
   inventoryIcon?: string;
+  spriteId?: string;
+  /** Valhalla 2.0 art id — UE resolves the mesh by meshId if set, else spriteId. */
+  meshId?: string;
+  weaponStyle?: string;
+  attackSpeedMs?: number;
+  attackDamage?: number;
+  isRangedWeapon?: boolean;
 }
 
 const DEFAULT_SPRITE_CONFIG: EquipSpriteConfig = {
@@ -60,7 +79,12 @@ export const ItemEditor: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [equipmentSprites, setEquipmentSprites] = useState<string[]>([]);
   const [iconFiles, setIconFiles] = useState<string[]>([]);
+  const [meshIds, setMeshIds] = useState<string[]>([]);
   const [showSpriteConfig, setShowSpriteConfig] = useState(false);
+  const [showLegacySprites, setShowLegacySprites] = useState(false);
+  const [previewAnim, setPreviewAnim] = useState('walk');
+  const [previewDir, setPreviewDir] = useState('se');
+  const paperdoll = usePaperdollManifest();
 
   // Fetch available sprite sheets and icons from the server
   useEffect(() => {
@@ -72,6 +96,11 @@ export const ItemEditor: React.FC = () => {
       .then(r => r.json())
       .then(data => setIconFiles(data.files || []))
       .catch(() => setIconFiles([]));
+    // Valhalla 2.0 art ids (UE equipment meshes)
+    fetch('/api/assets/mesh-ids')
+      .then(r => r.json())
+      .then(data => setMeshIds(data.ids || []))
+      .catch(() => setMeshIds([]));
   }, []);
 
   const itemList = useMemo(() => {
@@ -275,70 +304,244 @@ export const ItemEditor: React.FC = () => {
                 </select>
               </div>
 
-              {/* ── Equipment Sprite Sheet Overlay ──────────── */}
-              <div className="form-group">
-                <label className="form-label">Equipment Sprite Sheet</label>
-                <select
-                  className="form-select"
-                  value={selectedItem.equipSpriteSheet || ''}
-                  onChange={(e) => handleUpdateItem({ equipSpriteSheet: e.target.value || undefined })}
-                >
-                  <option value="">None</option>
-                  {equipmentSprites.map(f => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-                {selectedItem.equipSpriteSheet && (
-                  <div style={{ marginTop: 8 }}>
-                    <div style={{
-                      display: 'inline-block',
-                      width: 64,
-                      height: 64,
-                      overflow: 'hidden',
-                      border: '1px solid #555',
-                      borderRadius: 4,
-                      background: '#222',
-                    }}>
-                      <img
-                        src={`/assets/sprites/equipment/${selectedItem.equipSpriteSheet}`}
-                        alt="Sprite preview"
-                        style={{
-                          imageRendering: 'pixelated',
-                          width: (selectedItem.equipSpriteConfig?.framesPerRow ?? 9) * (selectedItem.equipSpriteConfig?.frameWidth ?? 64),
-                          height: (selectedItem.equipSpriteConfig?.rows ?? 4) * (selectedItem.equipSpriteConfig?.frameHeight ?? 64),
-                          objectFit: 'none',
-                          objectPosition: '0 0',
-                          maxWidth: 'none',
+              {/* ── Weapon Stats (only for weapons) ──── */}
+              {selectedItem.equipSlot === 'weapon' && (
+                <>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Attack Damage</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={selectedItem.attackDamage ?? 0}
+                        onChange={(e) => {
+                          const v = parseInt(e.target.value, 10);
+                          handleUpdateItem({ attackDamage: v > 0 ? v : undefined });
                         }}
                       />
                     </div>
-                    <button
-                      className="btn btn-ghost"
-                      style={{ marginLeft: 8, fontSize: '0.8em' }}
-                      onClick={() => setShowSpriteConfig(!showSpriteConfig)}
-                    >
-                      {showSpriteConfig ? '▼ Hide Config' : '▶ Sprite Config'}
-                    </button>
-                    {showSpriteConfig && (
-                      <div className="stat-grid" style={{ marginTop: 8 }}>
-                        {(['frameWidth', 'frameHeight', 'framesPerRow', 'rows'] as const).map(key => (
-                          <div key={key} className="stat-row">
-                            <div className="stat-label">{key}</div>
-                            <div className="stat-value">
-                              <input
-                                type="number"
-                                min="1"
-                                value={(selectedItem.equipSpriteConfig || DEFAULT_SPRITE_CONFIG)[key]}
-                                onChange={(e) => handleUpdateSpriteConfig(key, parseInt(e.target.value, 10) || 1)}
-                              />
-                            </div>
-                          </div>
-                        ))}
+                    <div className="form-group">
+                      <label className="form-label">Attack Speed (ms)</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min={0}
+                        step={100}
+                        value={selectedItem.attackSpeedMs ?? 0}
+                        onChange={(e) => handleUpdateItem({ attackSpeedMs: parseInt(e.target.value, 10) || undefined })}
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label form-checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={selectedItem.isRangedWeapon || false}
+                        onChange={(e) => handleUpdateItem({ isRangedWeapon: e.target.checked || undefined })}
+                      />
+                      <span>Ranged Weapon</span>
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {/* ── Paperdoll layer ── */}
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 'bold' }}>Appearance</label>
+                {!selectedItem.equipSlot && (
+                  <div style={{ fontSize: '0.85em', color: '#888' }}>
+                    Set an equip slot to give this item an appearance.
+                  </div>
+                )}
+                {selectedItem.equipSlot && !SLOT_TO_PAPERDOLL[selectedItem.equipSlot] && (
+                  <div style={{ fontSize: '0.85em', color: '#888' }}>
+                    The {selectedItem.equipSlot} slot has no visual layer.
+                  </div>
+                )}
+                {selectedItem.equipSlot && SLOT_TO_PAPERDOLL[selectedItem.equipSlot] && (
+                  <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{ flex: 1 }}>
+                      <select
+                        className="form-select"
+                        value={selectedItem.spriteId || ''}
+                        onChange={(e) => {
+                          const spriteId = e.target.value || undefined;
+                          handleUpdateItem({
+                            spriteId,
+                            // keep the inventory icon in step unless it was set by hand
+                            inventoryIcon: spriteId ? `${spriteId}.png` : undefined,
+                          });
+                        }}
+                      >
+                        <option value="">None</option>
+                        {(paperdoll?.items ?? [])
+                          .filter(l => l.slot === SLOT_TO_PAPERDOLL[selectedItem.equipSlot!])
+                          .map(l => <option key={l.id} value={l.id}>{l.label}</option>)}
+                      </select>
+
+                      {selectedItem.equipSlot === 'weapon' && (
+                        <div style={{ marginTop: 6 }}>
+                          <label className="form-label" style={{ fontSize: '0.85em' }}>
+                            Weapon style &mdash; picks the attack animation
+                          </label>
+                          <select
+                            className="form-select"
+                            value={selectedItem.weaponStyle || ''}
+                            onChange={(e) => handleUpdateItem({ weaponStyle: e.target.value || undefined })}
+                          >
+                            <option value="">None (melee swing)</option>
+                            {WEAPON_STYLES.map(w => (
+                              <option key={w} value={w}>
+                                {w} &rarr; {w === 'bow' ? 'shoot' : w === 'staff' ? 'cast' : 'attack'}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                        <select className="form-select" style={{ flex: 1 }}
+                                value={previewAnim} onChange={e => setPreviewAnim(e.target.value)}>
+                          {(paperdoll?.animations ?? []).map(a => (
+                            <option key={a.name} value={a.name}>{a.name}</option>
+                          ))}
+                        </select>
+                        <select className="form-select" style={{ flex: 1 }}
+                                value={previewDir} onChange={e => setPreviewDir(e.target.value)}>
+                          {(paperdoll?.directions ?? []).map(d => (
+                            <option key={d} value={d}>{d.toUpperCase()}</option>
+                          ))}
+                        </select>
                       </div>
-                    )}
+                    </div>
+
+                    <PaperdollPreview
+                      manifest={paperdoll}
+                      layerId={selectedItem.spriteId}
+                      anim={previewAnim}
+                      dir={previewDir}
+                      scale={2}
+                    />
                   </div>
                 )}
               </div>
+
+              {/* ── Valhalla 2.0 mesh id ── */}
+              <div className="form-group">
+                <label className="form-label">Mesh ID (Valhalla 2.0)</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  list="valhalla2-mesh-ids"
+                  placeholder={selectedItem.spriteId || 'defaults to spriteId'}
+                  value={selectedItem.meshId || ''}
+                  onChange={(e) => handleUpdateItem({ meshId: e.target.value.trim() || undefined })}
+                />
+                <datalist id="valhalla2-mesh-ids">
+                  {meshIds.map(id => <option key={id} value={id} />)}
+                </datalist>
+                <div style={{ fontSize: '0.85em', color: '#888', marginTop: 4 }}>
+                  Defaults to spriteId. Unreal loads <code>SK_&lt;id&gt;.glb</code> / <code>SM_&lt;id&gt;.glb</code> from
+                  {' '}<code>Import/Characters/Equipment/</code>.
+                  {meshIds.length === 0
+                    ? ' Art id list unavailable — check VALHALLA2_IMPORT_DIR on the editor server.'
+                    : ` ${meshIds.length} art ids available.`}
+                </div>
+                {selectedItem.meshId && meshIds.length > 0 && !meshIds.includes(selectedItem.meshId) && (
+                  <div style={{ fontSize: '0.85em', color: '#ffdd88', marginTop: 4 }}>
+                    ⚠ "{selectedItem.meshId}" is not one of the {meshIds.length} known art ids.
+                  </div>
+                )}
+              </div>
+
+              {/* ── Legacy LPC sheets ── */}
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 'bold', cursor: 'pointer' }}
+                       onClick={() => setShowLegacySprites(v => !v)}>
+                  {showLegacySprites ? '\u25be' : '\u25b8'} Legacy LPC sprite sheets
+                </label>
+                <div style={{ fontSize: '0.8em', color: '#888', marginBottom: 6 }}>
+                  Only used when this item has no paperdoll layer above.
+                </div>
+              </div>
+              {showLegacySprites && (
+              <div className="form-group">
+                <label className="form-label" style={{ fontWeight: 'bold' }}>Equipment Sprite Sheets</label>
+                {([
+                  ['Walk / Idle', 'equipSpriteSheet'],
+                  ['Melee', 'meleeSpriteSheet'],
+                  ['Ranged', 'rangedSpriteSheet'],
+                  ['Cast', 'castSpriteSheet'],
+                ] as [string, string][]).map(([label, field]) => (
+                  <div key={field} style={{ marginBottom: 6 }}>
+                    <label className="form-label" style={{ fontSize: '0.85em' }}>{label}</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <select
+                        className="form-select"
+                        value={(selectedItem as any)[field] || ''}
+                        onChange={(e) => handleUpdateItem({ [field]: e.target.value || undefined })}
+                      >
+                        <option value="">None</option>
+                        {equipmentSprites.map(f => (
+                          <option key={f} value={f}>{f}</option>
+                        ))}
+                      </select>
+                      {(selectedItem as any)[field] && (
+                        <div style={{
+                          width: 32,
+                          height: 32,
+                          overflow: 'hidden',
+                          border: '1px solid #555',
+                          borderRadius: 4,
+                          background: '#222',
+                          flexShrink: 0,
+                        }}>
+                          <img
+                            src={`/assets/sprites/equipment/${(selectedItem as any)[field]}`}
+                            alt={`${label} preview`}
+                            style={{
+                              imageRendering: 'pixelated',
+                              width: (selectedItem.equipSpriteConfig?.framesPerRow ?? 9) * (selectedItem.equipSpriteConfig?.frameWidth ?? 64),
+                              height: 4 * (selectedItem.equipSpriteConfig?.frameHeight ?? 64),
+                              objectFit: 'none',
+                              objectPosition: '0 0',
+                              maxWidth: 'none',
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {/* Sprite Config (shared across all sheets) */}
+                <button
+                  className="btn btn-ghost"
+                  style={{ marginTop: 4, fontSize: '0.8em' }}
+                  onClick={() => setShowSpriteConfig(!showSpriteConfig)}
+                >
+                  {showSpriteConfig ? '▼ Hide Config' : '▶ Sprite Config'}
+                </button>
+                {showSpriteConfig && (
+                  <div className="stat-grid" style={{ marginTop: 8 }}>
+                    {(['frameWidth', 'frameHeight', 'framesPerRow', 'rows'] as const).map(key => (
+                      <div key={key} className="stat-row">
+                        <div className="stat-label">{key}</div>
+                        <div className="stat-value">
+                          <input
+                            type="number"
+                            min="1"
+                            value={(selectedItem.equipSpriteConfig || DEFAULT_SPRITE_CONFIG)[key]}
+                            onChange={(e) => handleUpdateSpriteConfig(key, parseInt(e.target.value, 10) || 1)}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              )}
 
               {/* ── Inventory Icon ──────────────────────────── */}
               <div className="form-group">

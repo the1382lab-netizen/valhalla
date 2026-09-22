@@ -41,6 +41,14 @@ export var MessageType;
     MessageType["LOOT_ALL"] = "lootAll";
     // Server → client confirmation: refresh loot panel + inventory immediately
     MessageType["LOOT_SUCCESS"] = "lootSuccess";
+    // ── Auto-Attack ──
+    MessageType["START_AUTO_ATTACK"] = "startAutoAttack";
+    MessageType["STOP_AUTO_ATTACK"] = "stopAutoAttack";
+    MessageType["AUTO_ATTACK_HIT"] = "autoAttackHit";
+    MessageType["AUTO_ATTACK_STARTED"] = "autoAttackStarted";
+    MessageType["AUTO_ATTACK_STOPPED"] = "autoAttackStopped";
+    // ── XP ──
+    MessageType["XP_GAINED"] = "xpGained";
     // ── Party ──
     MessageType["PARTY_INVITE"] = "partyInvite";
     MessageType["PARTY_ACCEPT"] = "partyAccept";

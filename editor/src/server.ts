@@ -10,6 +10,8 @@
  * The 1.0 Tiled map, 1.0 overlay and sprite routes were retired with the 1.0
  * client (git tag archive/1.0-final).
  */
+// First: VALHALLA_* from secrets.local.env must be in process.env before ADMIN_SECRET is read.
+import { SECRETS_FILE, loadedFromSecretsFile } from './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
@@ -31,8 +33,8 @@ const ADMIN_URL = (process.env.VALHALLA_ADMIN_URL || 'http://localhost:2568').re
 /**
  * Shared secret the UE admin API checks (`Authorization: Bearer <secret>`,
  * UValhallaDataSettings::ServerSecret / bAdminApiRequireSecret). The default
- * matches the development value in Valhalla2's Config/DefaultGame.ini and the
- * 1.0 backend's; set VALHALLA_SERVER_SECRET for anything that is not a dev box.
+ * is the development value the game server and the backend fall back to;
+ * secrets.local.env (loadEnv.ts) or the environment set the real one.
  */
 const ADMIN_SECRET = process.env.VALHALLA_SERVER_SECRET || 'dev-server-secret';
 
@@ -317,13 +319,17 @@ app.all('/api/admin/:action', async (req, res) => {
 });
 
 const PORT = Number(process.env.EDITOR_PORT || 5181);
-app.listen(PORT, () => {
-  console.log(`\n  Valhalla Editor API server running on http://localhost:${PORT}`);
+// Loopback only: this server writes game data with no login and attaches the
+// admin secret to whatever it proxies, so nothing off this machine may reach it.
+// EDITOR_HOST=0.0.0.0 opens it to the LAN deliberately.
+const HOST = process.env.EDITOR_HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log(`\n  Valhalla Editor API server running on http://${HOST}:${PORT}`);
   console.log(`  Data dir:        ${DATA_DIR}`);
   console.log(`  Maps dir:        ${MAPS_DIR}`);
   console.log(`  Overlays 2.0:    ${OVERLAYS2_DIR}`);
   console.log(`  Zone thumbs:     ${THUMBS_DIR}`);
   console.log(`  UE import dir:   ${IMPORT_DIR}${IMPORT.found ? '' : '  (NOT FOUND — set VALHALLA2_IMPORT_DIR)'}`);
   console.log(`  UE admin API:    ${ADMIN_URL}  (VALHALLA_ADMIN_URL)`);
-  console.log(`  Admin secret:    ${process.env.VALHALLA_SERVER_SECRET ? 'from VALHALLA_SERVER_SECRET' : 'dev default (set VALHALLA_SERVER_SECRET outside development)'}\n`);
+  console.log(`  Admin secret:    ${loadedFromSecretsFile.includes('VALHALLA_SERVER_SECRET') ? `from ${SECRETS_FILE}` : process.env.VALHALLA_SERVER_SECRET ? 'from VALHALLA_SERVER_SECRET' : 'dev default (no secrets.local.env)'}\n`);
 });

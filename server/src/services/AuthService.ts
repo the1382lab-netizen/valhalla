@@ -13,7 +13,28 @@ import {
   JWT_EXPIRY,
 } from '@valhalla/shared';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'valhalla-dev-secret-change-in-production';
+const DEV_JWT_SECRET = 'valhalla-dev-secret-change-in-production';
+
+/**
+ * The key player tokens are signed with. In production it must be set (in
+ * secrets.local.env or the environment): the dev default is public, and anyone
+ * who knows it can mint a token for any account.
+ */
+function resolveJwtSecret(): string {
+  const fromEnv = process.env.JWT_SECRET;
+  if (fromEnv && fromEnv.length > 0) {
+    if (process.env.NODE_ENV === 'production' && (fromEnv === DEV_JWT_SECRET || fromEnv.length < 32)) {
+      throw new Error('JWT_SECRET is the dev default or shorter than 32 characters; refusing to start with NODE_ENV=production.');
+    }
+    return fromEnv;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET is not set; refusing to start with NODE_ENV=production (put it in secrets.local.env, see deploy/README.md).');
+  }
+  return DEV_JWT_SECRET;
+}
+
+const JWT_SECRET = resolveJwtSecret();
 const BCRYPT_ROUNDS = 10;
 
 export interface JwtPayload {

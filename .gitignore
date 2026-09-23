@@ -44,3 +44,10 @@ job*.done
 
 # B-15: texture-set PNGs are regenerated from Poly Haven (see Import/Textures/texture_sets.json)
 Import/Textures/**/*.png
+
+# ── Hosting (deploy/README.md) ──────────────────────────────
+# Secrets for the backend, the game server and the editor proxy. Never committed.
+secrets.local.env
+*.local.env
+# Caddy binary, if dropped next to the Caddyfile instead of installed on PATH
+deploy/caddy.exe

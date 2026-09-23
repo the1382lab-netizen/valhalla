@@ -15,6 +15,8 @@
  *   VALHALLA_SERVER_SECRET  secret to send (default: dev-server-secret)
  */
 
+// First, so SECRET below matches what the spawned server reads from the same file.
+import '../src/loadEnv.js';
 import { spawn, type ChildProcess } from 'child_process';
 import { createServer } from 'net';
 import { dirname, resolve } from 'path';

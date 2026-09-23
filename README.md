@@ -30,6 +30,11 @@ The Unreal project reads game data from `../shared/data` (Project Settings →
 Game → Valhalla Data → DataRoot). A packaged client downloads the same files
 from the backend's `/api/data` after login.
 
+Secrets (`JWT_SECRET`, `VALHALLA_SERVER_SECRET`, `NODE_ENV`) live in
+`secrets.local.env` at the repo root, which is gitignored and read by the
+backend, the editor and the game server. Hosting a test for other people
+(dedicated server, HTTPS, packaging the client): see `deploy/README.md`.
+
 ## History
 
 This repository was merged from two on 2026-09-22. The retired 1.0 browser game

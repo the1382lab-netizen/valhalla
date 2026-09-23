@@ -323,7 +323,7 @@ using FValhallaJsonCallback = TFunction<void(bool /*bSuccess*/, int32 /*StatusCo
  *           — authenticated by the player's own bearer token.
  *   server  Verify / LoadCharacter / SaveCharacter / Health
  *           — authenticated by `X-Server-Secret`, which is the shared secret in
- *           `UValhallaDataSettings::ServerSecret` and which a client must never
+ *           `UValhallaDataSettings::GetServerSecret()` and which a client must never
  *           have. Nothing stops a client calling them; what stops it is that a
  *           packaged client's ini does not carry the real secret.
  *

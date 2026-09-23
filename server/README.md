@@ -9,12 +9,18 @@ npm run dev --workspace=server     # tsx watch src/index.ts
 
 ## Environment variables
 
+All of these can also come from `secrets.local.env` at the repo root
+(gitignored), which `src/loadEnv.ts` loads before anything else; a variable
+already set in the real environment wins. `VALHALLA_SECRETS_FILE` points at a
+different file. See `deploy/README.md` for hosting.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `JWT_SECRET` | `valhalla-dev-secret-change-in-production` | HS256 signing key for player tokens (`services/AuthService.ts`). Must be the same across every process that issues or verifies tokens. |
-| `VALHALLA_SERVER_SECRET` | `dev-server-secret` when `NODE_ENV !== 'production'`; **none** in production | Shared secret for the server-to-server routes below. |
-| `PORT` | `2567` (`SERVER_PORT` in `@valhalla/shared`) | HTTP/WebSocket listen port. |
-| `NODE_ENV` | unset (= development) | `production` disables the dev fallback secret. |
+| `JWT_SECRET` | `valhalla-dev-secret-change-in-production` in development; **required** (32+ characters, not the dev value) in production, or the server refuses to start | HS256 signing key for player tokens (`services/AuthService.ts`). Must be the same across every process that issues or verifies tokens. |
+| `VALHALLA_SERVER_SECRET` | `dev-server-secret` when `NODE_ENV !== 'production'`; **none** in production (the dev value is refused there too) | Shared secret for the server-to-server routes below. |
+| `PORT` | `2567` (`SERVER_PORT` in `@valhalla/shared`) | HTTP listen port. |
+| `HOST` | `0.0.0.0` | Listen address. `127.0.0.1` when hosting, so only Caddy (HTTPS) and the local game server reach it. |
+| `NODE_ENV` | unset (= development) | `production` disables both dev fallback secrets. |
 | `VALHALLA_DB` | `valhalla.db` (relative to cwd) | SQLite file path. Used by the smoke test to run against a throwaway DB. |
 
 ## Server-to-server API (Valhalla 2.0 / Unreal dedicated server)

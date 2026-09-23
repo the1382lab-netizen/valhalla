@@ -793,6 +793,37 @@ Built on Fable 5.1 at Kevin's request, in three reviewed stages. Scripts:
   in the grass light; hair clumps look scaly close up; no LODs.
 - Review shots: `Saved/ArtReview/wave2/` (`stageA_*`, `stageB_*`, `stageC_*`).
 
+## Phase 15 — Hosting a test for other people (2026-09-23)
+
+- [x] **Packaged clients use the public address.** New `PublicBackendUrl`
+      (`https://184.96.133.165`) and `PublicGameServerAddress`
+      (`184.96.133.165:7777`) apply only in a cooked non-server build
+      (`UValhallaDataSettings::IsPackagedClient`); the editor, PIE and servers
+      keep the loopback `BackendUrl` / `GameServerAddress`.
+      `-ValhallaBackendUrl=` and `-ValhallaGameServer=` override both.
+- [x] **The server secret no longer ships with the client.** `ServerSecret` is
+      gone from `DefaultGame.ini` (every ini is packaged). The game server
+      resolves it with `GetServerSecret()`: `-ValhallaServerSecret=`, env
+      `VALHALLA_SERVER_SECRET`, `secrets.local.env` at the repo root, the legacy
+      ini value (warns), then the dev default in editor builds only. Always
+      empty in a packaged client.
+- [x] **Backend production secrets.** `secrets.local.env` (gitignored) holds
+      `NODE_ENV=production`, `HOST=127.0.0.1`, `JWT_SECRET` and
+      `VALHALLA_SERVER_SECRET`; `server/src/loadEnv.ts` and
+      `editor/src/loadEnv.ts` read it. Production refuses to start without a
+      real `JWT_SECRET` and disables the internal routes for the dev secret. The
+      editor API server binds 127.0.0.1. Smoke 89/89 in both modes.
+- [x] **HTTPS for logins.** Caddy (`deploy/Caddyfile`) terminates TLS on 443
+      with a Let's Encrypt IP certificate (6-day `shortlived` profile) and
+      proxies to the loopback backend. `deploy/start-*.bat` and
+      `deploy/README.md` cover the session; the game server runs as
+      `UnrealEditor.exe -server` (a `Valhalla2Server` build needs a
+      source-built engine).
+- [ ] Not verified yet: a packaged client end to end (TLS to the IP cert
+      through UE's bundled CA list, travel to the public game server).
+- [ ] The game connection (UDP 7777) is unencrypted and carries the JWT in the
+      join URL; the `Join request` log line still prints it in full.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

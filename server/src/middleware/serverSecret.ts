@@ -7,7 +7,9 @@
  * is the only thing guarding them.
  *
  * Secret resolution:
- *   - env VALHALLA_SERVER_SECRET, when set and non-empty
+ *   - env VALHALLA_SERVER_SECRET (or secrets.local.env, via loadEnv.ts), when
+ *     set and non-empty — except the dev value in production, which disables
+ *     the routes like no secret at all
  *   - otherwise 'dev-server-secret' when NODE_ENV !== 'production'
  *   - otherwise (production, no secret) the routes are disabled: every request
  *     gets 503 and a warning is printed at startup.
@@ -22,7 +24,11 @@ const DEV_FALLBACK_SECRET = 'dev-server-secret';
 
 function resolveSecret(): string | null {
   const fromEnv = process.env.VALHALLA_SERVER_SECRET;
-  if (fromEnv && fromEnv.length > 0) return fromEnv;
+  if (fromEnv && fromEnv.length > 0) {
+    // The dev value is public; in production it would be no protection at all.
+    if (process.env.NODE_ENV === 'production' && fromEnv === DEV_FALLBACK_SECRET) return null;
+    return fromEnv;
+  }
   if (process.env.NODE_ENV === 'production') return null;
   return DEV_FALLBACK_SECRET;
 }
@@ -44,7 +50,7 @@ export const usingDevSecret: boolean =
 export function logServerSecretStatus(): void {
   if (!internalRoutesEnabled) {
     console.warn(
-      '[internal] ⚠️  VALHALLA_SERVER_SECRET is not set and NODE_ENV=production — ' +
+      '[internal] ⚠️  VALHALLA_SERVER_SECRET is not set (or is the public dev value) and NODE_ENV=production — ' +
       'server-to-server routes (/api/auth/verify, /api/characters/:id/load, ' +
       '/api/characters/:id/save) are DISABLED and will return 503. ' +
       'Set VALHALLA_SERVER_SECRET to enable them.',

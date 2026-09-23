@@ -1100,7 +1100,7 @@ FString AValhallaFrontEndController::ResolveServerAddress() const
 	}
 #endif
 
-	return UValhallaDataSettings::Get()->GameServerAddress;
+	return UValhallaDataSettings::Get()->GetResolvedGameServerAddress();
 }
 
 void AValhallaFrontEndController::EnterWorld(int32 CharacterId)

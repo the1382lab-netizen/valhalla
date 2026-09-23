@@ -1,0 +1,21 @@
+# HTTPS in front of the account backend.
+#
+#   https://184.96.133.165  ->  http://127.0.0.1:2567  (server/, HOST=127.0.0.1)
+#
+# Let's Encrypt issues certificates for a bare IP address, but only under its
+# 6-day "shortlived" profile; Caddy renews them on its own. Needs Caddy 2.11 or
+# newer, and TCP 80 and 443 forwarded from the router to this PC (the ACME
+# challenge arrives on one of them). If the public IP changes, edit both
+# addresses below and PublicBackendUrl in Valhalla2/Config/DefaultGame.ini.
+{
+	cert_issuer acme {
+		profile shortlived
+	}
+	# A client connecting to an IP sends no SNI; this tells Caddy which
+	# certificate to present anyway.
+	default_sni 184.96.133.165
+}
+
+https://184.96.133.165 {
+	reverse_proxy 127.0.0.1:2567
+}

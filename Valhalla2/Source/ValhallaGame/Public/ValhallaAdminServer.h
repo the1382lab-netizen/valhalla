@@ -367,7 +367,7 @@ protected:
 	 * remembering to check is nine chances to forget.
 	 *
 	 * **Phase 7b filled it in.** When `UValhallaDataSettings::bAdminApiRequireSecret`
-	 * is set, a request must carry `Authorization: Bearer <ServerSecret>`; the
+	 * is set, a request must carry `Authorization: Bearer <server secret>`; the
 	 * comparison is constant-time over the whole secret, because a byte
 	 * compare that returns early tells a caller how much of its guess was
 	 * right. The flag defaults *off* in the Editor and *on* in a Server build,

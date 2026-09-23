@@ -812,11 +812,11 @@ bool UValhallaAdminServer::Authorize(const FHttpServerRequest& Request, TUniqueP
 
 	// An empty secret with the check turned on is a configuration mistake that
 	// would otherwise authorise everybody, so it refuses everybody instead.
-	const FString& Secret = Settings->ServerSecret;
+	const FString Secret = Settings->GetServerSecret();
 	if (Secret.IsEmpty())
 	{
 		UE_LOG(LogValhallaAdmin, Error,
-			TEXT("bAdminApiRequireSecret is on but ServerSecret is empty; every request is refused."));
+			TEXT("bAdminApiRequireSecret is on but no server secret is configured (see UValhallaDataSettings::GetServerSecret); every request is refused."));
 		OutResponse = MakeErrorResponse(EHttpServerResponseCodes::Denied, TEXT("Admin API misconfigured"));
 		return false;
 	}

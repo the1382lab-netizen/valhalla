@@ -178,7 +178,7 @@ void UValhallaBackendSubsystem::Send(
 
 	if (bServerAuth)
 	{
-		Request->SetHeader(TEXT("X-Server-Secret"), UValhallaDataSettings::Get()->ServerSecret);
+		Request->SetHeader(TEXT("X-Server-Secret"), UValhallaDataSettings::Get()->GetServerSecret());
 	}
 	else if (!BearerToken.IsEmpty())
 	{

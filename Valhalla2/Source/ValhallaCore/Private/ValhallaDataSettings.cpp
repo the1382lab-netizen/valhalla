@@ -2,8 +2,85 @@
 
 #include "ValhallaDataSettings.h"
 
+#include "CoreGlobals.h"
+#include "HAL/PlatformMisc.h"
+#include "HAL/PlatformProperties.h"
+#include "Misc/CommandLine.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Parse.h"
 #include "Misc/Paths.h"
 #include "ValhallaCore.h"
+
+namespace ValhallaDataSettingsPrivate
+{
+	/** The backend's own development default; accepted only while NODE_ENV != production. */
+	const TCHAR* const DevServerSecret = TEXT("dev-server-secret");
+
+	/** `<repo root>/secrets.local.env`: gitignored, shared with the backend and the web editor. */
+	FString GetSecretsFilePath()
+	{
+		return FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectDir(), TEXT(".."), TEXT("secrets.local.env")));
+	}
+
+	/**
+	 * One KEY=VALUE from secrets.local.env, or empty. The format is the dotenv
+	 * subset the Node side reads (server/src/loadEnv.ts): `#` comments, blank
+	 * lines, optional matching quotes around the value.
+	 */
+	FString ReadSecretsFileValue(const FString& Key)
+	{
+		TArray<FString> Lines;
+		if (!FFileHelper::LoadFileToStringArray(Lines, *GetSecretsFilePath()))
+		{
+			return FString();
+		}
+
+		for (FString Line : Lines)
+		{
+			Line.TrimStartAndEndInline();
+			if (Line.IsEmpty() || Line.StartsWith(TEXT("#")))
+			{
+				continue;
+			}
+
+			FString Name;
+			FString Value;
+			if (!Line.Split(TEXT("="), &Name, &Value))
+			{
+				continue;
+			}
+
+			Name.TrimStartAndEndInline();
+			if (!Name.Equals(Key, ESearchCase::CaseSensitive))
+			{
+				continue;
+			}
+
+			Value.TrimStartAndEndInline();
+			const bool bDoubleQuoted = Value.Len() >= 2 && Value.StartsWith(TEXT("\"")) && Value.EndsWith(TEXT("\""));
+			const bool bSingleQuoted = Value.Len() >= 2 && Value.StartsWith(TEXT("'")) && Value.EndsWith(TEXT("'"));
+			if (bDoubleQuoted || bSingleQuoted)
+			{
+				Value = Value.Mid(1, Value.Len() - 2);
+			}
+			return Value;
+		}
+
+		return FString();
+	}
+
+	/** `-<Match><value>` from the process command line, or empty. `Match` ends in '='. */
+	FString CommandLineValue(const TCHAR* Match)
+	{
+		FString Value;
+		if (FParse::Value(FCommandLine::Get(), Match, Value))
+		{
+			Value.TrimStartAndEndInline();
+			return Value;
+		}
+		return FString();
+	}
+}
 
 UValhallaDataSettings::UValhallaDataSettings()
 	: DataRoot(TEXT("../shared/data"))
@@ -17,9 +94,24 @@ UValhallaDataSettings::UValhallaDataSettings()
 #endif
 }
 
+bool UValhallaDataSettings::IsPackagedClient()
+{
+	return FPlatformProperties::RequiresCookedData() && !IsRunningDedicatedServer();
+}
+
 FString UValhallaDataSettings::GetResolvedBackendUrl() const
 {
-	FString Url = BackendUrl;
+	// Which URL, before the repairs below: the command line, then the public
+	// URL in a packaged client, then BackendUrl (editor, PIE, every server).
+	FString Url = ValhallaDataSettingsPrivate::CommandLineValue(TEXT("ValhallaBackendUrl="));
+	if (Url.IsEmpty() && IsPackagedClient())
+	{
+		Url = PublicBackendUrl.TrimStartAndEnd();
+	}
+	if (Url.IsEmpty())
+	{
+		Url = BackendUrl;
+	}
 	Url.TrimStartAndEndInline();
 
 	// ── The `//` that an ini file eats ───────────────────────────────────
@@ -65,6 +157,80 @@ FString UValhallaDataSettings::GetResolvedBackendUrl() const
 	}
 
 	return Url;
+}
+
+FString UValhallaDataSettings::GetResolvedGameServerAddress() const
+{
+	FString Address = ValhallaDataSettingsPrivate::CommandLineValue(TEXT("ValhallaGameServer="));
+	if (Address.IsEmpty() && IsPackagedClient())
+	{
+		Address = PublicGameServerAddress.TrimStartAndEnd();
+	}
+	if (Address.IsEmpty())
+	{
+		Address = GameServerAddress.TrimStartAndEnd();
+	}
+	return Address;
+}
+
+FString UValhallaDataSettings::GetServerSecret() const
+{
+	// A packaged client never talks to the server-to-server routes or the admin
+	// API, so it gets nothing, whatever any ini or file on the tester's machine says.
+	if (IsPackagedClient())
+	{
+		return FString();
+	}
+
+	// Resolved once per process (thread-safe static init) and logged once, so
+	// the log says where the secret came from without ever printing it.
+	static const FString Resolved = [this]() -> FString
+	{
+		using namespace ValhallaDataSettingsPrivate;
+
+		FString Secret = CommandLineValue(TEXT("ValhallaServerSecret="));
+		if (!Secret.IsEmpty())
+		{
+			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from -ValhallaServerSecret."));
+			return Secret;
+		}
+
+		Secret = FPlatformMisc::GetEnvironmentVariable(TEXT("VALHALLA_SERVER_SECRET")).TrimStartAndEnd();
+		if (!Secret.IsEmpty())
+		{
+			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from the VALHALLA_SERVER_SECRET environment variable."));
+			return Secret;
+		}
+
+		Secret = ReadSecretsFileValue(TEXT("VALHALLA_SERVER_SECRET"));
+		if (!Secret.IsEmpty())
+		{
+			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from %s."), *GetSecretsFilePath());
+			return Secret;
+		}
+
+		Secret = ServerSecret.TrimStartAndEnd();
+		if (!Secret.IsEmpty())
+		{
+			UE_LOG(LogValhallaCore, Warning,
+				TEXT("Server secret: from the ServerSecret ini value. Every ini under Config/ is packaged into the client; move it to secrets.local.env and delete the ini line."));
+			return Secret;
+		}
+
+#if WITH_EDITOR
+		UE_LOG(LogValhallaCore, Log,
+			TEXT("Server secret: the development default (no -ValhallaServerSecret, VALHALLA_SERVER_SECRET or %s). A backend running with NODE_ENV=production will refuse it."),
+			*GetSecretsFilePath());
+		return FString(DevServerSecret);
+#else
+		UE_LOG(LogValhallaCore, Error,
+			TEXT("Server secret: none configured. Pass -ValhallaServerSecret=, set VALHALLA_SERVER_SECRET, or put it in %s. Logins will fail."),
+			*GetSecretsFilePath());
+		return FString();
+#endif
+	}();
+
+	return Resolved;
 }
 
 FName UValhallaDataSettings::GetCategoryName() const

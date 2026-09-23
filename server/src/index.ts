@@ -7,6 +7,8 @@
  * was retired with the 1.0 client; its last state is the git tag
  * archive/1.0-final.)
  */
+// First: secrets.local.env must be in process.env before any module reads it.
+import { SECRETS_FILE, loadedFromSecretsFile } from './loadEnv.js';
 import { createServer } from 'http';
 import express from 'express';
 import { SERVER_PORT } from '@valhalla/shared';
@@ -26,11 +28,22 @@ await initDatabase(process.env.VALHALLA_DB || 'valhalla.db');
 // kit) and the Unreal server's character save validation read it.
 DataManager.initializeAndWatch();
 
-// Report whether the server-to-server (Unreal) routes are enabled
+// Report where the secrets came from and whether the server-to-server
+// (Unreal) routes are enabled. Key names only, never values.
+if (loadedFromSecretsFile.length > 0) {
+  console.log(`[env] ${SECRETS_FILE}: ${loadedFromSecretsFile.join(', ')}`);
+}
+console.log(`[env] NODE_ENV=${process.env.NODE_ENV ?? '(unset: development)'}`);
 logServerSecretStatus();
 
 // Listen port: PORT env wins, otherwise the shared default (2567)
 const PORT = Number.parseInt(process.env.PORT ?? '', 10) || SERVER_PORT;
+
+// Listen address. HOST=127.0.0.1 (set in secrets.local.env for hosting) keeps
+// the backend reachable only from this machine: testers come in through Caddy
+// on 443 (HTTPS, deploy/Caddyfile) and the game server is local. The default
+// 0.0.0.0 is the old LAN-wide development behaviour.
+const HOST = process.env.HOST || '0.0.0.0';
 
 const app = express();
 
@@ -72,6 +85,6 @@ app.use('/api/auth', authRouter);
 app.use('/api/characters', charactersRouter);
 
 const server = createServer(app);
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`⚔️  Valhalla server listening on 0.0.0.0:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`⚔️  Valhalla server listening on ${HOST}:${PORT}`);
 });

@@ -93,17 +93,18 @@ public:
 	FString BackendUrl = TEXT("http://127.0.0.1:2567");
 
 	/**
-	 * Shared secret the game server presents to the backend's server-to-server
-	 * routes (`X-Server-Secret`), and — when bAdminApiRequireSecret is on — the
-	 * bearer token the admin API demands.
+	 * Legacy ini slot for the server secret. **Leave it empty.**
 	 *
-	 * One value for both because there is one trust boundary: "this process is
-	 * the game server". A player's JWT is the *other* boundary and never appears
-	 * here. The default is the backend's own dev default; a real deployment sets
-	 * it in an ini the repo does not carry.
+	 * Every ini under Config/ is packaged into the *client* too, so a secret set
+	 * here ships to every player and lets them call the backend's
+	 * server-to-server routes (load or overwrite any character). The secret now
+	 * comes from outside the build; see GetServerSecret() for the order. A value
+	 * here is still honoured on a server, with a warning, and ignored entirely by
+	 * a packaged client. Not BlueprintReadOnly, and not editable in Project
+	 * Settings, for the same reason.
 	 */
-	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Backend", meta = (DisplayName = "Server Secret"))
-	FString ServerSecret = TEXT("dev-server-secret");
+	UPROPERTY(config)
+	FString ServerSecret;
 
 	/**
 	 * Where the front end sends a client once a character is chosen —
@@ -115,9 +116,63 @@ public:
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Backend", meta = (DisplayName = "Game Server Address"))
 	FString GameServerAddress = TEXT("127.0.0.1:7777");
 
-	/** BackendUrl with any trailing slashes removed. */
+	// ── Packaged clients: the public addresses ──────────────────────────
+
+	/**
+	 * Backend URL a *packaged client* uses instead of BackendUrl — the public,
+	 * HTTPS address testers reach (Caddy in front of the backend; see
+	 * deploy/README.md). Empty means "use BackendUrl".
+	 *
+	 * The editor, PIE and every server keep using BackendUrl (loopback), so this
+	 * never changes how development works. Quote it in the ini, as BackendUrl.
+	 * `-ValhallaBackendUrl=<url>` on the command line overrides both.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Backend", meta = (DisplayName = "Public Backend URL (packaged client)"))
+	FString PublicBackendUrl;
+
+	/**
+	 * Game server address a *packaged client* travels to instead of
+	 * GameServerAddress. Empty means "use GameServerAddress".
+	 * `-ValhallaGameServer=<host:port>` on the command line overrides both.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Backend", meta = (DisplayName = "Public Game Server Address (packaged client)"))
+	FString PublicGameServerAddress;
+
+	/**
+	 * The backend base URL this process should use, with no trailing slash:
+	 * `-ValhallaBackendUrl=` if given, else PublicBackendUrl in a packaged
+	 * client (when set), else BackendUrl.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Valhalla|Backend")
 	FString GetResolvedBackendUrl() const;
+
+	/**
+	 * The game server a client travels to: `-ValhallaGameServer=` if given,
+	 * else PublicGameServerAddress in a packaged client (when set), else
+	 * GameServerAddress.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Valhalla|Backend")
+	FString GetResolvedGameServerAddress() const;
+
+	/**
+	 * The shared secret this *server* presents to the backend's
+	 * server-to-server routes (`X-Server-Secret`) and that the admin API
+	 * demands (`Authorization: Bearer`). Resolved once, first match wins:
+	 *
+	 *   1. `-ValhallaServerSecret=` on the command line
+	 *   2. the environment variable VALHALLA_SERVER_SECRET
+	 *   3. VALHALLA_SERVER_SECRET in `<repo root>/secrets.local.env` — the
+	 *      same gitignored file the backend and the web editor read
+	 *   4. the legacy ServerSecret ini value (warns)
+	 *   5. `dev-server-secret`, in an editor build only
+	 *
+	 * Always empty in a packaged client, which never needs it. Deliberately not
+	 * a UFUNCTION: nothing in Blueprint has any business reading it.
+	 */
+	FString GetServerSecret() const;
+
+	/** True in a cooked build that is not a dedicated server: what a tester runs. */
+	static bool IsPackagedClient();
 
 	/** The DataRoot as an absolute, normalised path with no trailing separator. */
 	UFUNCTION(BlueprintCallable, Category = "Valhalla|Data")

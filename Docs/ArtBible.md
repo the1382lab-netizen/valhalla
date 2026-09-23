@@ -12,7 +12,20 @@ and robes, an earthy palette. It is drawn with physically based materials, real
 light and shadow and light atmospheric haze, not flat colour and outlines.
 
 - **References:** Neverwinter Nights (2002), NWN2, NWN Enhanced Edition.
-  Kevin's picks go in `Docs/reference/` (to be added before Wave 2, characters).
+  Kevin's picks are in `Docs/reference/` (7 images, 2026-09-22). What they say:
+  - **Local light is half the mood.** Torches, braziers, lanterns and magic
+    glow pool warm (or coloured) light against cooler ambient, especially at
+    dusk and indoors. Every light-bearing prop (lamp post, brazier, torch
+    sconce) gets a real light, not just an emissive.
+  - **Rich armour and cloth.** Plate with gold or silver trim and engraving,
+    blue and violet enamel, scale and chain with coloured edging, belts,
+    buckles and layered straps. Characters are the most saturated things on
+    screen.
+  - **Patterned stone underfoot.** Plazas and halls use laid patterns
+    (circular cobble fans, mosaics, bordered flagstones), not a flat repeat.
+    Use decal or inlay meshes over the tiling ground material.
+  - **Dense set dressing.** Tents, barrels, crates, sacks, banners and weapon
+    racks fill every camp and square.
 - **In the spirit of, never copied.** No NWN or Forgotten Realms assets, names,
   logos or heraldry. Our own banners and sigils.
 - **Everything is made by Opus 5.5 driving Blender through the Blender MCP
@@ -71,8 +84,10 @@ The game is seen from above at an isometric angle, as NWN was:
 
 ## 4. Palette
 
-Earthy and slightly desaturated. The environment stays at **≤ 45% saturation**;
-accents (banners, awnings, heraldry, magic) may go higher, sparingly.
+Earthy ground and buildings, rich accents. Environment base materials stay at
+**≤ 45% saturation**. Accents go higher: banners, awnings, heraldry, enamel,
+armour trim, magic light (up to ~70%). Characters and their gear are the
+richest colours on screen (section 3).
 
 | Role | Hex |
 |---|---|
@@ -168,6 +183,10 @@ used both to edit L_World in place and by the world rebuild tool:
 - height-fog haze that starts past the gameplay camera (1800 cm);
 - a gentle grade: slightly warm gain, 0.95 saturation, 1.06 contrast, light
   bloom and vignette.
+- **Local lights come with their props** (from Wave 1): lamp posts, torches and
+  braziers carry warm point or spot lights (about 2700 K), shadowed only where
+  it matters. A dusk variant of `LOOK` (low sun, stronger local light) is a
+  Wave 1 option once the lamp posts light.
 
 **No outlines.** The Phase 4c black outline is retired. `valhalla.Visual.Outline 1`
 brings it back on the player camera for comparison. There is one sun, in

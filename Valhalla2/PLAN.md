@@ -793,6 +793,55 @@ Built on Fable 5.1 at Kevin's request, in three reviewed stages. Scripts:
   in the grass light; hair clumps look scaly close up; no LODs.
 - Review shots: `Saved/ArtReview/wave2/` (`stageA_*`, `stageB_*`, `stageC_*`).
 
+## Phase 14b — B-15 Wave 2 on the MetaHuman body (2026-09-23)
+
+Kevin replaced the Fable 5.1 body with a MetaHuman base (Paragon Gideon was tried and
+archived). The Wave 2 art was then redone for it; everything the Fable body used stays
+in place for `valhalla.Visual.BodyProfile 0`.
+
+- [x] **Body** — `MHC_ValhallaBase` (MetaHumanCharacter plugin, Optimized/Medium),
+      in underwear, drawn at 122/180.3. The face follows the body by leader pose.
+      Content lives in `/Game/Valhalla/Characters/MetaHuman/`.
+- [x] **Animations** — idle, walk and jog were retargeted from the UE5 Mannequin
+      (IK_Manny -> IK_MH_ValhallaBase; the Mannequins are archived outside the repo).
+      Hand-keyed in `Tools/anim_authoring`:
+      - stance poses (grip R / L, shield arm) and per-weapon attacks
+      - bow draw-hold-release (skill field `castAnimation: "bow"`)
+      - open-hand and staff casts
+      - A-030: sit, wave, cheer, bow, 2H chop, block, dodge (`author_extra.py`).
+      Hit reacts play on an additive layer.
+- [x] **Armour (16) and hair (2)** — re-fitted by script to the MetaHuman.
+      - Scripts: `Blender assets/scripts/wave2mh_base.py`, `wave2mh_armour.py`,
+        `wave2mh_hair.py`, `wave2mh_review.py`.
+      - Source files: `Import/Characters/MetaHuman/{Equipment,Hair}/*.fbx` and
+        `Blender assets/Characters/valhalla_mh_equipment.blend`.
+      - Assets: `/Game/Valhalla/Characters/MetaHuman/{Equipment,Hair}`, imported
+        onto `metahuman_base_skel` by `Saved/ClaudeOps/mh_equipment_import.py`.
+      - Method: same designs as the Fable pieces. Heights go through `Z()`
+        (landmark to landmark), offsets through `O()`.
+      - Cloth `drape()`s over the body's outer envelope; hands, feet and hips are
+        shells of the MetaHuman's own skin.
+      - Weights are transferred from the MetaHuman body and face; the helm and hat
+        are rigid on `head`.
+      - 868–2,960 tris per piece; hair 4.3k / 5.0k.
+      - SK_Hood_Bald_Cap is not needed (the MetaHuman head is its own scalp).
+- [x] **Code** —
+      - `UValhallaVisuals::SkinnedArtRoot / EquipmentMeshPath / HairMeshPath` pick
+        the active body's folder.
+      - `PieceForActiveBody` swaps a piece authored for the other body for its
+        same-named rebuild. NPC Blueprints and spawner previews that still name
+        `Characters/Equipment/SK_*` get the MetaHuman piece.
+- Before using the round trip again, know this: Blender FBX (armature object `root`,
+  primary Y / secondary X) back onto `metahuman_base_skel` keeps every skinned bone's
+  reference pose. That matters because a leader-pose follower skins against its
+  own reference pose. Checked with `Saved/ClaudeOps/mh_refcheck.py`.
+- Hair vertex colour must be exported LINEAR: `M_Hair` multiplies it in raw.
+- Known: capes and skirts are stiff, with no cloth sim. The ranger's shoulder cape
+  reads as a wide collar at rest. The robe skirt stretches between the legs on a
+  wide stride. Sit / emotes / 2H / block / dodge are imported but not wired up.
+  No LODs on the pieces.
+- Review shots: `Saved/ArtReview/wave2mh/` (`pie1_*`, `sheet_*`).
+
 ## Phase 15 — Hosting a test for other people (2026-09-23)
 
 - [x] **Packaged clients use the public address.** New `PublicBackendUrl`

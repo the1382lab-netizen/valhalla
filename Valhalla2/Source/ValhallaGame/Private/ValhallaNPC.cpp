@@ -48,9 +48,9 @@ namespace
 	 */
 	const FColor DefaultEnemySrgb(0x6F, 0x8A, 0x63);
 
-	/** The fixed kit a placeholder enemy wears, by `spriteId`. */
-	const TCHAR* EnemyChestAsset = TEXT("/Game/Valhalla/Characters/Equipment/SK_chest_priests_chain");
-	const TCHAR* EnemyHelmAsset = TEXT("/Game/Valhalla/Characters/Equipment/SK_helm_iron_full");
+	/** The fixed kit a placeholder enemy wears (resolved for the active body). */
+	const TCHAR* EnemyChestAsset = TEXT("SK_chest_priests_chain");
+	const TCHAR* EnemyHelmAsset = TEXT("SK_helm_iron_full");
 
 	/** NPCSystem.ts:941 — DoTs tick once a second. */
 	constexpr double BuffTickIntervalSeconds = 1.0;
@@ -176,9 +176,9 @@ void AValhallaNPC::GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletal
 		}
 		if (!SlotMesh && bWearPlaceholderKit && Slot.Placeholder)
 		{
-			SlotMesh = LoadObject<USkeletalMesh>(nullptr, Slot.Placeholder);
+			SlotMesh = LoadObject<USkeletalMesh>(nullptr, *UValhallaVisuals::EquipmentMeshPath(Slot.Placeholder));
 		}
-		OutPieces.Add(SlotMesh);
+		OutPieces.Add(UValhallaVisuals::PieceForActiveBody(SlotMesh));
 	}
 }
 

@@ -45,7 +45,7 @@ S = 180.3 / 122.0
 
 # (Fable height, MetaHuman height) — the landmarks the two bodies share.
 ZMAP = [
-    (0.000, 0.000), (0.070, 0.0859), (0.215, 0.4916), (0.385, 0.9264), (0.655, 1.4257),
+    (0.000, 0.000), (0.070, 0.0859), (0.215, 0.4916), (0.330, 0.835), (0.385, 0.9264), (0.655, 1.4257),
     (0.685, 1.500), (0.710, 1.530), (0.800, 1.552), (0.865, 1.580), (0.960, 1.712),
     (1.040, 1.742), (1.200, 1.802), (1.300, 1.870),
 ]
@@ -249,7 +249,7 @@ class _Source:
         return out, dist
 
 
-def transfer_weights(ob, smooth=0, max_influences=6, only=None, sources=(BODY, FACE)):
+def transfer_weights(ob, smooth=0, max_influences=6, only=None, sources=(BODY, FACE), smooth_below=9.0):
     """Skin ``ob`` to the ``root`` armature with the MetaHuman's weights.
 
     ``smooth`` Laplacian passes average weights across the piece's own edges
@@ -280,9 +280,13 @@ def transfer_weights(ob, smooth=0, max_influences=6, only=None, sources=(BODY, F
                 a, b = e.vertices
                 nb[a].append(b)
                 nb[b].append(a)
+            zs = [(mw @ v.co).z for v in ob.data.vertices]
             for _ in range(smooth):
                 W2 = []
                 for i in range(n):
+                    if zs[i] >= smooth_below:
+                        W2.append(W[i])
+                        continue
                     acc = dict(W[i])
                     for j in nb[i]:
                         for k, w in W[j].items():
@@ -309,7 +313,9 @@ def transfer_weights(ob, smooth=0, max_influences=6, only=None, sources=(BODY, F
 
 # ── Export ───────────────────────────────────────────────────────────────────
 
-def export_fbx(ob, out_dir=EQUIP_OUT):
+def export_fbx(ob, out_dir=EQUIP_OUT, colors="SRGB"):
+    """``colors`` LINEAR for hair: M_Hair multiplies the vertex colour in as-is,
+    so the bytes must be the linear values (what the glTF path wrote)."""
     arm = bpy.data.objects[ARM]
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, ob.name + ".fbx")
@@ -324,9 +330,154 @@ def export_fbx(ob, out_dir=EQUIP_OUT):
                                  add_leaf_bones=False, bake_anim=False, use_armature_deform_only=False,
                                  primary_bone_axis="Y", secondary_bone_axis="X", armature_nodetype="NULL",
                                  mesh_smooth_type="FACE", use_mesh_modifiers=False, apply_unit_scale=True,
-                                 axis_forward="-Z", axis_up="Y")
+                                 axis_forward="-Z", axis_up="Y", colors_type=colors)
     return path
 
 
 def save():
     bpy.ops.wm.save_as_mainfile(filepath=BLEND)
+
+
+# ── Envelopes and shells ─────────────────────────────────────────────────────
+
+def outer_radius(fit, center, d, far=0.6):
+    """Distance from ``center`` to the *outermost* skin along ``d`` (cast
+    inward from ``far``), or 0 when there is nothing there. Unlike
+    ``Fit.radius`` this sees past the gap between the legs to the outer thigh."""
+    c = mathutils.Vector(center)
+    d = mathutils.Vector(d).normalized()
+    loc, nrm, idx, dist = fit.bvh.ray_cast(c + d * far, -d, far)
+    return 0.0 if loc is None else far - dist
+
+
+def _dirs(a0, a1, segs, closed):
+    ref = mathutils.Vector((0, -1, 0))
+    up = mathutils.Vector((0, 0, 1))
+    v = up.cross(ref).normalized()
+    n = segs if closed else segs + 1
+    return [(ref * math.cos(a0 + (a1 - a0) * k / segs) + v * math.sin(a0 + (a1 - a0) * k / segs)) for k in range(n)]
+
+
+def drape(piece, fit, z_top, z_bottom, offset, m, flare=1.18, n=8, segs=28, a0=0.0, a1=2 * math.pi, closed=True,
+          sway=None, far=0.6, far_top=None, rim=0.004, center=None, mono_below=9.0):
+    """Cloth hanging from ``z_top`` to ``z_bottom`` (MetaHuman heights): each
+    ring is the larger of the top ring flared linearly to ``flare`` at the
+    hem and the body's outer envelope + ``offset`` at that height, so a skirt
+    clears the hips and thighs and a tabard clears the belly."""
+    center = center or C
+    dirs = _dirs(a0, a1, segs, closed)
+    c0 = center(z_top)
+    r0 = [outer_radius(fit, c0, d, far_top or far) + offset for d in dirs]
+    rings = []
+    prev = [0.0] * len(dirs)
+    for i in range(n + 1):
+        t = i / n
+        z = lerp(z_top, z_bottom, t)
+        c = center(z)
+        k = 1.0 + (flare - 1.0) * t
+        off = sway(t) if sway else mathutils.Vector()
+        ring = []
+        for j, (d, r) in enumerate(zip(dirs, r0)):
+            rr = max(r * k, outer_radius(fit, c, d, far) + offset)
+            if z < mono_below:
+                # hanging cloth never tucks back in under what it fell past
+                rr = max(rr, prev[j])
+            prev[j] = rr
+            ring.append(c + d * rr + off)
+        rings.append(ring)
+    piece.loft(rings, m, closed=closed, rim=rim)
+    return rings
+
+
+def skin_shell(piece, m, pred, offset, min_w=0.5, body_name=BODY, ratio=1.0, region=None):
+    """Copy of the body's skin where the summed weight of the bones ``pred``
+    accepts is at least ``min_w``, pushed out along the normals by ``offset``
+    (metres), added to ``piece`` in material ``m``. Fits fingers and toes
+    exactly and deforms with them, because it gets the same weights."""
+    body = bpy.data.objects[body_name]
+    names = {g.index: g.name for g in body.vertex_groups}
+    keep = set()
+    mw = body.matrix_world
+    for v in body.data.vertices:
+        if pred is not None and sum(g.weight for g in v.groups if pred(names[g.group])) < min_w:
+            continue
+        if region is not None and not region(mw @ v.co):
+            continue
+        keep.add(v.index)
+    bm = bmesh.new()
+    bm.from_mesh(body.data)
+    bm.transform(body.matrix_world)
+    bm.normal_update()
+    for v in bm.verts:
+        v.co += v.normal * offset
+    bm.verts.ensure_lookup_table()
+    bmesh.ops.delete(bm, geom=[f for f in bm.faces if not all(v.index in keep for v in f.verts)], context="FACES")
+    bmesh.ops.delete(bm, geom=[v for v in bm.verts if not v.link_faces], context="VERTS")
+    if ratio < 1.0:
+        # Down to the armour budget (ArtBible: 1-3k per piece); the MetaHuman
+        # hand alone is ~2.4k triangles.
+        me = bpy.data.meshes.new("_shell")
+        bm.to_mesh(me)
+        bm.free()
+        tmp = bpy.data.objects.new("_shell", me)
+        bpy.context.scene.collection.objects.link(tmp)
+        mod = tmp.modifiers.new("dec", "DECIMATE")
+        mod.ratio = ratio
+        mod.use_collapse_triangulate = False
+        dg = bpy.context.evaluated_depsgraph_get()
+        ev = tmp.evaluated_get(dg)
+        bm = bmesh.new()
+        bm.from_mesh(ev.to_mesh())
+        ev.to_mesh_clear()
+        bpy.data.objects.remove(tmp)
+        bpy.data.meshes.remove(me)
+    idx = piece._mat(m)
+    vmap = {}
+    for v in bm.verts:
+        vmap[v] = piece.bm.verts.new(v.co)
+    for f in bm.faces:
+        try:
+            nf = piece.bm.faces.new([vmap[v] for v in f.verts])
+        except ValueError:
+            continue
+        nf.material_index = idx
+        for loop in nf.loops:
+            p = loop.vert.co
+            loop[piece.uv].uv = (p.x + p.y, p.z)
+    n = len(bm.faces)
+    bm.free()
+    return n
+
+
+def hand_bones(s):
+    sd = side(s)
+    fingers = ("thumb", "index", "middle", "ring", "pinky")
+    return lambda n: n.endswith("_" + sd) and (n.startswith("hand_") or n.startswith("wrist_") or n.split("_")[0] in fingers)
+
+
+def foot_bones(s):
+    sd = side(s)
+    return lambda n: n.endswith("_" + sd) and (n.startswith("foot_") or n.startswith("ball_") or "toe_" in n
+                                               or n.startswith("ankle_"))
+
+
+def hem(piece, rings, m, height, out=0.006, closed=True, rim=0.003, center=None):
+    """A trim band on the bottom ``height`` metres of a drape: the drape's own
+    last rings pushed ``out`` metres outward, so it can never sink inside."""
+    last, prev = rings[-1], rings[-2]
+    zl = sum(q.z for q in last) / len(last)
+    zp = sum(q.z for q in prev) / len(prev)
+    t = min(1.0, height / max(1e-6, zp - zl))
+    top = [lerp(a, b, t) for a, b in zip(last, prev)]
+
+    center = center or C
+
+    def push(ring):
+        out_ring = []
+        for q in ring:
+            c = center(q.z)
+            d = q - c
+            d.z = 0.0
+            out_ring.append(q + (d.normalized() * out if d.length > 1e-6 else mathutils.Vector()))
+        return out_ring
+    piece.loft([push(top), push(last)], m, closed=closed, rim=rim)

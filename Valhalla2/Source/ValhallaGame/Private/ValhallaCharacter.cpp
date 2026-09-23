@@ -738,16 +738,15 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 	{
 		if (!HairMesh->GetSkeletalMeshAsset())
 		{
-			USkeletalMesh* Hair = LoadObject<USkeletalMesh>(
-				nullptr, TEXT("/Game/Valhalla/Characters/Hair/SK_Hair_Brown_Short"));
+			const FString HairPath = UValhallaVisuals::HairMeshPath(TEXT("SK_Hair_Brown_Short"));
+			USkeletalMesh* Hair = LoadObject<USkeletalMesh>(nullptr, *HairPath);
 			// Same rule as armour: hair built for another rig stays off until
 			// it is rebuilt for the active body.
 			if (Hair && UValhallaVisuals::CanFollowBody(Hair, BodyMesh))
 			{
 				HairMesh->SetSkeletalMeshAsset(Hair);
 				HairMesh->SetLeaderPoseComponent(BodyMesh);
-				UE_LOG(LogValhallaVisual, Log,
-					TEXT("slot=hair asset=/Game/Valhalla/Characters/Hair/SK_Hair_Brown_Short"));
+				UE_LOG(LogValhallaVisual, Log, TEXT("slot=hair asset=%s"), *HairPath);
 			}
 		}
 		HairMesh->SetVisibility(!bHasHelm);

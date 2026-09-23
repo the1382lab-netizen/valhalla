@@ -193,6 +193,43 @@ bool UValhallaVisuals::ApplyActiveHead(USkeletalMeshComponent* Head, USkeletalMe
 	return Mesh != nullptr;
 }
 
+USkeletalMesh* UValhallaVisuals::PieceForActiveBody(USkeletalMesh* Piece)
+{
+	if (!Piece)
+	{
+		return nullptr;
+	}
+
+	static const FString LegacyRoot = TEXT("/Game/Valhalla/Characters/");
+	static const FString MetaHumanRoot = TEXT("/Game/Valhalla/Characters/MetaHuman/");
+
+	const FString Path = Piece->GetPathName();
+	const bool bIsMetaHumanPiece = Path.StartsWith(MetaHumanRoot);
+	const bool bWantMetaHuman = ActiveBodyProfile() == EValhallaBodyProfile::MetaHuman;
+	if (bIsMetaHumanPiece == bWantMetaHuman)
+	{
+		return Piece;
+	}
+
+	FString Relative;
+	if (bIsMetaHumanPiece)
+	{
+		Relative = Path.RightChop(MetaHumanRoot.Len());
+	}
+	else if (Path.StartsWith(LegacyRoot))
+	{
+		Relative = Path.RightChop(LegacyRoot.Len());
+	}
+	if (!(Relative.StartsWith(TEXT("Equipment/")) || Relative.StartsWith(TEXT("Hair/"))))
+	{
+		return Piece;
+	}
+
+	const FString Swapped = (bWantMetaHuman ? MetaHumanRoot : LegacyRoot) + Relative;
+	USkeletalMesh* Rebuilt = LoadObject<USkeletalMesh>(nullptr, *Swapped, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	return Rebuilt ? Rebuilt : Piece;
+}
+
 bool UValhallaVisuals::CanFollowBody(const USkeletalMesh* Piece, const USkeletalMeshComponent* Body)
 {
 	const USkeletalMesh* BodyMeshAsset = Body ? Body->GetSkeletalMeshAsset() : nullptr;
@@ -288,7 +325,7 @@ FString UValhallaVisuals::EquipmentAssetPath(const FValhallaItemTemplate& Item, 
 
 	return bHeld
 		? FString::Printf(TEXT("%s/Weapons/SM_%s"), CharactersRoot(), *ArtId)
-		: FString::Printf(TEXT("%s/Equipment/SK_%s"), CharactersRoot(), *ArtId);
+		: FString::Printf(TEXT("%s/Equipment/SK_%s"), *SkinnedArtRoot(), *ArtId);
 }
 
 FString UValhallaVisuals::EquipmentAssetPathForItem(const UObject* WorldContext, FName ItemId, bool& OutIsSkeletal)

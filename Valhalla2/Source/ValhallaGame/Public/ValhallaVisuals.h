@@ -173,6 +173,35 @@ public:
 	 */
 	static bool ApplyActiveHead(USkeletalMeshComponent* Head, USkeletalMeshComponent* Body);
 
+	// ── Skinned art per body (B-15 Wave 2 rework, 2026-09-23) ───────────
+	//
+	// Armour and hair are skinned to one skeleton each: the Fable originals
+	// live under Characters/Equipment and Characters/Hair (SK_Valhalla_Skeleton),
+	// their MetaHuman rebuilds under Characters/MetaHuman/Equipment and
+	// Characters/MetaHuman/Hair (metahuman_base_skel), with the same names.
+
+	/** Root of the active body's skinned equipment and hair folders. */
+	static FString SkinnedArtRoot()
+	{
+		return ActiveBodyProfile() == EValhallaBodyProfile::MetaHuman
+			? FString(TEXT("/Game/Valhalla/Characters/MetaHuman"))
+			: FString(CharactersRoot());
+	}
+
+	/** `<root>/Hair/<Name>` for the active body. */
+	static FString HairMeshPath(const TCHAR* Name) { return FString::Printf(TEXT("%s/Hair/%s"), *SkinnedArtRoot(), Name); }
+
+	/** `<root>/Equipment/<Name>` for the active body. */
+	static FString EquipmentMeshPath(const TCHAR* Name) { return FString::Printf(TEXT("%s/Equipment/%s"), *SkinnedArtRoot(), Name); }
+
+	/**
+	 * A piece picked for the other body — an NPC Blueprint authored before the
+	 * switch still names Characters/Equipment/SK_chest_… — swapped for its
+	 * same-named rebuild for the active body when there is one; otherwise the
+	 * piece itself (CanFollowBody then decides whether it is drawn).
+	 */
+	static USkeletalMesh* PieceForActiveBody(USkeletalMesh* Piece);
+
 	/**
 	 * The body mesh the active profile uses. Constructors load this (not a
 	 * hard-coded path) so a placed or previewed character in the editor shows

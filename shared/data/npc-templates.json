@@ -25,8 +25,7 @@
       "leashRange": 1200,
       "lootTableId": "loot_1771620382459",
       "moveSpeed": 80,
-      "attackSpeed": 4000,
-      "weaponId": "iron_sword"
+      "attackSpeed": 4000
     },
     "npc_1771709765831": {
       "id": "npc_1771709765831",

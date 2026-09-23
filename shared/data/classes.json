@@ -81,7 +81,7 @@
         "dodgeRating": 0.002
       },
       "allowedArmor": "mail",
-      "baseSpeed": 122,
+      "baseSpeed": 300,
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4400,
       "baseRangedAttackSpeedMs": 0,

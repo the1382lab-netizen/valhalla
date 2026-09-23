@@ -649,7 +649,7 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       `editor/`, `maps/` (`overlays-2.0`, `thumbs`), `Import/`,
       `Blender assets/`, `Tools/` (`fixtures`, `unreal-mcp-bridge`).
       `DataRoot` is now `../shared/data`. The old `valhalla/` checkout is
-      retired; its last state is the tag `archive/1.0-final` (branch `dev`).
+      retired; its last state is the tag `archive/1.0-final` (branch `archive`; `dev` is now the working branch).
 - [x] **Retired 1.0 code not carried over:** the Phaser client, the Colyseus
       game room (the backend is plain Express now), the Tiled/legacy map
       editor, the Zone editor, the paperdoll preview and the sprite-sheet

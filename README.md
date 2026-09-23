@@ -34,4 +34,4 @@ from the backend's `/api/data` after login.
 
 This repository was merged from two on 2026-09-22. The retired 1.0 browser game
 (Phaser client, Colyseus game room, Tiled maps, sprite art) is preserved at the
-git tag `archive/1.0-final` and on the `dev` branch.
+git tag `archive/1.0-final` and on the `archive` branch. `dev` is the working branch: new features and assets land there and merge into `main` once tested.

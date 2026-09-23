@@ -16,6 +16,8 @@ interface NPCTemplate {
   aggroRange?: number;
   leashRange?: number;
   damage?: number;
+  minDamage?: number;
+  maxDamage?: number;
   attackSpeed?: number;
   attackRange?: number;
   moveSpeed?: number;
@@ -379,14 +381,34 @@ export const NPCEditor: React.FC = () => {
 
               <div className="form-row">
                 <div className="form-group">
-                  <label className="form-label">Damage</label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    value={selectedNpc.damage || 0}
-                    onChange={(e) => handleUpdateNpc({ damage: parseInt(e.target.value, 10) || 0 })}
-                  />
+                  <label className="form-label" title="Each hit rolls a number in this range (before the target's defense). Same roll as a player's weapon.">
+                    Damage (min – max)
+                  </label>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      value={selectedNpc.minDamage ?? selectedNpc.damage ?? 0}
+                      onChange={(e) => {
+                        const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const max = Math.max(v, selectedNpc.maxDamage ?? selectedNpc.damage ?? 0);
+                        handleUpdateNpc({ minDamage: v, maxDamage: max, damage: Math.round((v + max) / 2) });
+                      }}
+                    />
+                    <span>–</span>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      value={selectedNpc.maxDamage ?? selectedNpc.damage ?? 0}
+                      onChange={(e) => {
+                        const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                        const min = Math.min(v, selectedNpc.minDamage ?? selectedNpc.damage ?? 0);
+                        handleUpdateNpc({ minDamage: min, maxDamage: v, damage: Math.round((min + v) / 2) });
+                      }}
+                    />
+                  </div>
                 </div>
 
                 <div className="form-group">

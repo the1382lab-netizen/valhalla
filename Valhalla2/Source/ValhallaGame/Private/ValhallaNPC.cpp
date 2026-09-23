@@ -18,6 +18,7 @@
 #include "ValhallaCharacter.h"
 #include "ValhallaCombatLibrary.h"
 #include "ValhallaConstants.h"
+#include "ValhallaStats.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
 #include "HAL/FileManager.h"
@@ -969,7 +970,12 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 		{
 			LastAttackTime = Now;
 
-			const double BaseDamage = FMath::Max(1.f, Template.Damage);
+			// The damage roll (2.0): a uniform roll in the template's
+			// [minDamage, maxDamage], exactly like a player's weapon — or the
+			// fixed 1.0 `damage` when the template has no range.
+			float MinDamage = 0.f, MaxDamage = 0.f;
+			Template.GetDamageRange(MinDamage, MaxDamage);
+			const double BaseDamage = FMath::Max(1.0, Valhalla::Stats::RollWeaponDamage(MinDamage, MaxDamage, FMath::FRand()));
 
 			UE_LOG(LogValhallaCombat, Log, TEXT("%s attacks %s (dist %.0f <= %.0f, every %.0f ms)"),
 				*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance, AttackRange, Template.AttackSpeedMs);

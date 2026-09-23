@@ -682,6 +682,10 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       1.0's magical basic (`isRangedMagic`, 450 cm) is gone from the
       auto-attack, and a staff now plays the attack swing rather than A_Cast.
       Checked in PIE: cleric unarmed 17–19, with the Iron Mace 21–25.
+- [x] **NPC melee rolls too.** Monsters fight unarmed, so their templates
+      take the same `minDamage` / `maxDamage` roll (falling back to the flat
+      `damage`). Test Enemy 7–13, Tough Guy 30–50; editable in the NPC editor.
+      Checked in PIE: Test Enemy raw hits 7.3, 7.7, 8.1, 10.7, 10.9.
 
 ## Backlog
 

@@ -501,6 +501,8 @@ namespace
 		// npcs.ts:26-32 — these defaults are the ones the 1.0 server applies.
 		Out.Damage = 5.f;
 		OptFloat(Obj, TEXT("damage"), Out.Damage);
+		OptFloat(Obj, TEXT("minDamage"), Out.MinDamage);
+		OptFloat(Obj, TEXT("maxDamage"), Out.MaxDamage);
 		Out.AttackSpeedMs = 1500.f;
 		OptFloat(Obj, TEXT("attackSpeed"), Out.AttackSpeedMs);
 		Out.AttackRange = 40.f;

@@ -46,6 +46,15 @@ bool FValhallaDamageRollTest::RunTest(const FString& /*Parameters*/)
 	OldBow.GetDamageRange(Min, Max);
 	TestTrue(TEXT("a 1.0 attackDamage becomes a fixed range"), Min == 5.f && Max == 5.f);
 
+	FValhallaNPCTemplate Wolf;
+	Wolf.Damage = 10.f;
+	Wolf.GetDamageRange(Min, Max);
+	TestTrue(TEXT("an NPC with only `damage` hits for it every time"), Min == 10.f && Max == 10.f);
+	Wolf.MinDamage = 7.f;
+	Wolf.MaxDamage = 13.f;
+	Wolf.GetDamageRange(Min, Max);
+	TestTrue(TEXT("an NPC with a range rolls in it"), Min == 7.f && Max == 13.f);
+
 	// The whole melee number for a level-1 warrior (strength 20) swinging the
 	// Iron Mace (+1 strength): 10 + [3, 8] + 21 * 0.8 = 29.8 .. 34.8 before
 	// defense and the floor, against 27.8 .. 29.8 bare-handed.

@@ -679,9 +679,34 @@ struct VALHALLACORE_API FValhallaNPCTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float LeashRange = 0.f;
 
-	/** JSON `damage` — base attack damage; 1.0 default is 5. */
+	/** JSON `damage` — base attack damage; 1.0 default is 5. Used as a fixed hit when there is no min/max range. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float Damage = 5.f;
+
+	/**
+	 * JSON `minDamage` / `maxDamage` — the NPC's damage roll (2.0), the same
+	 * uniform roll a player's weapon makes: each hit is a roll in [Min, Max].
+	 * Absent (Max 0) means every hit is `damage`.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	float MinDamage = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	float MaxDamage = 0.f;
+
+	/** The damage roll range: [MinDamage, MaxDamage], or Damage for both when no range is set. */
+	void GetDamageRange(float& OutMin, float& OutMax) const
+	{
+		if (MaxDamage > 0.f)
+		{
+			OutMin = FMath::Min(MinDamage, MaxDamage);
+			OutMax = MaxDamage;
+		}
+		else
+		{
+			OutMin = OutMax = Damage;
+		}
+	}
 
 	/** JSON `attackSpeed` — ms between attacks; 1.0 default is 1500. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")

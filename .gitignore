@@ -40,4 +40,4 @@ __pycache__/
 *.pyc
 .mcp.json
 
-job.done
+job*.done

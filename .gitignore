@@ -40,6 +40,4 @@ __pycache__/
 *.pyc
 .mcp.json
 
-# Leftover from the repo merge (delete when convenient)
-Valhalla2/.gitignore.moved-to-root
 job.done

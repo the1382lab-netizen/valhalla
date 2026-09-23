@@ -671,5 +671,5 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
 
 Open features and improvements are tracked in Google Drive, folder
 "Valhalla 2.0 Backlog": the index document "Valhalla 2.0 — Backlog"
-(https://docs.google.com/document/d/1t8Nxo8UwOyYsKzbcqIqjJgBHlUppuRCjfFmqMn5D5wM/edit)
+(https://docs.google.com/document/d/1cZ80UWGTL9N_8l5jOnI9PrctlKFjttpKKJVKd-vNoqA/edit)
 links one plan document per item (B-01 ...). Check it before starting new work.

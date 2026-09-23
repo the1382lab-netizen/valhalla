@@ -767,6 +767,32 @@ CC0 textures only (Poly Haven, ambientCG); sources in `Import/Textures/texture_s
   edges follow the tile grid.
 - Review shots: `Saved/ArtReview/wave1/` (`final_*`, `weapons_close_0`, `perf30_0`).
 
+## Phase 14 — B-15 art overhaul, Wave 2: characters (2026-09-23)
+
+Built on Fable 5.1 at Kevin's request, in three reviewed stages. Scripts:
+`Blender assets/scripts/wave2_body.py`, `wave2_hair.py`, `wave2_body_textures.py`,
+`wave2_armour.py`, `wave2_ambientcg.py`, `wave2_anims.py`, `wave2_review.py`.
+
+- [x] **Body + hair** — organic body (shells → voxel remesh → scripted sculpt →
+      QuadriFlow, seam welded), scripted weights on the unchanged
+      SK_Valhalla_Skeleton; procedural SkinBase / HairStrands sets; runtime skin
+      tint and hair vertex colour unchanged. Race_Stocky / Race_Slender shape keys
+      live in the .blend/glb (Unreal import has morph targets off).
+- [x] **Armour** — all 16 SK_ pieces rebuilt, fitted to the body by ray casts,
+      CC0 ambientCG Leather028 / Chainmail004 / Fabric032 / Metal009. Equipment
+      materials are bound like `w2b_equipment_import.py`, NOT by
+      `consolidate_materials()` (it only knows the first-pass names).
+- [x] **Animations** — the 7 existing actions re-keyed (same names/semantics,
+      Walk matched to 122 cm/s); 8 new ones imported but not wired up:
+      A_Run, A_Sit, A_Emote_Wave/Cheer/Bow, A_Attack2H, A_Block, A_Dodge.
+      Hooking them up (EValhallaAnim entries, run blend, /sit and emote commands,
+      TwoHand attack cycle, Block/Dodge on combat events) is a gameplay task.
+- `character_import.py`: `_fix_redirectors` survives UE 5.8,
+  `build_material_instances` uses M_ValhallaPBR, `ANIMATIONS` has 15 entries.
+- Known: tabard, robe skirt and cloak are stiff (no cloth sim); plate reads dark
+  in the grass light; hair clumps look scaly close up; no LODs.
+- Review shots: `Saved/ArtReview/wave2/` (`stageA_*`, `stageB_*`, `stageC_*`).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

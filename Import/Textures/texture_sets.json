@@ -26,6 +26,15 @@
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/cotton_jersey"
   },
+  "Chainmail": {
+    "id": "Chainmail004",
+    "license": "CC0",
+    "note": "B-15 Wave 2 Stage B (wave2_ambientcg.py): riveted mail. Maps: Color, NormalDX, ORM packed from AO=1+Roughness+Metalness.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Chainmail004"
+  },
   "CobbleFloor": {
     "id": "cobblestone_floor_001",
     "license": "CC0",
@@ -62,6 +71,24 @@
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Grass004"
   },
+  "HairStrands": {
+    "id": "wave2_body_textures.bake_hair",
+    "license": "own work (B-15 Wave 2)",
+    "note": "Tiling strand streaks along V; multiplied by the M_Hair vertex colour.",
+    "real_size_m": 0.0,
+    "resolution": "1k",
+    "source": "procedural",
+    "url": ""
+  },
+  "IronPlate": {
+    "id": "Metal009",
+    "license": "CC0",
+    "note": "B-15 Wave 2 Stage B (wave2_ambientcg.py): brushed scratched steel for plate armour. Maps: Color, NormalDX, ORM packed from AO=1+Roughness+Metalness.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Metal009"
+  },
   "LeafCluster": {
     "id": "LeafSet016",
     "license": "CC0",
@@ -80,6 +107,15 @@
     "source": "ambientcg (derived)",
     "url": "https://ambientcg.com/view?id=LeafSet016"
   },
+  "Leather": {
+    "id": "Leather028",
+    "license": "CC0",
+    "note": "B-15 Wave 2 Stage B (wave2_ambientcg.py): brown leather (armour, straps, boots). Maps: Color, NormalDX, ORM packed from AO=1+Roughness+metallic=0.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Leather028"
+  },
   "Plaster": {
     "id": "plastered_wall_02",
     "license": "CC0",
@@ -97,6 +133,15 @@
     "resolution": "2K-PNG",
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Rock030"
+  },
+  "SkinBase": {
+    "id": "wave2_body_textures.bake_skin",
+    "license": "own work (B-15 Wave 2)",
+    "note": "Baked from node trees on SK_Valhalla_Body / _BodyHighRes in valhalla_body.blend. Neutral tint-multiplier colour with the face painted in; normal from the sculpted high-res plus pore noise; AO baked; roughness 0.55.",
+    "real_size_m": 0.0,
+    "resolution": "2k",
+    "source": "procedural",
+    "url": ""
   },
   "StoneFloor": {
     "id": "stone_tiles_02",
@@ -151,5 +196,14 @@
     "resolution": "2k",
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/old_wood_floor"
+  },
+  "Wool": {
+    "id": "Fabric032",
+    "license": "CC0",
+    "note": "B-15 Wave 2 Stage B (wave2_ambientcg.py): white wool weave, tinted per instance (MI_ClothBlue/Cream/Brown). Maps: Color, NormalDX, ORM packed from AO=1+Roughness+metallic=0.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Fabric032"
   }
 }

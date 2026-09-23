@@ -53,7 +53,12 @@ SKELETON_PATH = ROOT + "/SK_Valhalla_Skeleton"
 HAIR_MESHES = ("SK_Hair_Brown_Short", "SK_Hair_Blonde", "SK_Hood_Bald_Cap")
 BODY_MESH = "SK_Valhalla_Body"
 
-ANIMATIONS = ("A_Idle", "A_Walk", "A_Attack", "A_Shoot", "A_Cast", "A_Hit", "A_Death")
+#: Every action the body glb carries. The first seven are what the game plays
+#: (``EValhallaAnim`` in ValhallaVisuals.cpp / ValhallaAnimComponent.cpp); the
+#: rest were added in Wave 2 Stage C (``Blender assets/scripts/wave2_anims.py``)
+#: and are imported onto the skeleton but not wired into gameplay yet.
+ANIMATIONS = ("A_Idle", "A_Walk", "A_Attack", "A_Shoot", "A_Cast", "A_Hit", "A_Death",
+              "A_Run", "A_Sit", "A_Emote_Wave", "A_Emote_Cheer", "A_Emote_Bow", "A_Attack2H", "A_Block", "A_Dodge")
 
 TAG = "LogValhallaImport:"
 
@@ -255,9 +260,17 @@ def _fix_redirectors():
                              class_names=["ObjectRedirector"])
     redirectors = [str(a.package_name) for a in registry.get_assets(search)]
     if redirectors:
-        unreal.AssetToolsHelpers.get_asset_tools().fixup_referencers(
-            [unreal.EditorAssetLibrary.load_asset(p) for p in redirectors])
-        _log("resolved {} redirector(s)".format(len(redirectors)))
+        tools = unreal.AssetToolsHelpers.get_asset_tools()
+        if hasattr(tools, "fixup_referencers"):
+            tools.fixup_referencers([unreal.EditorAssetLibrary.load_asset(p) for p in redirectors])
+            _log("resolved {} redirector(s)".format(len(redirectors)))
+        else:
+            # UE 5.8: AssetTools.fixup_referencers is not exposed to Python.
+            # Every loaded referencer already follows the renamed UObject, so
+            # the redirectors are only needed by unloaded packages; deleting
+            # them is what the Wave 2 body re-import did (w2_body_place.py).
+            _warn("fixup_referencers unavailable; {} redirector(s) left: {}".format(
+                len(redirectors), redirectors))
     return redirectors
 
 
@@ -436,14 +449,22 @@ MATERIALS = {
 }
 
 TOON_MASTER = "/Game/Valhalla/Materials/M_ValhallaToon"
+#: Since B-15 Wave 0 every character instance is parented to M_ValhallaPBR
+#: (``build_pbr.reparent_to_pbr``); the toon master is kept only as rollback.
+PBR_MASTER = "/Game/Valhalla/Materials/M_ValhallaPBR"
 
 
-def build_material_instances():
-    """One ``M_<Name>`` instance of the toon master per glTF material."""
+def build_material_instances(master_path=PBR_MASTER):
+    """One ``M_<Name>`` instance of the master per glTF material.
+
+    Wave 2: the master is M_ValhallaPBR (Wave 0 re-parented all of these);
+    pass ``TOON_MASTER`` to rebuild the first-pass toon look. Texture
+    parameters already set on an existing instance (M_Skin, M_Hair) are kept.
+    """
     _ensure_dirs()
-    master = unreal.EditorAssetLibrary.load_asset(TOON_MASTER)
+    master = unreal.EditorAssetLibrary.load_asset(master_path)
     if master is None:
-        raise RuntimeError("{} does not exist; build it first".format(TOON_MASTER))
+        raise RuntimeError("{} does not exist; build it first".format(master_path))
 
     tools = unreal.AssetToolsHelpers.get_asset_tools()
     built = []

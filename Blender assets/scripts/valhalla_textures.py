@@ -121,3 +121,23 @@ def export_texture_set(asset_id, set_name, metallic=0.0, ao_strength=0.6):
     written = sorted(os.listdir(folder))
     print("export_texture_set {} -> {}: {}".format(asset_id, folder, written))
     return folder, written
+
+
+MANIFEST = os.path.join(OUT_ROOT, "texture_sets.json")
+
+
+def record_manifest(set_name, asset_id, resolution, real_size_m, note=""):
+    """Remember where a set came from, so the PNGs never need to be committed:
+    ``Import/Textures/*/*.png`` is git-ignored and any set can be rebuilt by
+    re-downloading ``asset_id`` at ``resolution`` and re-running the export."""
+    import json
+    data = {}
+    if os.path.exists(MANIFEST):
+        with open(MANIFEST, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    data[set_name] = {"source": "polyhaven", "id": asset_id, "resolution": resolution,
+                      "real_size_m": real_size_m, "url": "https://polyhaven.com/a/" + asset_id,
+                      "license": "CC0", "note": note}
+    os.makedirs(OUT_ROOT, exist_ok=True)
+    with open(MANIFEST, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)

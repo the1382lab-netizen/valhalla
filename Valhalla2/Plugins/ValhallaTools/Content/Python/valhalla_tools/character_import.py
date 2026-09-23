@@ -108,10 +108,18 @@ def _pipeline():
 
     Interchange only accepts an override pipeline as a soft object path, so the
     pipeline has to be a real asset rather than a Python object.
+
+    UE 5.8: EditorAssetLibrary no longer resolves engine-plugin content
+    (/Interchange/...) nor, reliably, a freshly duplicated asset, so this goes
+    through the object system and AssetTools instead.
     """
-    if not unreal.EditorAssetLibrary.does_asset_exist(PIPELINE_ASSET):
-        unreal.EditorAssetLibrary.duplicate_asset(DEFAULT_PIPELINE, PIPELINE_ASSET)
-    return unreal.EditorAssetLibrary.load_asset(PIPELINE_ASSET)
+    obj_path = "{0}.{1}".format(PIPELINE_ASSET, PIPELINE_ASSET.rsplit("/", 1)[1])
+    pipeline = unreal.find_object(None, obj_path) or unreal.load_object(None, obj_path)
+    if pipeline is None:
+        source = unreal.load_object(None, "{0}.{1}".format(DEFAULT_PIPELINE, DEFAULT_PIPELINE.rsplit("/", 1)[1]))
+        folder, name = PIPELINE_ASSET.rsplit("/", 1)
+        pipeline = unreal.AssetToolsHelpers.get_asset_tools().duplicate_asset(name, folder, source)
+    return pipeline
 
 
 def _configure(skeleton=None, skeletal=True, static=False, animations=False):
@@ -172,7 +180,7 @@ def _configure(skeleton=None, skeletal=True, static=False, animations=False):
     mat.set_editor_property("import_materials", True)
     mat.set_editor_property("create_material_instance_for_parent", None)
 
-    unreal.EditorAssetLibrary.save_asset(PIPELINE_ASSET)
+    unreal.EditorAssetLibrary.save_loaded_asset(pipeline, False)
     return pipeline
 
 
@@ -187,7 +195,7 @@ def _import(filename, dest):
     params.set_editor_property("is_automated", True)
     params.set_editor_property("replace_existing", True)
     params.set_editor_property("override_pipelines",
-                               [unreal.SoftObjectPath(PIPELINE_ASSET)])
+                               [unreal.SoftObjectPath("{0}.{1}".format(PIPELINE_ASSET, PIPELINE_ASSET.rsplit("/", 1)[1]))])
 
     if not manager.import_asset(dest, source, params):
         _warn("import_asset returned false for {}".format(filename))

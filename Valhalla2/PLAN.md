@@ -733,6 +733,40 @@ All art by Opus + Blender MCP; CC0 textures; AI generators off.
       call Unreal never answers at 50 s. Tested against a mock server.
 - Review shots: `Saved/ArtReview/wave0/` (before, lighting, textured-cobble preview).
 
+## Phase 13 — B-15 art overhaul, Wave 1: town and grassland kit, weapons (2026-09-22)
+
+Every Wave 1 mesh is rebuilt in Blender by script (`Blender assets/scripts/wave1_*.py`,
+shared helpers in `valhalla_kit.py`), exported to the same `Import/` glb and
+re-imported in place by `valhalla_tools/import_kit.py` (same asset path, pivot,
+footprint and collision profile; materials bound by slot name = MI name).
+CC0 textures only (Poly Haven, ambientCG); sources in `Import/Textures/texture_sets.json`
+(the PNGs are gitignored — re-download with the manifest).
+
+- [x] **Ground** — grass / dirt / stone / cobble / wood tiles; `M_ValhallaGroundBlend`
+      (dirt with a noisy grass verge by vertex colour); `road_lanes.fix_open_world()`
+      turned 121 road tiles so the verge faces away from the road.
+      `build_grasslands._road_yaw` does not apply the lane rule yet: a rebuild
+      of L_Grasslands must run `road_lanes.fix_open_world()` afterwards.
+- [x] **Buildings** — timber-frame house walls (plain / window / door), thatch
+      roof, stone walls (straight / corner / end). Bounds identical; VisionBlocker kept.
+- [x] **Props** — barrel, crate, sack/loot bag, fence, signpost, lamp post,
+      market stall, well. `lamp_lights.add_all()` puts a warm, shadowless
+      PointLight on every lamp post.
+- [x] **Weapons** — sword, staff, bow, mace, buckler, kite shield, plus new
+      dagger and bone totem (`items.json` meshId `dagger_iron`, `totem_bone`).
+      `import_kit.reimport_weapons()`; `character_import._pipeline()` now works
+      on UE 5.8 (EditorAssetLibrary no longer loads /Interchange content).
+- [x] **Nature** — trees A/B (bark tubes + leaf-mass cores + leaf cards), rock,
+      water. New masters `M_ValhallaFoliage` (masked, Two Sided Foliage, edge-on
+      card fade, per-tree tint) and `M_ValhallaWater` (panning ripple normals).
+- [x] **Perf check** — 30 animated bodies + the square's NPCs at Bjorn's
+      market, game camera: ~20 ms/frame (49 fps) in editor PIE on the dev PC
+      (PIE includes editor overhead; not yet measured on a GTX 1660).
+- Known: market stall and well use 7 material slots (trim sheet later); the
+  thatch ridge-roll end cap UVs stretch close up; tree wind not done; pond
+  edges follow the tile grid.
+- Review shots: `Saved/ArtReview/wave1/` (`final_*`, `weapons_close_0`, `perf30_0`).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

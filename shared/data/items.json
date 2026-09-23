@@ -77,6 +77,7 @@
       "maxDamage": 5,
       "inventoryIcon": "sword_iron.png",
       "spriteId": "sword_iron",
+      "meshId": "dagger_iron",
       "weaponStyle": "sword"
     },
     "bone_totem": {
@@ -97,6 +98,7 @@
       "maxDamage": 6,
       "inventoryIcon": "mace_priests.png",
       "spriteId": "mace_priests",
+      "meshId": "totem_bone",
       "weaponStyle": "mace"
     },
     "iron_mace": {

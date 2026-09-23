@@ -41,3 +41,6 @@ __pycache__/
 .mcp.json
 
 job*.done
+
+# B-15: texture-set PNGs are regenerated from Poly Haven (see Import/Textures/texture_sets.json)
+Import/Textures/**/*.png

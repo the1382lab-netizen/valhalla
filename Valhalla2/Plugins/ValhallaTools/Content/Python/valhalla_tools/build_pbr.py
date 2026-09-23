@@ -450,3 +450,364 @@ def reparent_to_toon():
         moved.append(mi.get_name())
     _log("reparent_to_toon: {} instance(s)".format(len(moved)))
     return moved
+
+
+# ── Ground blend master (Wave 1) ─────────────────────────────────────────────
+
+GROUND_BLEND = MAT_DIR + "/M_ValhallaGroundBlend"
+
+
+def build_ground_blend():
+    """``M_ValhallaGroundBlend``: two world-aligned texture layers blended by
+    vertex colour red (0 = layer A, 1 = layer B), with the edge broken up by
+    world-space noise so a grass verge along a dirt path is ragged rather than
+    ruled. Built only when it does not exist (see ``upgrade_pbr`` for why a live
+    master is never rebuilt).
+
+    Parameters: ``BaseColorMapA/B``, ``NormalMapA/B``, ``ORMMapA/B``,
+    ``TextureWorldSizeA/B`` (cm per repeat), ``TintA/B``, ``BlendSharpness``,
+    ``BlendNoise``, ``BlendNoiseScale``, ``MacroVariation``, ``MacroScale``.
+    """
+    if unreal.EditorAssetLibrary.does_asset_exist(GROUND_BLEND):
+        _log("M_ValhallaGroundBlend exists; left alone")
+        return GROUND_BLEND
+    material = _asset(GROUND_BLEND)
+    _ensure_default_orm()
+
+    world_pos = _expr(material, unreal.MaterialExpressionWorldPosition, -2800, 0)
+    world_xy = _expr(material, unreal.MaterialExpressionComponentMask, -2600, 0)
+    for ch, on in (("r", True), ("g", True), ("b", False), ("a", False)):
+        world_xy.set_editor_property(ch, on)
+    _wire(world_pos, "", world_xy, "")
+
+    layers = {}
+    for i, layer in enumerate(("A", "B")):
+        y = -900 + i * 1200
+        size = _scalar(material, "TextureWorldSize" + layer, 200.0, -2600, y, "Layer " + layer)
+        uv = _expr(material, unreal.MaterialExpressionDivide, -2400, y)
+        _wire(world_xy, "", uv, "A")
+        _wire(size, "", uv, "B")
+        bc = _texture(material, "BaseColorMap" + layer, WHITE,
+                      unreal.MaterialSamplerType.SAMPLERTYPE_COLOR, -2100, y)
+        nm = _texture(material, "NormalMap" + layer, FLAT_NORMAL,
+                      unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, -2100, y + 300)
+        orm = _texture(material, "ORMMap" + layer, DEFAULT_ORM,
+                       unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, -2100, y + 600)
+        for tex in (bc, nm, orm):
+            tex.set_editor_property("group", "Layer " + layer)
+            _wire(uv, "", tex, "UVs")
+        tint = _vector(material, "Tint" + layer, unreal.LinearColor(1, 1, 1, 1), -2100, y - 200, "Layer " + layer)
+        tinted = _mul(material, bc, tint, -1800, y, a_out="RGB")
+        layers[layer] = (tinted, nm, orm)
+
+    # Blend alpha = saturate((VC.R - 0.5 + noise * BlendNoise) * BlendSharpness + 0.5)
+    vc = _expr(material, unreal.MaterialExpressionVertexColor, -2100, 1500)
+    half = _const(material, 0.5, -2100, 1650)
+    centred = _expr(material, unreal.MaterialExpressionSubtract, -1900, 1520)
+    _wire(vc, "R", centred, "A")
+    _wire(half, "", centred, "B")
+    noise_scale = _scalar(material, "BlendNoiseScale", 60.0, -2400, 1800, "Blend")
+    noise_pos = _expr(material, unreal.MaterialExpressionDivide, -2200, 1800)
+    _wire(world_pos, "", noise_pos, "A")
+    _wire(noise_scale, "", noise_pos, "B")
+    noise = _expr(material, unreal.MaterialExpressionNoise, -2000, 1800)
+    noise.set_editor_property("levels", 3)
+    noise.set_editor_property("output_min", -1.0)
+    noise.set_editor_property("output_max", 1.0)
+    _wire(noise_pos, "", noise, "World Position")
+    noise_amt = _scalar(material, "BlendNoise", 0.3, -2000, 2000, "Blend")
+    noisy = _mul(material, noise, noise_amt, -1800, 1850)
+    summed = _expr(material, unreal.MaterialExpressionAdd, -1650, 1600)
+    _wire(centred, "", summed, "A")
+    _wire(noisy, "", summed, "B")
+    sharp = _scalar(material, "BlendSharpness", 4.0, -1650, 1800, "Blend")
+    scaled = _mul(material, summed, sharp, -1500, 1650)
+    shifted = _expr(material, unreal.MaterialExpressionAdd, -1350, 1650)
+    _wire(scaled, "", shifted, "A")
+    _wire(half, "", shifted, "B")
+    alpha = _expr(material, unreal.MaterialExpressionSaturate, -1200, 1650)
+    _wire(shifted, "", alpha, "")
+
+    (bc_a, nm_a, orm_a), (bc_b, nm_b, orm_b) = layers["A"], layers["B"]
+    base = _lerp(material, bc_a, bc_b, alpha, -1000, -600)
+    normal = _lerp(material, nm_a, nm_b, alpha, -1000, -300, a_out="RGB", b_out="RGB")
+    rough = _lerp(material, orm_a, orm_b, alpha, -1000, 0, a_out="G", b_out="G")
+    ao = _lerp(material, orm_a, orm_b, alpha, -1000, 200, a_out="R", b_out="R")
+
+    one = _const(material, 1.0, -900, -1100)
+    macro_amount = _scalar(material, "MacroVariation", 0.12, -900, -1000, "Wear")
+    macro_scale = _scalar(material, "MacroScale", 900.0, -1100, -1100, "Wear")
+    macro_pos = _expr(material, unreal.MaterialExpressionDivide, -900, -1200)
+    _wire(world_pos, "", macro_pos, "A")
+    _wire(macro_scale, "", macro_pos, "B")
+    macro_noise = _expr(material, unreal.MaterialExpressionNoise, -700, -1200)
+    macro_noise.set_editor_property("levels", 2)
+    macro_noise.set_editor_property("output_min", -1.0)
+    macro_noise.set_editor_property("output_max", 1.0)
+    _wire(macro_pos, "", macro_noise, "World Position")
+    macro_term = _mul(material, macro_noise, macro_amount, -500, -1150)
+    gain = _expr(material, unreal.MaterialExpressionAdd, -350, -1100)
+    _wire(one, "", gain, "A")
+    _wire(macro_term, "", gain, "B")
+    base_final = _mul(material, base, gain, -200, -700)
+
+    _out(base_final, unreal.MaterialProperty.MP_BASE_COLOR)
+    _out(normal, unreal.MaterialProperty.MP_NORMAL)
+    _out(rough, unreal.MaterialProperty.MP_ROUGHNESS)
+    _out(ao, unreal.MaterialProperty.MP_AMBIENT_OCCLUSION)
+    zero = _const(material, 0.0, -600, 400)
+    _out(zero, unreal.MaterialProperty.MP_METALLIC)
+    spec = _const(material, 0.5, -600, 500)
+    _out(spec, unreal.MaterialProperty.MP_SPECULAR)
+
+    material.set_editor_property("used_with_instanced_static_meshes", True)
+    material.set_editor_property("used_with_nanite", True)
+    MEL.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(GROUND_BLEND)
+    _log("built {}".format(GROUND_BLEND))
+    return GROUND_BLEND
+
+
+def _out_pin(node, pin, prop):
+    if not MEL.connect_material_property(node, pin, prop):
+        raise RuntimeError("could not connect {}.{} to {}".format(node.get_class().get_name(), pin, prop))
+
+
+FOLIAGE = MAT_DIR + "/M_ValhallaFoliage"
+WATER = MAT_DIR + "/M_ValhallaWater"
+
+
+def build_foliage():
+    """``M_ValhallaFoliage`` (B-15 Wave 1 trees): masked, two-sided, Two Sided
+    Foliage shading. Base colour alpha is the opacity mask (cards); an opaque
+    texture gives alpha 1, so the canopy cores use the same master. Each
+    instance of an instanced mesh picks a green between ``TintA`` and ``TintB``
+    (PerInstanceRandom), so a field of the same tree doesn't repeat exactly.
+
+    Parameters: ``BaseColorMap``, ``NormalMap``, ``ORMMap``, ``UVScale``,
+    ``TintA``, ``TintB``, ``SubsurfaceColor``, ``RoughnessScale``,
+    ``NormalStrength``. Built only when missing.
+    """
+    if unreal.EditorAssetLibrary.does_asset_exist(FOLIAGE):
+        _log("M_ValhallaFoliage exists; left alone")
+        return FOLIAGE
+    material = _asset(FOLIAGE)
+    _ensure_default_orm()
+    material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_MASKED)
+    material.set_editor_property("two_sided", True)
+    material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_TWO_SIDED_FOLIAGE)
+    material.set_editor_property("opacity_mask_clip_value", 0.4)
+
+    tc = _expr(material, unreal.MaterialExpressionTextureCoordinate, -2000, 0)
+    uv_scale = _scalar(material, "UVScale", 1.0, -2000, 150)
+    uv = _mul(material, tc, uv_scale, -1800, 50)
+    bc = _texture(material, "BaseColorMap", WHITE, unreal.MaterialSamplerType.SAMPLERTYPE_COLOR, -1500, -300)
+    nm = _texture(material, "NormalMap", FLAT_NORMAL, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, -1500, 50)
+    orm = _texture(material, "ORMMap", DEFAULT_ORM, unreal.MaterialSamplerType.SAMPLERTYPE_MASKS, -1500, 400)
+    for tex in (bc, nm, orm):
+        _wire(uv, "", tex, "UVs")
+
+    tint_a = _vector(material, "TintA", unreal.LinearColor(0.55, 0.75, 0.35, 1), -1500, -650)
+    tint_b = _vector(material, "TintB", unreal.LinearColor(0.75, 0.80, 0.35, 1), -1500, -500)
+    tint = _lerp(material, tint_a, tint_b, _variation_alpha(material, -1300, -450), -1100, -600)
+    base = _mul(material, bc, tint, -900, -400, a_out="RGB")
+    _out(base, unreal.MaterialProperty.MP_BASE_COLOR)
+    _out(_edge_fade(material, bc, -900, 1100), unreal.MaterialProperty.MP_OPACITY_MASK)
+
+    strength = _scalar(material, "NormalStrength", 1.0, -1300, 200)
+    flat = _expr(material, unreal.MaterialExpressionConstant3Vector, -1300, 300)
+    flat.set_editor_property("constant", unreal.LinearColor(0, 0, 1, 1))
+    normal = _lerp(material, flat, nm, strength, -900, 100, b_out="RGB")
+    _out(normal, unreal.MaterialProperty.MP_NORMAL)
+
+    rscale = _scalar(material, "RoughnessScale", 1.0, -1300, 550)
+    rough = _mul(material, orm, rscale, -900, 450, a_out="G")
+    _out(rough, unreal.MaterialProperty.MP_ROUGHNESS)
+    _out_pin(orm, "R", unreal.MaterialProperty.MP_AMBIENT_OCCLUSION)
+    spec = _const(material, 0.35, -900, 650)
+    _out(spec, unreal.MaterialProperty.MP_SPECULAR)
+
+    sss = _vector(material, "SubsurfaceColor", unreal.LinearColor(0.35, 0.45, 0.08, 1), -1100, 800)
+    sss_tex = _mul(material, sss, bc, -900, 800, b_out="RGB")
+    _out(sss_tex, unreal.MaterialProperty.MP_SUBSURFACE_COLOR)
+
+    material.set_editor_property("used_with_instanced_static_meshes", True)
+    material.set_editor_property("used_with_nanite", True)
+    MEL.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(FOLIAGE)
+    _log("built {}".format(FOLIAGE))
+    return FOLIAGE
+
+
+def build_water():
+    """``M_ValhallaWater`` (B-15 Wave 1): opaque, glossy water for the tile
+    kit. Two world-aligned samples of ``NormalMap`` pan in different
+    directions and are added, so the ripples never visibly slide as one sheet;
+    colour runs from ``DeepColor`` (looking down) to ``EdgeColor`` (grazing),
+    which from the game camera reads as depth.
+
+    Parameters: ``NormalMap``, ``RippleSize`` (cm per repeat), ``RippleSpeed``,
+    ``NormalStrength``, ``DeepColor``, ``EdgeColor``, ``Roughness``,
+    ``Specular``. Built only when missing.
+    """
+    if unreal.EditorAssetLibrary.does_asset_exist(WATER):
+        _log("M_ValhallaWater exists; left alone")
+        return WATER
+    material = _asset(WATER)
+
+    world_pos = _expr(material, unreal.MaterialExpressionWorldPosition, -2600, 0)
+    world_xy = _expr(material, unreal.MaterialExpressionComponentMask, -2400, 0)
+    for ch, on in (("r", True), ("g", True), ("b", False), ("a", False)):
+        world_xy.set_editor_property(ch, on)
+    _wire(world_pos, "", world_xy, "")
+    size = _scalar(material, "RippleSize", 300.0, -2400, 150, "Water")
+    uv = _expr(material, unreal.MaterialExpressionDivide, -2200, 50)
+    _wire(world_xy, "", uv, "A")
+    _wire(size, "", uv, "B")
+    time = _expr(material, unreal.MaterialExpressionTime, -2400, 300)
+    speed = _scalar(material, "RippleSpeed", 0.02, -2400, 400, "Water")
+    t = _mul(material, time, speed, -2200, 350)
+
+    samples = []
+    for i, (dx, dy, scale) in enumerate(((1.0, 0.35, 1.0), (-0.45, 1.0, 1.7))):
+        y = -200 + i * 450
+        direction = _expr(material, unreal.MaterialExpressionConstant2Vector, -2000, y + 150)
+        direction.set_editor_property("r", dx)
+        direction.set_editor_property("g", dy)
+        offset = _mul(material, t, direction, -1850, y + 150)
+        k = _const(material, scale, -2000, y)
+        scaled = _mul(material, uv, k, -1850, y)
+        moved = _expr(material, unreal.MaterialExpressionAdd, -1700, y)
+        _wire(scaled, "", moved, "A")
+        _wire(offset, "", moved, "B")
+        tex = _texture(material, "NormalMap", FLAT_NORMAL, unreal.MaterialSamplerType.SAMPLERTYPE_NORMAL, -1500, y)
+        tex.set_editor_property("group", "Water")
+        _wire(moved, "", tex, "UVs")
+        samples.append(tex)
+    added = _expr(material, unreal.MaterialExpressionAdd, -1200, 0)
+    _wire(samples[0], "RGB", added, "A")
+    _wire(samples[1], "RGB", added, "B")
+    strength = _scalar(material, "NormalStrength", 0.6, -1200, 200, "Water")
+    flat = _expr(material, unreal.MaterialExpressionConstant3Vector, -1200, 300)
+    flat.set_editor_property("constant", unreal.LinearColor(0, 0, 1, 1))
+    mixed = _lerp(material, flat, added, strength, -1000, 100)
+    normal = _expr(material, unreal.MaterialExpressionNormalize, -800, 100)
+    _wire(mixed, "", normal, "")
+    _out(normal, unreal.MaterialProperty.MP_NORMAL)
+
+    deep = _vector(material, "DeepColor", unreal.LinearColor(0.012, 0.045, 0.06, 1), -1200, -500, "Water")
+    edge = _vector(material, "EdgeColor", unreal.LinearColor(0.06, 0.16, 0.17, 1), -1200, -350, "Water")
+    fres = _expr(material, unreal.MaterialExpressionFresnel, -1200, -200)
+    fres.set_editor_property("exponent", 3.0)
+    color = _lerp(material, deep, edge, fres, -900, -400)
+    _out(color, unreal.MaterialProperty.MP_BASE_COLOR)
+    rough = _scalar(material, "Roughness", 0.05, -900, 350, "Water")
+    _out(rough, unreal.MaterialProperty.MP_ROUGHNESS)
+    spec = _scalar(material, "Specular", 0.6, -900, 450, "Water")
+    _out(spec, unreal.MaterialProperty.MP_SPECULAR)
+    zero = _const(material, 0.0, -900, 550)
+    _out(zero, unreal.MaterialProperty.MP_METALLIC)
+
+    material.set_editor_property("used_with_instanced_static_meshes", True)
+    material.set_editor_property("used_with_nanite", True)
+    MEL.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(WATER)
+    _log("built {}".format(WATER))
+    return WATER
+
+
+def _variation_alpha(material, x, y):
+    """0..1 per placed tree: PerInstanceRandom for instanced meshes, plus a
+    hash of the object position so individually placed actors vary too."""
+    rnd = _expr(material, unreal.MaterialExpressionPerInstanceRandom, x - 600, y - 150)
+    pos = _expr(material, unreal.MaterialExpressionObjectPositionWS, x - 800, y)
+    xy = _expr(material, unreal.MaterialExpressionComponentMask, x - 650, y)
+    for ch, on in (("r", True), ("g", True), ("b", False), ("a", False)):
+        xy.set_editor_property(ch, on)
+    _wire(pos, "", xy, "")
+    k = _expr(material, unreal.MaterialExpressionConstant2Vector, x - 650, y + 100)
+    k.set_editor_property("r", 0.0129898)
+    k.set_editor_property("g", 0.078233)
+    dot = _expr(material, unreal.MaterialExpressionDotProduct, x - 500, y)
+    _wire(xy, "", dot, "A")
+    _wire(k, "", dot, "B")
+    sine = _expr(material, unreal.MaterialExpressionSine, x - 380, y)
+    sine.set_editor_property("period", 6.283185)
+    _wire(dot, "", sine, "")
+    big = _mul(material, sine, _const(material, 43758.547, x - 380, y + 100), x - 260, y)
+    added = _expr(material, unreal.MaterialExpressionAdd, x - 140, y - 60)
+    _wire(big, "", added, "A")
+    _wire(rnd, "", added, "B")
+    frac = _expr(material, unreal.MaterialExpressionFrac, x, y - 60)
+    _wire(added, "", frac, "")
+    return frac
+
+
+def upgrade_foliage():
+    """Patch a live M_ValhallaFoliage: tint variation also from the object
+    position (trees in the levels are single actors, where PerInstanceRandom
+    is always 0). Idempotent."""
+    material = unreal.EditorAssetLibrary.load_asset(FOLIAGE)
+    if material is None:
+        return build_foliage()
+    seen, stack, lerp = set(), [MEL.get_material_property_input_node(material, unreal.MaterialProperty.MP_BASE_COLOR)], None
+    has_hash = False
+    while stack:
+        node = stack.pop()
+        if node is None or node.get_path_name() in seen:
+            continue
+        seen.add(node.get_path_name())
+        if isinstance(node, unreal.MaterialExpressionObjectPositionWS):
+            has_hash = True
+        if isinstance(node, unreal.MaterialExpressionLinearInterpolate) and lerp is None:
+            lerp = node
+        stack.extend(MEL.get_inputs_for_material_expression(material, node))
+    if has_hash or lerp is None:
+        _log("upgrade_foliage: already current" if has_hash else "upgrade_foliage: tint lerp not found")
+        return []
+    _wire(_variation_alpha(material, -1300, -450), "", lerp, "Alpha")
+    MEL.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(FOLIAGE)
+    _log("upgrade_foliage: tint variation from object position")
+    return ["object-position tint variation"]
+
+
+def _edge_fade(material, bc, x, y):
+    """Opacity = BaseColor alpha, faded out where a card is seen edge-on
+    (``EdgeFade`` 1 on cards, 0 on the opaque cores, whose rounded silhouettes
+    must not be clipped)."""
+    nrm = _expr(material, unreal.MaterialExpressionVertexNormalWS, x - 700, y)
+    cam = _expr(material, unreal.MaterialExpressionCameraVectorWS, x - 700, y + 100)
+    dot = _expr(material, unreal.MaterialExpressionDotProduct, x - 550, y)
+    _wire(nrm, "", dot, "A")
+    _wire(cam, "", dot, "B")
+    ab = _expr(material, unreal.MaterialExpressionAbs, x - 430, y)
+    _wire(dot, "", ab, "")
+    lo = _scalar(material, "EdgeFadeStart", 0.15, x - 430, y + 100, "Foliage")
+    sub = _expr(material, unreal.MaterialExpressionSubtract, x - 320, y)
+    _wire(ab, "", sub, "A")
+    _wire(lo, "", sub, "B")
+    gain = _mul(material, sub, _const(material, 4.0, x - 320, y + 100), x - 220, y)
+    sat = _expr(material, unreal.MaterialExpressionSaturate, x - 120, y)
+    _wire(gain, "", sat, "")
+    amount = _scalar(material, "EdgeFade", 0.0, x - 120, y + 100, "Foliage")
+    one = _const(material, 1.0, x - 120, y + 200)
+    fade = _lerp(material, one, sat, amount, x, y)
+    return _mul(material, bc, fade, x + 150, y, a_out="A")
+
+
+def upgrade_foliage_edges():
+    """Patch a live M_ValhallaFoliage: edge-on card fade. Idempotent."""
+    material = unreal.EditorAssetLibrary.load_asset(FOLIAGE)
+    node = MEL.get_material_property_input_node(material, unreal.MaterialProperty.MP_OPACITY_MASK)
+    if isinstance(node, unreal.MaterialExpressionMultiply):
+        _log("upgrade_foliage_edges: already current")
+        return []
+    bc = _find_texture_param(material, unreal.MaterialProperty.MP_OPACITY_MASK, "BaseColorMap")
+    masked = _edge_fade(material, bc, -900, 1100)
+    _out(masked, unreal.MaterialProperty.MP_OPACITY_MASK)
+    MEL.recompile_material(material)
+    unreal.EditorAssetLibrary.save_asset(FOLIAGE)
+    _log("upgrade_foliage_edges: edge-on card fade")
+    return ["edge fade"]
+

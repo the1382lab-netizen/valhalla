@@ -195,6 +195,13 @@ AValhallaNPC::AValhallaNPC()
 	bUseControllerRotationYaw = false;
 
 	UCharacterMovementComponent* Movement = GetCharacterMovement();
+	// An NPC has no controller (see the header: no AIController, by design),
+	// and CharacterMovement only consumes AddMovementInput for a pawn that is
+	// locally controlled — or, with this flag, for one that has no controller
+	// at all. Without it every chase and walk-home input was silently dropped:
+	// an aggroed NPC stood still and only ever hit a player who was already in
+	// reach.
+	Movement->bRunPhysicsWithNoController = true;
 	Movement->bOrientRotationToMovement = true;
 	Movement->RotationRate = FRotator(0.f, 540.f, 0.f);
 	Movement->MaxAcceleration = 4096.f;
@@ -715,6 +722,24 @@ void AValhallaNPC::ReapplyTemplate(const FValhallaNPCTemplate& NewTemplate)
 	}
 
 	ApplyAppearance();
+}
+
+void AValhallaNPC::NotifyAttackAvoided(AActor* Attacker)
+{
+	if (!HasAuthority() || !bAlive || !Attacker)
+	{
+		return;
+	}
+
+	// A swing that missed or was dodged is still an attack. Without this an NPC
+	// whose attacker missed first never noticed, and one aggroed only by misses
+	// never fought back. One point puts the attacker in the table (so a
+	// canAggro NPC turns on them) without outranking anyone who has hit it.
+	const bool bCanAggro = Template.bCanAggro || Template.Type == EValhallaNPCType::Enemy;
+	if (bCanAggro)
+	{
+		ThreatTable.FindOrAdd(Attacker) += 1.f;
+	}
 }
 
 void AValhallaNPC::AddThreat(AActor* Player, float BonusThreat, bool bForceTarget)

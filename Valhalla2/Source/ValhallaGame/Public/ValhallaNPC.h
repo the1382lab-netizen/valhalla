@@ -231,6 +231,9 @@ public:
 	 */
 	void AddThreat(AActor* Player, float BonusThreat, bool bForceTarget);
 
+	/** An attack on this NPC missed or was dodged: the attacker still draws aggro (1 threat). Server only. */
+	void NotifyAttackAvoided(AActor* Attacker);
+
 	/** Apply or refresh a buff on this NPC, keeping SyncedBuffs in step. */
 	void ApplyNPCBuff(const FValhallaActiveBuff& Buff);
 

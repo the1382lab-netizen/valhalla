@@ -359,6 +359,11 @@ int32 UValhallaCombatLibrary::ApplyDamage(AActor* Attacker, AActor* Target, doub
 	// ── Miss and dodge: tell the client, take nothing off ────────────────
 	if (Result.Outcome != EValhallaDamageOutcome::Hit)
 	{
+		// A whiff still aggroes the NPC it was aimed at.
+		if (AValhallaNPC* MissedNpc = Cast<AValhallaNPC>(Target))
+		{
+			MissedNpc->NotifyAttackAvoided(Attacker);
+		}
 		BroadcastCombatEvent(Target, MakeHitEvent(Attacker, Target, Result, SourceSkillId));
 		return 0;
 	}

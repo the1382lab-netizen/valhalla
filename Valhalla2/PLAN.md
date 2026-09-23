@@ -694,10 +694,17 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       of the NPC's own (`Valhalla::Stats::RollNPCMeleeDamage`). The weapon's
       stat bonuses and attack speed do not apply to NPCs. Test Enemy carries
       the Iron Sword: 7–13 + 4–9 = 11–22; PIE hits 12.6–20.0.
+- [x] **NPCs chase again.** NPCs have no controller, and CharacterMovement
+      drops AddMovementInput on an uncontrolled pawn unless
+      `bRunPhysicsWithNoController` is set, so every chase and walk-home step
+      was ignored. Set in the constructor; checked in PIE (a Test Enemy walked
+      213 cm to reach a player 3 m away). A miss or dodge on an NPC now adds 1
+      threat. Straight-line chasing still gets stuck on walls: pathfinding is
+      backlog item B-16.
 
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder
 "Valhalla 2.0 Backlog": the index document "Valhalla 2.0 — Backlog"
-(https://docs.google.com/document/d/1cZ80UWGTL9N_8l5jOnI9PrctlKFjttpKKJVKd-vNoqA/edit)
+(https://docs.google.com/document/d/1pGBSZFRmC25Vw6mJIIcS9fPpWIo_ufkfvQ_qNeDPWCk/edit)
 links one plan document per item (B-01 ...). Check it before starting new work.

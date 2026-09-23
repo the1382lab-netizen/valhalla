@@ -465,6 +465,7 @@ namespace
 		}
 		OptBool(Obj, TEXT("isAutoAttack"), Out.bIsAutoAttack);
 		OptBool(Obj, TEXT("requiresWeapon"), Out.bRequiresWeapon);
+		OptName(Obj, TEXT("castAnimation"), Out.CastAnimation);
 		OptString(Obj, TEXT("effectNotes"), Out.EffectNotes);
 	}
 

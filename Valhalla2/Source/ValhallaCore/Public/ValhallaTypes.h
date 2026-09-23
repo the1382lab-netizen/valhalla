@@ -437,7 +437,7 @@ struct VALHALLACORE_API FValhallaItemTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
 	FString SpriteId;
 
-	/** JSON `weaponStyle` — sword / greatsword / mace / bow / staff. Weapons only. */
+	/** JSON `weaponStyle` — sword / dagger / greatsword / mace / bow / staff. Weapons only. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
 	FName WeaponStyle;
 
@@ -611,6 +611,14 @@ struct VALHALLACORE_API FValhallaSkillTemplate
 	/** JSON `requiresWeapon`. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Skills")
 	bool bRequiresWeapon = false;
+
+	/**
+	 * JSON `castAnimation` — presentation only. `bow`: the caster draws the bow
+	 * and holds it at full draw for the cast time, then looses when the skill
+	 * fires. None: the spell-cast gather and release.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Skills")
+	FName CastAnimation;
 
 	/** JSON `effectNotes` — human-readable design summary. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Skills")

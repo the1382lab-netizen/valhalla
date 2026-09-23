@@ -334,7 +334,9 @@
         30,
         35
       ],
-      "effectNotes": "High-damage ranged attack"
+      "effectNotes": "High-damage ranged attack",
+      "requiresWeapon": true,
+      "castAnimation": "bow"
     },
     "ranger_serpent_arrow": {
       "id": "ranger_serpent_arrow",

@@ -73,13 +73,39 @@ w2 = _load("wave2_body")
 FPS = 30
 ARMATURE = w2.ARMATURE
 
-# Leg geometry (metres) from the armature: thigh 0.1704, calf 0.1455, and the
-# rest tilts of both (the knee is bent 8.7 degrees at rest).
+# Leg geometry (metres) is read from the armature by ``measure`` (the Stage A
+# rig: thigh 0.1704, calf 0.1455, hips at 0.385; the realistic body2 rig:
+# thigh 0.28, calf 0.285, hips at 0.62). Poses below were authored on the
+# Stage A rig, so vertical pelvis moves scale by ``K`` (leg length ratio) and
+# the walk/run reach stays in metres (it is the speed match).
 L1, L2 = 0.1704, 0.1455
 HIP_Z, HIP_X = 0.385, 0.085
 ANKLE_Z = 0.07
+FOOT_L = 0.114
 P1_REST = math.atan2(-0.07, 0.998)          # thigh pitch at rest (slightly forward)
 KNEE_REST = 0.152                            # calf pitch relative to the thigh at rest
+K = 1.0                                      # (L1 + L2) / 0.3159
+ARM_OUT = 0.10                               # resting upperarm z (the rig's own A-pose is added to it)
+
+
+def measure(arm):
+    """Take the leg geometry from the armature's rest pose."""
+    global L1, L2, HIP_Z, HIP_X, ANKLE_Z, FOOT_L, P1_REST, KNEE_REST, K, ARM_OUT
+    b = arm.data.bones
+    th, ca, ft = b["thigh_l"], b["calf_l"], b["foot_l"]
+    L1, L2 = th.length, ca.length
+    HIP_Z, HIP_X = th.head_local.z, th.head_local.x
+    ANKLE_Z = ft.head_local.z
+    FOOT_L = ft.length
+    d1 = (th.tail_local - th.head_local).normalized()
+    d2 = (ca.tail_local - ca.head_local).normalized()
+    P1_REST = math.atan2(d1.y, -d1.z)
+    KNEE_REST = math.atan2(d2.y, -d2.z) - P1_REST
+    K = (L1 + L2) / 0.3159
+    ua = b["upperarm_l"]
+    tilt = math.atan2((ua.tail_local - ua.head_local).x, -(ua.tail_local - ua.head_local).z)   # the rig's own A-pose
+    ARM_OUT = max(0.02, 0.10 - tilt)
+    return dict(L1=L1, L2=L2, HIP_Z=HIP_Z, ANKLE_Z=ANKLE_Z, FOOT_L=FOOT_L, P1_REST=P1_REST, KNEE_REST=KNEE_REST, K=K, ARM_OUT=ARM_OUT)
 
 DEFORM = ("root", "pelvis", "spine_01", "spine_02", "neck", "head", "clavicle_l", "upperarm_l", "lowerarm_l",
           "hand_l", "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l",
@@ -105,6 +131,8 @@ class Clip:
         return self
 
     def loc(self, frame, bone, x=0.0, y=0.0, z=0.0):
+        if bone == "pelvis":                 # authored on the Stage A rig: scale with the legs
+            x, y, z = x * K, y * K, z * K
         self.keys.setdefault(frame, {}).setdefault(bone, {})["loc"] = (x, y, z)
         return self
 
@@ -124,12 +152,15 @@ class Clip:
                 self.loc(frame, b)
         return self
 
-    def leg(self, frame, side, ankle_y, ankle_z=ANKLE_Z, hip_dz=0.0, hip_dy=0.0, toe=0.0, lateral=0.0):
+    def leg(self, frame, side, ankle_y, ankle_z=None, hip_dz=0.0, hip_dy=0.0, toe=0.0, lateral=0.0):
         """Plant the ankle at (ankle_y, ankle_z) in armature space, the hip
         moved by (hip_dy, hip_dz): two-bone IK in the sagittal plane. ``toe``
         pitches the foot (+ = toe down); ``lateral`` is the pelvis x shift
         the leg has to absorb so the foot stays put."""
         pre = "l" if side > 0 else "r"
+        if ankle_z is None:
+            ankle_z = ANKLE_Z
+        hip_dz, hip_dy, lateral = hip_dz * K, hip_dy * K, lateral * K
         dy, dz = ankle_y - hip_dy, ankle_z - (HIP_Z + hip_dz)
         d = max(0.02, min(math.hypot(dy, dz), L1 + L2 - 0.003))
         p_d = math.atan2(dy, -dz)
@@ -210,12 +241,12 @@ def walk_cycle(clip, n, reach, stance=0.5, drop=(0.05, 0.012), lift=0.075, arm=0
             if u < stance:                   # planted, sliding back under the body
                 y = -reach + speed * u * T
                 toe = 0.35 * smooth((u - stance * 0.7) / (stance * 0.3)) if run else 0.25 * smooth((u - stance * 0.75) / (stance * 0.25))
-                z = ANKLE_Z + 0.09 * math.sin(toe)          # toe-off pivots on the toe, so the ankle rises
+                z = ANKLE_Z + 0.8 * FOOT_L * math.sin(toe)   # toe-off pivots on the toe, so the ankle rises
             else:                            # swing
                 s = (u - stance) / (1.0 - stance)
                 y = reach - 2 * reach * smooth(s)
                 toe = 0.3 * (1 - s) - 0.15 * s
-                z = ANKLE_Z + lift * math.sin(math.pi * s) + 0.09 * math.sin(max(0.0, toe))
+                z = ANKLE_Z + lift * K * math.sin(math.pi * s) + 0.8 * FOOT_L * math.sin(max(0.0, toe))
             lateral = sway * math.sin(2 * math.pi * t)
             clip.leg(f, side, y, z, hip_dz=hip_dz, toe=toe, lateral=lateral)
         lateral = sway * math.sin(2 * math.pi * t)
@@ -227,8 +258,8 @@ def walk_cycle(clip, n, reach, stance=0.5, drop=(0.05, 0.012), lift=0.075, arm=0
         clip.rot(f, "neck", -lean * 0.4, 0.0, 0.0)
         clip.rot(f, "head", -lean * 0.6 - 0.02 * math.cos(4 * math.pi * t), -0.3 * shoulder_yaw * c, 0.0)
         # arms swing opposite to their leg; the forearm folds as the arm comes forward
-        clip.rot(f, "upperarm_l", arm * c, 0.0, 0.12)
-        clip.rot(f, "upperarm_r", -arm * c, 0.0, -0.12)
+        clip.rot(f, "upperarm_l", arm * c, 0.0, ARM_OUT + 0.02)
+        clip.rot(f, "upperarm_r", -arm * c, 0.0, -ARM_OUT - 0.02)
         clip.rot(f, "lowerarm_l", elbow + 0.3 * (1 - c) / 2, 0.0, 0.0)
         clip.rot(f, "lowerarm_r", elbow + 0.3 * (1 + c) / 2, 0.0, 0.0)
         clip.rot(f, "hand_l", 0.1, 0.0, 0.0)
@@ -241,13 +272,13 @@ def walk_cycle(clip, n, reach, stance=0.5, drop=(0.05, 0.012), lift=0.075, arm=0
 
 def a_walk():
     # 2 * 0.17 / (0.45 * 0.667 s) = 1.13 m/s: between the 110 and 122 cm/s classes.
-    return walk_cycle(Clip("A_Walk", 20, loop=True, dense=True), 20, reach=0.17, stance=0.45, drop=(0.05, 0.012))
+    return walk_cycle(Clip("A_Walk", 20, loop=True, dense=True), 20, reach=0.17, stance=0.45, drop=(0.02, 0.008))
 
 
 def a_run():
-    # 2 * 0.20 / (0.35 * 0.533 s) = 2.14 m/s, 30 % of the cycle in the air.
+    # 2 * 0.26 / (0.35 * 0.533 s) = 2.8 m/s, 30 % of the cycle in the air.
     c = Clip("A_Run", 16, loop=True, dense=True)
-    return walk_cycle(c, 16, reach=0.20, stance=0.35, drop=(0.075, 0.03), lift=0.12, arm=0.8, lean=0.22, hip_yaw=0.16,
+    return walk_cycle(c, 16, reach=0.26, stance=0.35, drop=(0.045, 0.02), lift=0.10, arm=0.8, lean=0.22, hip_yaw=0.16,
                       shoulder_yaw=0.26, sway=0.008, elbow=1.3, run=True)
 
 
@@ -267,8 +298,8 @@ def a_idle():
         c.rot(f, "head", -0.02 * breath, turn, 0.04 * shift / 0.012)
         c.rot(f, "clavicle_l", 0.0, 0.0, 0.03 * breath)
         c.rot(f, "clavicle_r", 0.0, 0.0, 0.03 * breath)
-        c.rot(f, "upperarm_l", 0.04 * breath, 0.0, 0.10 + 0.02 * breath)
-        c.rot(f, "upperarm_r", 0.04 * breath, 0.0, -0.10 - 0.02 * breath)
+        c.rot(f, "upperarm_l", 0.04 * breath, 0.0, ARM_OUT + 0.02 * breath)
+        c.rot(f, "upperarm_r", 0.04 * breath, 0.0, -ARM_OUT - 0.02 * breath)
         c.rot(f, "lowerarm_l", 0.25 + 0.02 * breath, 0.0, 0.0)
         c.rot(f, "lowerarm_r", 0.25 + 0.02 * breath, 0.0, 0.0)
         c.rot(f, "hand_l", 0.05, 0.0, 0.0)
@@ -287,8 +318,8 @@ def a_cast():
         up = smooth(t / 0.22) * (1 - smooth((t - 0.78) / 0.22))     # arms up between 22 % and 78 %
         pulse = 0.5 * (1 - math.cos(2 * math.pi * (t - 0.22) / 0.56)) if 0.22 < t < 0.78 else 0.0
         c.stand(f, hip_dz=-0.01 * up)
-        c.rot(f, "upperarm_l", -1.55 * up + 0.15 * pulse, 0.0, 0.10 - 0.45 * up * (0.4 + 0.6 * pulse))
-        c.rot(f, "upperarm_r", -1.55 * up + 0.15 * pulse, 0.0, -0.10 + 0.45 * up * (0.4 + 0.6 * pulse))
+        c.rot(f, "upperarm_l", -1.55 * up + 0.15 * pulse, 0.0, ARM_OUT - 0.45 * up * (0.4 + 0.6 * pulse))
+        c.rot(f, "upperarm_r", -1.55 * up + 0.15 * pulse, 0.0, -ARM_OUT + 0.45 * up * (0.4 + 0.6 * pulse))
         c.rot(f, "lowerarm_l", 0.25 + 0.7 * up - 0.3 * pulse * up, 0.0, 0.0)
         c.rot(f, "lowerarm_r", 0.25 + 0.7 * up - 0.3 * pulse * up, 0.0, 0.0)
         c.rot(f, "hand_l", -0.4 * up, 0.0, 0.0)
@@ -306,7 +337,7 @@ def a_cast():
 # ── One-shots (sparse poses, Bezier) ─────────────────────────────────────────
 
 def _rest_arms(c, f):
-    c.pose(f, upperarm_l=(0, 0, 0.10), upperarm_r=(0, 0, -0.10), lowerarm_l=(0.25, 0, 0), lowerarm_r=(0.25, 0, 0),
+    c.pose(f, upperarm_l=(0, 0, ARM_OUT), upperarm_r=(0, 0, -ARM_OUT), lowerarm_l=(0.25, 0, 0), lowerarm_r=(0.25, 0, 0),
            hand_l=(0.05, 0, 0), hand_r=(0.05, 0, 0), clavicle_l=(0, 0, 0), clavicle_r=(0, 0, 0))
 
 
@@ -406,23 +437,23 @@ def a_death():
     c.pose(6, spine_01=(-0.1, 0.0, 0.0), spine_02=(-0.3, 0.0, 0.0), neck=(-0.1, 0.0, 0.0), head=(-0.3, 0.0, 0.0),
            upperarm_l=(-0.9, 0.0, -0.2), upperarm_r=(-0.9, 0.0, 0.2), lowerarm_l=(0.8, 0.0, 0.0), lowerarm_r=(0.8, 0.0, 0.0))
     # mid-fall: the whole body tips back around the hips, knees give
-    c.pose(14, pelvis=(-0.9, 0.0, 0.0), pelvis_loc=(0.0, -0.12, -0.06),
-           thigh_l=(-0.4, 0.0, 0.08), thigh_r=(-0.4, 0.0, -0.08), calf_l=(0.5, 0.0, 0.0), calf_r=(0.5, 0.0, 0.0),
-           foot_l=(0.2, 0.0, 0.0), foot_r=(0.2, 0.0, 0.0),
+    c.pose(14, pelvis=(-0.9, 0.0, 0.0), pelvis_loc=(0.0, -0.17, -0.03),
+           thigh_l=(-0.6, 0.0, 0.08), thigh_r=(-0.6, 0.0, -0.08), calf_l=(0.75, 0.0, 0.0), calf_r=(0.75, 0.0, 0.0),
+           foot_l=(0.3, 0.0, 0.0), foot_r=(0.3, 0.0, 0.0),
            spine_01=(-0.15, 0.0, 0.0), spine_02=(-0.2, 0.0, 0.0), neck=(-0.1, 0.0, 0.0), head=(-0.2, 0.0, 0.0),
            upperarm_l=(-1.2, 0.0, -0.8), upperarm_r=(-1.2, 0.0, 0.8), lowerarm_l=(0.6, 0.0, 0.0), lowerarm_r=(0.6, 0.0, 0.0))
     # on the ground
-    c.pose(22, pelvis=(-1.5, 0.0, 0.0), pelvis_loc=(0.0, -0.19, -0.10),
+    c.pose(22, pelvis=(-1.5, 0.0, 0.0), pelvis_loc=(0.0, -0.275, -0.10),
            thigh_l=(-0.2, 0.0, 0.10), thigh_r=(-0.2, 0.0, -0.10), calf_l=(0.2, 0.0, 0.0), calf_r=(0.2, 0.0, 0.0),
            foot_l=(-0.1, 0.0, 0.0), foot_r=(-0.1, 0.0, 0.0),
            spine_01=(0.0, 0.0, 0.0), spine_02=(0.05, 0.0, 0.0), neck=(0.02, 0.0, 0.0), head=(0.12, 0.2, 0.0),
            upperarm_l=(-0.35, 0.0, -1.2), upperarm_r=(-0.35, 0.0, 1.2), lowerarm_l=(0.35, 0.0, 0.0), lowerarm_r=(0.35, 0.0, 0.0),
            hand_l=(-0.2, 0.0, 0.0), hand_r=(-0.2, 0.0, 0.0), clavicle_l=(0, 0, 0), clavicle_r=(0, 0, 0))
     # settle
-    c.pose(28, pelvis=(-1.55, 0.0, 0.0), pelvis_loc=(0.0, -0.19, -0.10),
+    c.pose(28, pelvis=(-1.55, 0.0, 0.0), pelvis_loc=(0.0, -0.275, -0.10),
            thigh_l=(-0.12, 0.0, 0.10), thigh_r=(-0.12, 0.0, -0.10), calf_l=(0.15, 0.0, 0.0), calf_r=(0.15, 0.0, 0.0),
            head=(0.1, 0.25, 0.0), upperarm_l=(-0.3, 0.0, -1.25), upperarm_r=(-0.3, 0.0, 1.25))
-    c.pose(36, pelvis=(-1.55, 0.0, 0.0), pelvis_loc=(0.0, -0.19, -0.10), head=(0.1, 0.25, 0.0),
+    c.pose(36, pelvis=(-1.55, 0.0, 0.0), pelvis_loc=(0.0, -0.275, -0.10), head=(0.1, 0.25, 0.0),
            upperarm_l=(-0.3, 0.0, -1.25), upperarm_r=(-0.3, 0.0, 1.25))
     return c
 
@@ -439,12 +470,12 @@ def a_sit():
     # through the floor between the crouch and the seat
     for s in (1, -1):
         c.leg(14, s, -0.15, ankle_z=0.10, hip_dz=-0.17, lateral=0.0)
-        c.leg(20, s, -0.22, ankle_z=0.06, hip_dz=-0.315)
-        c.leg(30, s, -0.22, ankle_z=0.06, hip_dz=-0.315)
+        c.leg(20, s, -0.24, ankle_z=0.085, hip_dz=-0.30)
+        c.leg(30, s, -0.24, ankle_z=0.085, hip_dz=-0.30)
     c.loc(14, "pelvis", 0.0, -0.17, 0.0)
     c.pose(14, pelvis=(0.05, 0.0, 0.0), spine_01=(0.2, 0.0, 0.0), spine_02=(0.1, 0.0, 0.0))
     for f in (20, 30):
-        c.loc(f, "pelvis", 0.0, -0.315, 0.0)
+        c.loc(f, "pelvis", 0.0, -0.30, 0.0)
         c.pose(f, pelvis=(-0.08, 0.0, 0.0),
                spine_01=(0.22, 0.0, 0.0), spine_02=(0.12, 0.0, 0.0), neck=(-0.05, 0.0, 0.0), head=(-0.08, 0.0, 0.0),
                upperarm_l=(-1.1, 0.0, 0.2), upperarm_r=(-1.1, 0.0, -0.2), lowerarm_l=(0.6, 0.0, 0.0), lowerarm_r=(0.6, 0.0, 0.0),
@@ -542,6 +573,7 @@ NEW = ("A_Run", "A_Sit", "A_Emote_Wave", "A_Emote_Cheer", "A_Emote_Bow", "A_Atta
 
 def build(arm=None):
     arm = arm or bpy.data.objects[ARMATURE]
+    measure(arm)
     bpy.context.scene.render.fps = FPS
     out = []
     for make in CLIPS:

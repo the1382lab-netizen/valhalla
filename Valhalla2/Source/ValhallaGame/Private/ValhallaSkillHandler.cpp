@@ -418,7 +418,27 @@ void UValhallaFireballHandler::Execute(const FValhallaSkillContext& Context)
 	// fireballHandler.ts:49 — spawn clear of the caster's own capsule so the
 	// projectile does not immediately detonate on the person who cast it.
 	const FVector CasterLocation = Context.Caster->GetActorLocation();
-	FVector ToTarget = Context.AimPoint - CasterLocation;
+
+	// Aimed at an enemy rather than at the floor (the client only sends a
+	// target with a ground skill when the cursor was on one): fire at where
+	// they are *now*, at the end of the cast, and follow them in flight. The
+	// server re-checks everything the client claimed — alive, hostile, and
+	// within the skill's reach — and otherwise falls back to the ground point.
+	AActor* HomingTarget = nullptr;
+	if (AActor* Candidate = Context.Target)
+	{
+		const double Reach = (Skill.Range > 0.f ? static_cast<double>(Skill.Range) : Valhalla::FireballProjectileMaxReach) * 1.25;
+		if (Candidate != Context.Caster
+			&& UValhallaCombatLibrary::IsAliveTarget(Candidate)
+			&& UValhallaCombatLibrary::AreHostile(Context.Caster, Candidate)
+			&& FVector::DistSquared2D(Candidate->GetActorLocation(), CasterLocation) <= Reach * Reach)
+		{
+			HomingTarget = Candidate;
+		}
+	}
+	const FVector AimPoint = HomingTarget ? HomingTarget->GetActorLocation() : Context.AimPoint;
+
+	FVector ToTarget = AimPoint - CasterLocation;
 	ToTarget.Z = 0.0;
 
 	const FVector Direction = ToTarget.IsNearlyZero()
@@ -443,15 +463,17 @@ void UValhallaFireballHandler::Execute(const FValhallaSkillContext& Context)
 
 	// Aim at the caster's own height, not the raw ground point: the whole game is
 	// played on one plane and a projectile that dips to the floor would clip it.
-	FVector AimAtHeight = Context.AimPoint;
+	FVector AimAtHeight = AimPoint;
 	AimAtHeight.Z = CasterLocation.Z;
 
 	Projectile->InitializeProjectile(Context.Caster, Skill.Id, AimAtHeight, ProjSpeed, ProjRadius, ScaledDamage, BlastRadius);
+	Projectile->SetHomingTarget(HomingTarget);
 
-	UE_LOG(LogValhallaCombat, Log, TEXT("%s cast %s: projectile spawned at %s -> %s speed=%.0f damage=%.1f aoe=%.0f"),
+	UE_LOG(LogValhallaCombat, Log, TEXT("%s cast %s: projectile spawned at %s -> %s speed=%.0f damage=%.1f aoe=%.0f homing=%s"),
 		*UValhallaCombatLibrary::GetDisplayName(Context.Caster), *Skill.Id.ToString(),
 		*SpawnLocation.ToCompactString(), *AimAtHeight.ToCompactString(),
-		ProjSpeed, ScaledDamage, BlastRadius);
+		ProjSpeed, ScaledDamage, BlastRadius,
+		HomingTarget ? *UValhallaCombatLibrary::GetDisplayName(HomingTarget) : TEXT("none"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

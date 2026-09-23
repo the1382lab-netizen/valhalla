@@ -124,7 +124,7 @@
         "dodgeRating": 0.008
       },
       "allowedArmor": "leather",
-      "baseSpeed": 147,
+      "baseSpeed": 300,
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 3000,
       "baseRangedAttackSpeedMs": 4000,
@@ -270,7 +270,7 @@
         "dodgeRating": 0.003
       },
       "allowedArmor": "cloth",
-      "baseSpeed": 122,
+      "baseSpeed": 200,
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4800,
       "baseRangedAttackSpeedMs": 0,

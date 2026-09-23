@@ -85,6 +85,15 @@ public:
 	/** A swing, a shot or a cast gesture, depending on the weapon. One shot. */
 	void PlaySwing();
 
+	/**
+	 * What the hands hold, set by the owner whenever the weapon or offhand
+	 * slot changes: the melee auto-attack to play (UValhallaVisuals::
+	 * AttackAnimForWeapon) and which stance layers to lay over everything —
+	 * right fist around a weapon, left fist around a bow, left arm carrying a
+	 * shield.
+	 */
+	void SetWeaponLoadout(EValhallaAnim InAttackAnim, bool bInGripRight, bool bInGripLeft, bool bInShieldArm);
+
 	/** One shot of a named animation, interrupting whatever action is running. */
 	void PlayAction(EValhallaAnim Anim);
 
@@ -164,6 +173,12 @@ protected:
 	/** Load all seven sequences. Cheap after the first character in a session. */
 	void LoadSequences();
 
+	/** Push the stance flags to the anim instance (all off while dead). */
+	void ApplyStance();
+
+	/** The cast being held ended by interruption: lower, do not release. */
+	void NoteCastInterrupted();
+
 	/** Ground speed above which the body walks, cm/s. */
 	static constexpr float WalkSpeedThreshold = 10.f;
 
@@ -192,6 +207,17 @@ private:
 
 	/** Which swing the equipped weapon produces. */
 	EValhallaAttackCycle AttackCycle = EValhallaAttackCycle::Melee;
+
+	EValhallaAnim WeaponAttackAnim = EValhallaAnim::Attack;
+	bool bStanceGripRight = false;
+	bool bStanceGripLeft = false;
+	bool bStanceShieldArm = false;
+	bool bJogging = false;
+
+	/** What the current cast hold is, so its end plays the matching release. */
+	enum class EHeldCast : uint8 { None, Spell, Staff, Bow };
+	EHeldCast HeldCast = EHeldCast::None;
+	bool bCastInterrupted = false;
 
 	/** True between PlayAction and the sequence running out. */
 	bool bActionPlaying = false;

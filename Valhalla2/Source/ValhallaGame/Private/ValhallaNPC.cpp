@@ -224,11 +224,30 @@ AValhallaNPC::AValhallaNPC()
 	BodyMesh->SetGenerateOverlapEvents(false);
 	BodyMesh->SetVisibility(true);
 
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BodyAsset(
-		TEXT("/Game/Valhalla/Characters/Body/SK_Valhalla_Body"));
+	// The active body profile's mesh, so the editor (CDO, placed and preview
+	// actors) shows the body PIE will use. PostInitializeComponents re-applies
+	// it at runtime in case the profile cvar changed after load.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BodyAsset(*UValhallaVisuals::ActiveBodyMeshPath());
 	if (BodyAsset.Succeeded())
 	{
 		BodyMesh->SetSkeletalMeshAsset(BodyAsset.Object);
+		BodyMesh->SetRelativeScale3D(FVector(UValhallaVisuals::ActiveBodyScale()));
+	}
+
+	HeadMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("HeadMesh"));
+	HeadMesh->SetupAttachment(BodyMesh);
+	HeadMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HeadMesh->SetCollisionProfileName(TEXT("NoCollision"));
+	HeadMesh->SetGenerateOverlapEvents(false);
+	HeadMesh->bUseAttachParentBound = true;
+	HeadMesh->SetLeaderPoseComponent(BodyMesh);
+	if (!UValhallaVisuals::ActiveHeadMeshPath().IsEmpty())
+	{
+		static ConstructorHelpers::FObjectFinder<USkeletalMesh> HeadAsset(*UValhallaVisuals::ActiveHeadMeshPath());
+		if (HeadAsset.Succeeded())
+		{
+			HeadMesh->SetSkeletalMeshAsset(HeadAsset.Object);
+		}
 	}
 
 	ChestMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("ChestMesh"));
@@ -259,6 +278,7 @@ AValhallaNPC::AValhallaNPC()
 	WeaponMesh->SetCollisionProfileName(TEXT("NoCollision"));
 	WeaponMesh->SetGenerateOverlapEvents(false);
 	WeaponMesh->SetCastShadow(false);
+	WeaponMesh->bAffectDistanceFieldLighting = false;   // see AValhallaCharacter's SetUpProp
 
 	AnimComponent = CreateDefaultSubobject<UValhallaAnimComponent>(TEXT("AnimComponent"));
 
@@ -303,6 +323,17 @@ void AValhallaNPC::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 
 	// The threat table is not here and never will be. Knowing who an NPC is
 	// about to switch to is a tactical advantage the server does not give away.
+}
+
+void AValhallaNPC::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	if (UValhallaVisuals::ApplyActiveBody(BodyMesh))
+	{
+		UValhallaVisuals::ApplyActiveHead(HeadMesh, BodyMesh);
+		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, EValhallaGrip::OneHand);
+	}
 }
 
 void AValhallaNPC::BeginPlay()
@@ -357,7 +388,8 @@ void AValhallaNPC::ApplyBodyScale()
 
 	if (BodyMesh)
 	{
-		BodyMesh->SetRelativeScale3D(FVector(Scale));
+		// ActiveBodyScale normalises the active body to 122 cm (1 for the Valhalla body).
+		BodyMesh->SetRelativeScale3D(FVector(Scale * UValhallaVisuals::ActiveBodyScale()));
 		// The body's pivot is at its feet, so the offset that stands it on the
 		// capsule's bottom is the (scaled) capsule half-height, no more.
 		BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, UValhallaVisuals::MeshZOffset * Scale));
@@ -402,6 +434,12 @@ void AValhallaNPC::ApplyAppearance()
 	{
 		bApplyTint = false;
 	}
+	// External bodies (the MetaHuman) carry their own baked skin: the
+	// grey-box tints were for the untextured legacy body only.
+	if (UValhallaVisuals::UseExternalBody())
+	{
+		bApplyTint = false;
+	}
 
 	if (bApplyTint && !TintMaterial)
 	{
@@ -429,7 +467,12 @@ void AValhallaNPC::ApplyAppearance()
 	for (int32 Index = 0; Index < static_cast<int32>(UE_ARRAY_COUNT(Components)); ++Index)
 	{
 		USkeletalMeshComponent* Component = Components[Index];
+		// A piece weighted to another rig cannot follow this body; it stays off.
 		USkeletalMesh* Wanted = Pieces.IsValidIndex(Index) ? Pieces[Index] : nullptr;
+		if (Wanted && !UValhallaVisuals::CanFollowBody(Wanted, BodyMesh))
+		{
+			Wanted = nullptr;
+		}
 		if (!Component || Component->GetSkeletalMeshAsset() == Wanted)
 		{
 			continue;
@@ -452,6 +495,9 @@ void AValhallaNPC::ApplyWeaponVisual()
 	if (AnimComponent)
 	{
 		AnimComponent->SetAttackCycle(UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId));
+		const bool bHasWeapon = !WeaponId.IsNone();
+		const bool bBow = bHasWeapon && UValhallaVisuals::GripForWeapon(this, WeaponId) == EValhallaGrip::Bow;
+		AnimComponent->SetWeaponLoadout(UValhallaVisuals::AttackAnimForWeapon(this, WeaponId), bHasWeapon && !bBow, bBow, false);
 	}
 
 	if (!WeaponMesh || AppliedWeaponId == WeaponId)
@@ -479,7 +525,12 @@ void AValhallaNPC::ApplyWeaponVisual()
 
 	// A bow is held pitched up in the right hand, the same correction a player gets.
 	FRotator PropRotation = FRotator::ZeroRotator;
-	if (UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId) == EValhallaAttackCycle::Shoot)
+	if (UValhallaVisuals::UseExternalBody())
+	{
+		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, UValhallaVisuals::GripForWeapon(this, WeaponId));
+		PropRotation = WeaponMesh->GetRelativeRotation();
+	}
+	else if (UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId) == EValhallaAttackCycle::Shoot)
 	{
 		PropRotation.Pitch = UValhallaVisuals::BowWeaponSocketPitch;
 	}

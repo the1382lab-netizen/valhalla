@@ -45,6 +45,7 @@ public:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 #if WITH_EDITOR
+	virtual void PostLoad() override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void CheckForErrors() override;
 #endif
@@ -155,6 +156,10 @@ protected:
 	/** Editor-only preview of the NPC type, standing on the floor in its idle. */
 	UPROPERTY()
 	TObjectPtr<USkeletalMeshComponent> PreviewBody;
+
+	/** The active body's separate head (MetaHuman face), a follower of PreviewBody. */
+	UPROPERTY()
+	TObjectPtr<USkeletalMeshComponent> PreviewHead;
 
 	/** The type's armour, followers of PreviewBody. */
 	UPROPERTY()

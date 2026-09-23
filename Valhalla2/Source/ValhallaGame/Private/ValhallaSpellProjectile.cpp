@@ -258,6 +258,14 @@ void AValhallaSpellProjectile::InitializeProjectile(
 	ApplyProjectileAppearance();
 }
 
+void AValhallaSpellProjectile::SetHomingTarget(AActor* InTarget)
+{
+	if (HasAuthority())
+	{
+		HomingTarget = InTarget;
+	}
+}
+
 void AValhallaSpellProjectile::ServerFixedTick(float FixedDeltaSeconds, double Now)
 {
 	if (!HasAuthority() || bDetonated || Speed <= 0.f)
@@ -266,6 +274,22 @@ void AValhallaSpellProjectile::ServerFixedTick(float FixedDeltaSeconds, double N
 	}
 
 	const FVector Current = GetActorLocation();
+
+	if (HomingTarget.IsValid())
+	{
+		AActor* Homing = HomingTarget.Get();
+		if (UValhallaCombatLibrary::IsAliveTarget(Homing))
+		{
+			FVector Followed = Homing->GetActorLocation();
+			Followed.Z = Current.Z;
+			TargetLocation = Followed;
+		}
+		else
+		{
+			// Died in flight: land where they fell.
+			HomingTarget.Reset();
+		}
+	}
 	FVector ToTarget = TargetLocation - Current;
 	ToTarget.Z = 0.0;
 
@@ -318,7 +342,16 @@ void AValhallaSpellProjectile::ServerFixedTick(float FixedDeltaSeconds, double N
 			ToEntity.Z = 0.0;
 			if (ToEntity.SizeSquared2D() < HitDistanceSq)
 			{
-				Detonate(NextLocation, Now);
+				// A direct hit on the enemy it was aimed at bursts on them, not a
+				// capsule-width short, so the one it was cast at takes the full blow.
+				FVector At = NextLocation;
+				if (Candidate == HomingTarget.Get())
+				{
+					At = Candidate->GetActorLocation();
+					At.Z = NextLocation.Z;
+					SetActorLocation(At);
+				}
+				Detonate(At, Now);
 				return;
 			}
 		}

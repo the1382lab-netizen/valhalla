@@ -35,8 +35,6 @@ namespace
 	/** Five follower slots: chest, helm, legs, boots, gloves. */
 	constexpr int32 PreviewPieceCount = 5;
 
-	const TCHAR* IdleAnimPath = TEXT("/Game/Valhalla/Characters/Animations/A_Idle");
-
 	const UValhallaDataSubsystem* GetData(const UObject* Context)
 	{
 		const UWorld* World = Context ? Context->GetWorld() : nullptr;
@@ -77,6 +75,17 @@ AValhallaNPCSpawner::AValhallaNPCSpawner()
 		PreviewBody->SetHiddenInGame(true);
 		PreviewBody->bIsEditorOnly = true;
 		PreviewBody->SetCastShadow(false);
+
+		PreviewHead = CreateEditorOnlyDefaultSubobject<USkeletalMeshComponent>(TEXT("PreviewHead"));
+		if (PreviewHead)
+		{
+			PreviewHead->SetupAttachment(PreviewBody);
+			PreviewHead->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			PreviewHead->SetHiddenInGame(true);
+			PreviewHead->bIsEditorOnly = true;
+			PreviewHead->SetCastShadow(false);
+			PreviewHead->bUseAttachParentBound = true;
+		}
 
 		for (int32 Index = 0; Index < PreviewPieceCount; ++Index)
 		{
@@ -364,6 +373,25 @@ void AValhallaNPCSpawner::RemoveNPCAndScheduleRespawn()
 
 #if WITH_EDITOR
 
+void AValhallaNPCSpawner::PostLoad()
+{
+	Super::PostLoad();
+
+	// A level saved under an older body keeps that body's preview pieces. Drop
+	// any that cannot follow the preview body *before* the components register:
+	// a follower on another skeleton trips the engine's leader-pose ensure the
+	// moment its render state is created (it did, in L_Desert_Gameplay).
+	for (USkeletalMeshComponent* Piece : PreviewPieces)
+	{
+		USkeletalMesh* Mesh = Piece ? Piece->GetSkeletalMeshAsset() : nullptr;
+		if (Mesh && !UValhallaVisuals::CanFollowBody(Mesh, PreviewBody))
+		{
+			Piece->SetLeaderPoseComponent(nullptr);
+			Piece->SetSkeletalMeshAsset(nullptr);
+		}
+	}
+}
+
 void AValhallaNPCSpawner::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
@@ -386,6 +414,7 @@ void AValhallaNPCSpawner::RefreshPreview()
 	if (!TypeDefaults)
 	{
 		PreviewBody->SetSkeletalMeshAsset(nullptr);
+		if (PreviewHead) { PreviewHead->SetSkeletalMeshAsset(nullptr); }
 		for (USkeletalMeshComponent* Piece : PreviewPieces)
 		{
 			if (Piece) { Piece->SetSkeletalMeshAsset(nullptr); }
@@ -407,15 +436,25 @@ void AValhallaNPCSpawner::RefreshPreview()
 	TraceFloorZ(FloorZ);
 
 	PreviewBody->SetSkeletalMeshAsset(Body);
-	PreviewBody->SetRelativeScale3D(FVector(Scale));
+	// Same body scale the live NPC gets (ApplyBodyScale): template scale times
+	// the active body profile's normalising scale.
+	PreviewBody->SetRelativeScale3D(FVector(Scale * UValhallaVisuals::ActiveBodyScale()));
 	PreviewBody->SetWorldLocation(FVector(GetActorLocation().X, GetActorLocation().Y, FloorZ));
 	PreviewBody->SetRelativeRotation(FRotator(0.f, UValhallaVisuals::MeshYaw, 0.f));
 
-	if (UAnimSequence* Idle = LoadObject<UAnimSequence>(nullptr, IdleAnimPath))
+	// The active profile's idle, so the preview plays a clip made for its skeleton.
+	UAnimSequence* Idle = LoadObject<UAnimSequence>(nullptr, *UValhallaVisuals::AnimPath(EValhallaAnim::Idle));
+	if (Idle && Body && Idle->GetSkeleton() != Body->GetSkeleton())
+	{
+		Idle = nullptr;
+	}
+	if (Idle)
 	{
 		PreviewBody->SetUpdateAnimationInEditor(true);
 		PreviewBody->PlayAnimation(Idle, /*bLooping*/ true);
 	}
+
+	UValhallaVisuals::ApplyActiveHead(PreviewHead, PreviewBody);
 
 	for (int32 Index = 0; Index < PreviewPieces.Num(); ++Index)
 	{
@@ -424,8 +463,15 @@ void AValhallaNPCSpawner::RefreshPreview()
 		{
 			continue;
 		}
-		Piece->SetSkeletalMeshAsset(Pieces.IsValidIndex(Index) ? Pieces[Index] : nullptr);
-		Piece->SetLeaderPoseComponent(PreviewBody);
+		// A piece weighted to another skeleton cannot follow this body (the
+		// leader-pose mismatch error); it is left off rather than drawn wrong.
+		USkeletalMesh* Wanted = Pieces.IsValidIndex(Index) ? Pieces[Index] : nullptr;
+		if (Wanted && Body && Wanted->GetSkeleton() != Body->GetSkeleton())
+		{
+			Wanted = nullptr;
+		}
+		Piece->SetSkeletalMeshAsset(Wanted);
+		Piece->SetLeaderPoseComponent(Wanted ? PreviewBody.Get() : nullptr);
 	}
 }
 

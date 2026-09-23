@@ -80,6 +80,13 @@ public:
 	 */
 	void ServerFixedTick(float FixedDeltaSeconds, double Now);
 
+	/**
+	 * Follow this actor: TargetLocation is moved to it every fixed step, at the
+	 * projectile's own height. If it dies or goes away mid-flight the projectile
+	 * carries on to where it last was. Server only; null clears it.
+	 */
+	void SetHomingTarget(AActor* InTarget);
+
 protected:
 	/** Tint the sphere for the skill once the id has replicated. */
 	UFUNCTION()
@@ -140,6 +147,9 @@ private:
 
 	/** Who cast it. They are immune to their own blast, exactly as in 1.0. */
 	TWeakObjectPtr<AActor> CasterActor;
+
+	/** See SetHomingTarget. */
+	TWeakObjectPtr<AActor> HomingTarget;
 
 	/** Set the moment Detonate runs, so a double-detonation in one tick cannot happen. */
 	bool bDetonated = false;

@@ -346,6 +346,15 @@ protected:
 	TArray<FValhallaChatMessage> ChatLog;
 	/** Trace from the cursor for a pawn. Null when the cursor is on empty ground. */
 	AActor* TraceForTargetUnderCursor() const;
+
+	/**
+	 * The living hostile a ground-targeted skill pressed at ScreenPosition is
+	 * aimed at, or null. A visibility trace first (the cursor is on the enemy's
+	 * body), then the cursor ray against each hostile's own height rather than
+	 * the floor, so pointing at an enemy's chest under a pitched camera counts
+	 * as pointing at the enemy and not at the ground behind it.
+	 */
+	AActor* FindHostileAtScreen(const FVector2D& ScreenPosition) const;
 	// ── Input handlers ──────────────────────────────────────────────────
 
 	/** Axis2D (X = strafe, Y = forward), rotated into world space by camera yaw. */

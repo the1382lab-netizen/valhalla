@@ -35,6 +35,7 @@ export type PaperdollSlot = (typeof PAPERDOLL_SLOTS)[number];
 /** How a weapon looks and, from that, which attack cycle it plays. */
 export enum WeaponStyle {
   SWORD = 'sword',
+  DAGGER = 'dagger',
   GREATSWORD = 'greatsword',
   MACE = 'mace',
   BOW = 'bow',
@@ -43,6 +44,7 @@ export enum WeaponStyle {
 
 export const WEAPON_STYLE_ANIM: Record<WeaponStyle, PaperdollAnim> = {
   [WeaponStyle.SWORD]: 'attack',
+  [WeaponStyle.DAGGER]: 'attack',
   [WeaponStyle.GREATSWORD]: 'attack',
   [WeaponStyle.MACE]: 'attack',
   [WeaponStyle.BOW]: 'shoot',

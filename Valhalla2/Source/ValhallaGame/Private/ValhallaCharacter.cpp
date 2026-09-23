@@ -92,6 +92,11 @@ namespace
 		Prop->SetCollisionProfileName(TEXT("NoCollision"));
 		Prop->SetGenerateOverlapEvents(false);
 		Prop->SetCastShadow(false);
+		// A held prop is small and always moving, so it has no business in the
+		// distance-field scene; and the bow's flat mesh gives a degenerate
+		// distance-field volume that spams "non-invertible matrix" errors every
+		// frame it is held (seen since the bow was first equipped on 09-23).
+		Prop->bAffectDistanceFieldLighting = false;
 	}
 }
 
@@ -180,11 +185,30 @@ AValhallaCharacter::AValhallaCharacter()
 	BodyMesh->SetGenerateOverlapEvents(false);
 	BodyMesh->SetVisibility(true);
 
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BodyAsset(
-		TEXT("/Game/Valhalla/Characters/Body/SK_Valhalla_Body"));
+	// The active body profile's mesh, so the editor (CDO, placed and preview
+	// actors) shows the body PIE will use. PostInitializeComponents re-applies
+	// it at runtime in case the profile cvar changed after load.
+	static ConstructorHelpers::FObjectFinder<USkeletalMesh> BodyAsset(*UValhallaVisuals::ActiveBodyMeshPath());
 	if (BodyAsset.Succeeded())
 	{
 		BodyMesh->SetSkeletalMeshAsset(BodyAsset.Object);
+		BodyMesh->SetRelativeScale3D(FVector(UValhallaVisuals::ActiveBodyScale()));
+	}
+
+	// ── Head ────────────────────────────────────────────────────────────
+	// Only the MetaHuman body has a separate head; it follows the body by
+	// leader pose and casts its own shadow (it is part of the silhouette).
+	HeadMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("HeadMesh"));
+	HeadMesh->SetupAttachment(BodyMesh);
+	SetUpFollower(HeadMesh, BodyMesh);
+	HeadMesh->SetCastShadow(true);
+	if (!UValhallaVisuals::ActiveHeadMeshPath().IsEmpty())
+	{
+		static ConstructorHelpers::FObjectFinder<USkeletalMesh> HeadAsset(*UValhallaVisuals::ActiveHeadMeshPath());
+		if (HeadAsset.Succeeded())
+		{
+			HeadMesh->SetSkeletalMeshAsset(HeadAsset.Object);
+		}
 	}
 
 	// ── Paperdoll followers ─────────────────────────────────────────────
@@ -291,6 +315,19 @@ void AValhallaCharacter::SetDeathPresentation(bool bDead)
 		{
 			Movement->SetMovementMode(MOVE_Walking);
 		}
+	}
+}
+
+void AValhallaCharacter::PostInitializeComponents()
+{
+	Super::PostInitializeComponents();
+
+	// Before BeginPlay, so the anim component starts on the right skeleton.
+	if (UValhallaVisuals::ApplyActiveBody(BodyMesh))
+	{
+		UValhallaVisuals::ApplyActiveHead(HeadMesh, BodyMesh);
+		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, EValhallaGrip::OneHand);
+		UValhallaVisuals::AttachHeldProp(OffhandMesh, BodyMesh, EValhallaGrip::Shield);
 	}
 }
 
@@ -412,8 +449,9 @@ void AValhallaCharacter::ApplyClassAppearance()
 	// The class's `bodyId` picks one of the five 1.0 skin tones. Nothing in
 	// classes.json names one today, so every class is `body_fair` — which is
 	// also what 1.0 rendered a character with no body chosen as, so the
-	// fallback is the 1.0 behaviour rather than a placeholder.
-	if (BodyMesh && BodyMesh->GetSkeletalMeshAsset())
+	// fallback is the 1.0 behaviour rather than a placeholder. External bodies
+	// (the MetaHuman) carry their own baked skin and are not tinted.
+	if (BodyMesh && BodyMesh->GetSkeletalMeshAsset() && !UValhallaVisuals::UseExternalBody())
 	{
 		if (!SkinMaterial)
 		{
@@ -607,6 +645,17 @@ bool AValhallaCharacter::ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId)
 			return true;
 		}
 
+		// A piece skinned to another rig (today: every piece, all built for
+		// SK_Valhalla_Skeleton) cannot follow the active body. It is left off
+		// until it is rebuilt for this body's skeleton; then it simply appears.
+		if (!UValhallaVisuals::CanFollowBody(LoadedMesh, BodyMesh))
+		{
+			Skeletal->SetSkeletalMeshAsset(nullptr);
+			UE_LOG(LogValhallaVisual, Log, TEXT("slot=%s item=%s asset=%s hidden (built for another skeleton)"),
+				*SlotName, *ItemId.ToString(), *AssetPath);
+			return true;
+		}
+
 		Skeletal->SetSkeletalMeshAsset(LoadedMesh);
 		// Re-established every time the mesh changes: SetSkeletalMeshAsset
 		// rebuilds the component's instance data and drops the link, and a
@@ -633,7 +682,15 @@ bool AValhallaCharacter::ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId)
 		// an identity bone and needs a roll to stand a shield on edge. See
 		// UValhallaVisuals::OffhandSocketRoll for the measurement.
 		FRotator PropRotation = FRotator::ZeroRotator;
-		if (Static == OffhandMesh)
+		if (UValhallaVisuals::UseExternalBody())
+		{
+			// External body: the grip decides bone and frame (a bow moves to the left hand).
+			UValhallaVisuals::AttachHeldProp(Static, BodyMesh, Static == OffhandMesh
+				? EValhallaGrip::Shield
+				: UValhallaVisuals::GripForWeapon(this, ItemId));
+			PropRotation = Static->GetRelativeRotation();
+		}
+		else if (Static == OffhandMesh)
 		{
 			PropRotation.Roll = UValhallaVisuals::OffhandSocketRoll;
 		}
@@ -681,8 +738,11 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 	{
 		if (!HairMesh->GetSkeletalMeshAsset())
 		{
-			if (USkeletalMesh* Hair = LoadObject<USkeletalMesh>(
-				nullptr, TEXT("/Game/Valhalla/Characters/Hair/SK_Hair_Brown_Short")))
+			USkeletalMesh* Hair = LoadObject<USkeletalMesh>(
+				nullptr, TEXT("/Game/Valhalla/Characters/Hair/SK_Hair_Brown_Short"));
+			// Same rule as armour: hair built for another rig stays off until
+			// it is rebuilt for the active body.
+			if (Hair && UValhallaVisuals::CanFollowBody(Hair, BodyMesh))
 			{
 				HairMesh->SetSkeletalMeshAsset(Hair);
 				HairMesh->SetLeaderPoseComponent(BodyMesh);
@@ -698,8 +758,25 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 	// this has to be re-read whenever the weapon slot changes.
 	if (AnimComponent)
 	{
-		AnimComponent->SetAttackCycle(UValhallaVisuals::AttackCycleForEquippedWeapon(
-			this, ValhallaPS->GetEquipped(EValhallaEquipSlot::Weapon)));
+		const FName WeaponId = ValhallaPS->GetEquipped(EValhallaEquipSlot::Weapon);
+		AnimComponent->SetAttackCycle(UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId));
+
+		// What the hands hold decides the stance: a fist around the weapon, a
+		// fist around a bow (left), a raised shield arm. A bow takes the left
+		// hand, so a shield is not carried while one is held.
+		const bool bHasWeapon = !WeaponId.IsNone();
+		const EValhallaGrip Grip = UValhallaVisuals::GripForWeapon(this, WeaponId);
+		const bool bBow = bHasWeapon && Grip == EValhallaGrip::Bow;
+		// A bow and a staff need both hands (the staff attack is a two-handed
+		// thrust), so a shield is neither carried nor drawn while one is held.
+		const bool bTwoHanded = bHasWeapon && (bBow || Grip == EValhallaGrip::Staff);
+		const bool bShield = !bTwoHanded && !ValhallaPS->GetEquipped(EValhallaEquipSlot::Offhand).IsNone();
+		AnimComponent->SetWeaponLoadout(UValhallaVisuals::AttackAnimForWeapon(this, WeaponId),
+			bHasWeapon && !bBow, bBow, bShield);
+		if (OffhandMesh && UValhallaVisuals::UseExternalBody())
+		{
+			OffhandMesh->SetVisibility(!bTwoHanded);
+		}
 	}
 }
 

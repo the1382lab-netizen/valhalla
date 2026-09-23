@@ -78,7 +78,7 @@
       "inventoryIcon": "sword_iron.png",
       "spriteId": "sword_iron",
       "meshId": "dagger_iron",
-      "weaponStyle": "sword"
+      "weaponStyle": "dagger"
     },
     "bone_totem": {
       "id": "bone_totem",

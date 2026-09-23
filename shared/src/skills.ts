@@ -132,6 +132,8 @@ export interface SkillTemplate {
   isAutoAttack?: boolean;
   /** If true, the skill cannot be used without a weapon equipped. */
   requiresWeapon?: boolean;
+  /** Client animation while casting: 'bow' draws and holds the bow, then looses on completion. Default: spell cast. */
+  castAnimation?: 'bow';
   effectNotes: string;        // human-readable summary
 }
 

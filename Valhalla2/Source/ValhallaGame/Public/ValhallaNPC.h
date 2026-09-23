@@ -75,6 +75,8 @@ public:
 
 	//~ Begin AActor interface
 	virtual void BeginPlay() override;
+	/** Swaps in the active body profile (and re-hangs the weapon) before the components start. */
+	virtual void PostInitializeComponents() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 	/**
 	 * Phase 5's anti-cheat boundary: a client is never sent an NPC it
@@ -348,6 +350,10 @@ protected:
 	/** The animated body — the same rig and the same skeleton a player uses. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> BodyMesh;
+
+	/** The active body's separate head (MetaHuman face), following the body. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<USkeletalMeshComponent> HeadMesh;
 
 	/** `SK_chest_priests_chain`, a follower of BodyMesh. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")

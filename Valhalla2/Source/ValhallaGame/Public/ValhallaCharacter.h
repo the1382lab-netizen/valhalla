@@ -57,6 +57,8 @@ public:
 
 	//~ Begin AActor interface
 	virtual void BeginPlay() override;
+	/** Swaps in the active body profile (and re-hangs the held props) before the components start. */
+	virtual void PostInitializeComponents() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	/**
@@ -237,6 +239,10 @@ protected:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> BodyMesh;
+
+	/** The active body's separate head (MetaHuman face), following the body. Empty for bodies with their own head. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<USkeletalMeshComponent> HeadMesh;
 
 	/** Hair or a bald cap. Hidden entirely when a helm is worn. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")

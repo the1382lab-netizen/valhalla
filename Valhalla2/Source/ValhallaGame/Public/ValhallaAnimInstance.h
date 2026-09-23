@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AnimNodes/AnimNode_ApplyAdditive.h"
+#include "AnimNodes/AnimNode_LayeredBoneBlend.h"
 #include "AnimNodes/AnimNode_TwoWayBlend.h"
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimInstanceProxy.h"
@@ -84,7 +86,7 @@ struct VALHALLAGAME_API FValhallaAnimInstanceProxy : public FAnimInstanceProxy
 	 * bone caching, update and evaluation — then walks this node as if it had
 	 * come out of a compiled anim graph.
 	 */
-	virtual FAnimNode_Base* GetCustomRootNode() override { return &ActionBlend; }
+	virtual FAnimNode_Base* GetCustomRootNode() override { return &AdditiveLayer; }
 
 	/**
 	 * Every node in the tree, so the engine can run its per-node
@@ -108,6 +110,32 @@ struct VALHALLAGAME_API FValhallaAnimInstanceProxy : public FAnimInstanceProxy
 
 	/** Locomotion (A) under the action (B). */
 	FAnimNode_TwoWayBlend ActionBlend;
+
+	/**
+	 * An *additive* one-shot — a flinch authored as a delta, the way Paragon's
+	 * HitReact_* clips are. Played through ActionPlayer as if it were a full
+	 * pose, an additive clip evaluates to near-zero bone translations and the
+	 * whole mesh collapses onto its root for the length of the clip: the
+	 * "character disappears in combat" bug.
+	 */
+	FAnimNode_SequencePlayer_Standalone AdditivePlayer;
+
+	/**
+	 * The hand/arm stance layer (2026-09-23): static single-frame poses laid
+	 * over whatever the body is doing, bone branch by bone branch —
+	 *   [0] right fingers closed around a grip        (weapon in the right hand)
+	 *   [1] left fingers closed around a grip         (bow)
+	 *   [2] left arm raised to carry a shield, fist   (shield)
+	 * so an idle, a walk or a flinch with a sword in hand keeps the sword
+	 * gripped, and a shield stays up while the sword arm swings.
+	 */
+	FAnimNode_SequencePlayer_Standalone GripRightPlayer;
+	FAnimNode_SequencePlayer_Standalone GripLeftPlayer;
+	FAnimNode_SequencePlayer_Standalone ShieldArmPlayer;
+	FAnimNode_LayeredBoneBlend HandLayer;
+
+	/** Everything above (Base) plus AdditivePlayer's delta. The tree's root. */
+	FAnimNode_ApplyAdditive AdditiveLayer;
 };
 
 /**
@@ -142,9 +170,15 @@ public:
 	 * in a row are two swings, and a fast weapon that skipped the second would
 	 * look slow.
 	 */
-	void PlayAction(UAnimSequence* Sequence, bool bLoop);
+	void PlayAction(UAnimSequence* Sequence, bool bLoop, float BlendInSeconds = -1.f);
 
-	/** Blend the action back out over ActionBlendOutSeconds. */
+	/**
+	 * Blend the action back out over ActionBlendOutSeconds.
+	 *
+	 * An additive clip handed to PlayAction is routed to the additive layer
+	 * instead of the action blend (see FValhallaAnimInstanceProxy::AdditivePlayer);
+	 * this stops either.
+	 */
 	void StopAction();
 
 	/** True while the action layer has any weight at all. */
@@ -152,6 +186,22 @@ public:
 
 	/** 0..1 through the Idle -> Walk crossfade. For the gate log and tests. */
 	float GetWalkAlpha() const { return WalkAlpha; }
+
+	/** The walk/jog clip and its play rate (speed-matched by the anim component). */
+	void SetWalkSequence(UAnimSequence* Walk, float PlayRate) { WalkSequence = Walk; WalkPlayRate = PlayRate; }
+
+	/** The three stance poses (null disables that layer outright). */
+	void SetStancePoses(UAnimSequence* GripRight, UAnimSequence* GripLeft, UAnimSequence* ShieldArm);
+
+	/** Which stance layers should be on; each fades over StanceBlendSeconds. */
+	void SetStance(bool bGripRight, bool bGripLeft, bool bShieldArm)
+	{
+		StanceTarget[0] = bGripRight ? 1.f : 0.f;
+		StanceTarget[1] = bGripLeft ? 1.f : 0.f;
+		StanceTarget[2] = bShieldArm ? 1.f : 0.f;
+	}
+
+	static constexpr float StanceBlendSeconds = 0.15f;
 
 	/** 0..1 of the action layer's weight. For the gate log and tests. */
 	float GetActionAlpha() const { return ActionAlpha; }
@@ -188,14 +238,31 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UAnimSequence> ActionSequence;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UAnimSequence> AdditiveSequence;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UAnimSequence>> StancePoses;
+
+	float StanceAlpha[3] = { 0.f, 0.f, 0.f };
+	float StanceTarget[3] = { 0.f, 0.f, 0.f };
+	float WalkPlayRate = 1.f;
+
 	float WalkAlpha = 0.f;
 	float WalkTarget = 0.f;
 
 	float ActionAlpha = 0.f;
 	float ActionTarget = 0.f;
 
+	/** Blend-in of the current action; ActionBlendInSeconds unless PlayAction asked otherwise. */
+	float ActionBlendIn = ActionBlendInSeconds;
+
 	bool bActionLoop = false;
 
 	/** Set by PlayAction, consumed by the next NativeUpdateAnimation. */
 	bool bActionRestartPending = false;
+
+	float AdditiveAlpha = 0.f;
+	float AdditiveTarget = 0.f;
+	bool bAdditiveRestartPending = false;
 };

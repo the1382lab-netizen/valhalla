@@ -16,6 +16,7 @@
 #include "InputModifiers.h"
 #include "ValhallaCharacter.h"
 #include "ValhallaCombatLibrary.h"
+#include "ValhallaConstants.h"
 #include "ValhallaDataSubsystem.h"
 #include "ValhallaFogRenderer.h"
 #include "ValhallaGame.h"
@@ -604,6 +605,73 @@ AActor* AValhallaPlayerController::TraceForTargetUnderCursor() const
 	}
 
 	return nullptr;
+}
+
+AActor* AValhallaPlayerController::FindHostileAtScreen(const FVector2D& ScreenPosition) const
+{
+	const APawn* ValhallaPawn = GetPawn();
+	if (!ValhallaPawn)
+	{
+		return nullptr;
+	}
+
+	auto IsAimableHostile = [ValhallaPawn](const AActor* Actor)
+	{
+		return Actor && Actor != ValhallaPawn
+			&& (Actor->IsA<AValhallaNPC>() || Actor->IsA<AValhallaCharacter>())
+			&& UValhallaCombatLibrary::IsAliveTarget(Actor)
+			&& UValhallaCombatLibrary::AreHostile(ValhallaPawn, Actor);
+	};
+
+	// The cursor is on the enemy's body.
+	FHitResult Hit;
+	if (GetHitResultAtScreenPosition(ScreenPosition, ECC_Visibility, /*bTraceComplex=*/false, Hit)
+		&& IsAimableHostile(Hit.GetActor()))
+	{
+		return Hit.GetActor();
+	}
+
+	// The cursor is near the enemy's body: intersect the ray with a plane at
+	// each hostile's own height and keep the closest within reach. A floor-plane
+	// point would land behind the enemy by (height x cot(pitch)).
+	FVector RayOrigin;
+	FVector RayDirection;
+	if (!DeprojectScreenPositionToWorld(ScreenPosition.X, ScreenPosition.Y, RayOrigin, RayDirection)
+		|| FMath::IsNearlyZero(RayDirection.Z))
+	{
+		return nullptr;
+	}
+
+	constexpr double AimSlop = 25.0;
+	const double Reach = Valhalla::PlayerCollisionRadius + AimSlop;
+	AActor* Best = nullptr;
+	double BestDistSq = Reach * Reach;
+
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		AActor* Candidate = *It;
+		if (!IsAimableHostile(Candidate))
+		{
+			continue;
+		}
+
+		const FVector Location = Candidate->GetActorLocation();
+		const double Distance = (Location.Z - RayOrigin.Z) / RayDirection.Z;
+		if (Distance <= 0.0)
+		{
+			continue;
+		}
+
+		const FVector OnPlane = RayOrigin + RayDirection * Distance;
+		const double DistSq = FVector::DistSquared2D(OnPlane, Location);
+		if (DistSq < BestDistSq)
+		{
+			BestDistSq = DistSq;
+			Best = Candidate;
+		}
+	}
+
+	return Best;
 }
 
 void AValhallaPlayerController::ServerSetTarget_Implementation(AActor* NewTarget)
@@ -1362,16 +1430,41 @@ void AValhallaPlayerController::OnActionBarPressed_Implementation(int32 Slot)
 	// point under it. Every other skill is sent the character's own position
 	// (self and aoeSelf effects are drawn there when there is no target).
 	FVector AimPoint = GetPawn() ? GetPawn()->GetActorLocation() : FVector::ZeroVector;
+	AActor* CastTarget = GetCurrentTarget();
 
 	const UGameInstance* GameInstance = GetGameInstance();
 	const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
 	const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(Skills->GetSlotSkillId(Slot)) : nullptr;
 	if (Skill && Skill->TargetType == EValhallaSkillTargetType::AoeGround)
 	{
-		const bool bSampled = AimScreenOverride.IsSet()
-			? SampleGroundPointAtScreen(AimScreenOverride.GetValue())
-			: SampleCursorGroundPoint();
-		if (bSampled)
+		// A ground skill carries a target only when it was aimed *at* one: the
+		// server then fires it at where that enemy is when the cast completes
+		// (and a fireball follows them), rather than at the patch of floor they
+		// were standing on when the key went down.
+		CastTarget = nullptr;
+
+		FVector2D ScreenPosition;
+		bool bHaveScreen = AimScreenOverride.IsSet();
+		if (bHaveScreen)
+		{
+			ScreenPosition = AimScreenOverride.GetValue();
+		}
+		else
+		{
+			float MouseX = 0.f;
+			float MouseY = 0.f;
+			bHaveScreen = GetMousePosition(MouseX, MouseY);
+			ScreenPosition = FVector2D(MouseX, MouseY);
+		}
+
+		if (AActor* Hostile = bHaveScreen ? FindHostileAtScreen(ScreenPosition) : nullptr)
+		{
+			CastTarget = Hostile;
+			AimPoint = Hostile->GetActorLocation();
+			UE_LOG(LogValhallaGame, Log, TEXT("aoeGround '%s' aimed at %s %s"),
+				*Skill->Id.ToString(), *UValhallaCombatLibrary::GetDisplayName(Hostile), *AimPoint.ToCompactString());
+		}
+		else if (bHaveScreen && SampleGroundPointAtScreen(ScreenPosition))
 		{
 			AimPoint = AimWorldPoint;
 			UE_LOG(LogValhallaGame, Log, TEXT("aoeGround '%s' aimed at cursor point %s"),
@@ -1382,16 +1475,17 @@ void AValhallaPlayerController::OnActionBarPressed_Implementation(int32 Slot)
 			// No cursor over the world (it is outside the viewport, or above
 			// the horizon): the selected target, as a player would have aimed,
 			// else the caster's own position.
-			if (const AActor* Target = GetCurrentTarget())
+			if (AActor* Target = GetCurrentTarget())
 			{
 				AimPoint = Target->GetActorLocation();
+				CastTarget = Target;
 			}
 			UE_LOG(LogValhallaGame, Log, TEXT("aoeGround '%s': no cursor point, aimed at %s"),
 				*Skill->Id.ToString(), *AimPoint.ToCompactString());
 		}
 	}
 
-	Skills->CastFromActionBar(Slot, GetCurrentTarget(), AimPoint);
+	Skills->CastFromActionBar(Slot, CastTarget, AimPoint);
 }
 
 void AValhallaPlayerController::PressActionBarAimedAt(int32 Slot, const FVector2D& ScreenPosition)

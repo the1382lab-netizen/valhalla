@@ -155,11 +155,34 @@ def _save(img, path, colorspace):
 
 # ── Skin ─────────────────────────────────────────────────────────────────────
 
-# Feature placement (object space, metres) — the same head as wave2_body.
+# Feature placement (object space, metres) — the Stage A head by default;
+# ``set_face`` swaps in another body's landmarks (wave2_body2.FACE), with
+# ``FACE_SCALE`` shrinking every painted feature (eyes, brows, lips) to it.
 EYE = (0.075, -0.205, 0.962)
 BROW = (0.08, -0.20, 1.005)
 MOUTH = (0.0, -0.215, 0.868)
 NOSTRIL = (0.017, -0.222, 0.905)
+FACE_SCALE = 1.0
+# warm zones: cheeks, nose tip, ears, knuckles, elbows, knees, fingertips
+WARM = [((0.13, -0.15, 0.925), (0.07, 0.06, 0.05), True), ((0.0, -0.235, 0.92), (0.035, 0.03, 0.03), False),
+        ((0.21, 0.015, 0.955), (0.03, 0.04, 0.05), True), ((0.235, -0.02, 0.325), (0.06, 0.03, 0.03), True),
+        ((0.235, 0.06, 0.53), (0.05, 0.04, 0.05), True), ((0.085, -0.06, 0.215), (0.05, 0.04, 0.05), True),
+        ((0.235, -0.02, 0.29), (0.06, 0.03, 0.02), True)]
+
+
+def set_face(face):
+    """``face`` = dict(EYE=, BROW=, MOUTH=, NOSTRIL=, SCALE=, WARM=[...])."""
+    global EYE, BROW, MOUTH, NOSTRIL, FACE_SCALE, WARM
+    EYE, BROW, MOUTH, NOSTRIL = face["EYE"], face["BROW"], face["MOUTH"], face["NOSTRIL"]
+    FACE_SCALE = face.get("SCALE", 1.0)
+    WARM = face.get("WARM", WARM)
+
+
+def _r(x, y, z):
+    """Feature radii at FACE_SCALE; the depth (y) radius keeps at least 2 cm so
+    the mask reaches the skin whichever few mm the surface sits from the
+    landmark."""
+    return (x * FACE_SCALE, max(y * FACE_SCALE, 0.02), z * FACE_SCALE)
 
 
 def skin_color_tree(nt, out_socket_target):
@@ -176,32 +199,29 @@ def skin_color_tree(nt, out_socket_target):
     col = base.outputs[0]
     # warm zones: cheeks, nose tip, ears, knuckles, elbows, knees, fingertips
     warm = (1.0, 0.86, 0.84, 1.0)
-    for c, r, mir in ((( 0.13, -0.15, 0.925), (0.07, 0.06, 0.05), True), ((0.0, -0.235, 0.92), (0.035, 0.03, 0.03), False),
-                      ((0.21, 0.015, 0.955), (0.03, 0.04, 0.05), True), ((0.235, -0.02, 0.325), (0.06, 0.03, 0.03), True),
-                      ((0.235, 0.06, 0.53), (0.05, 0.04, 0.05), True), ((0.085, -0.06, 0.215), (0.05, 0.04, 0.05), True),
-                      ((0.235, -0.02, 0.29), (0.06, 0.03, 0.02), True)):
+    for c, r, mir in WARM:
         m = nt.ellipse(obj, c, r, soft=0.6, mirror=mir)
         col = nt.mix(nt.math("MULTIPLY", (m, 0 if mir else "Result"), 0.7).outputs[0], col, warm)
     # eyebrows: elongated, slightly arched (two overlapping ellipsoids)
     brow_col = (0.36, 0.30, 0.26, 1.0)
     for dx, dz, rx in ((0.0, 0.0, 0.045), (0.035, 0.008, 0.03)):
-        m = nt.ellipse(obj, (BROW[0] + dx, BROW[1], BROW[2] + dz), (rx, 0.03, 0.009), soft=0.45, mirror=True)
+        m = nt.ellipse(obj, (BROW[0] + dx * FACE_SCALE, BROW[1], BROW[2] + dz * FACE_SCALE), _r(rx, 0.03, 0.009), soft=0.45, mirror=True)
         col = nt.mix((m, 0), col, brow_col)
     # eye: lid line (dark), sclera (bright), iris, pupil
-    lid = nt.ellipse(obj, (EYE[0], EYE[1] + 0.005, EYE[2] + 0.014), (0.028, 0.02, 0.0045), soft=0.5, mirror=True)
+    lid = nt.ellipse(obj, (EYE[0], EYE[1] + 0.005 * FACE_SCALE, EYE[2] + 0.014 * FACE_SCALE), _r(0.028, 0.02, 0.0045), soft=0.5, mirror=True)
     col = nt.mix((lid, 0), col, (0.42, 0.34, 0.32, 1.0))
-    sclera = nt.ellipse(obj, EYE, (0.027, 0.025, 0.015), soft=0.25, mirror=True)
+    sclera = nt.ellipse(obj, EYE, _r(0.027, 0.025, 0.015), soft=0.25, mirror=True)
     col = nt.mix((sclera, 0), col, (1.0, 1.0, 1.0, 1.0))
-    iris = nt.ellipse(obj, EYE, (0.013, 0.025, 0.013), soft=0.2, mirror=True)
+    iris = nt.ellipse(obj, EYE, _r(0.013, 0.025, 0.013), soft=0.2, mirror=True)
     col = nt.mix((iris, 0), col, (0.22, 0.30, 0.42, 1.0))
-    pupil = nt.ellipse(obj, EYE, (0.006, 0.025, 0.006), soft=0.3, mirror=True)
+    pupil = nt.ellipse(obj, EYE, _r(0.006, 0.025, 0.006), soft=0.3, mirror=True)
     col = nt.mix((pupil, 0), col, (0.04, 0.04, 0.05, 1.0))
     # nostrils and the mouth
-    nos = nt.ellipse(obj, NOSTRIL, (0.008, 0.012, 0.007), soft=0.5, mirror=True)
+    nos = nt.ellipse(obj, NOSTRIL, _r(0.008, 0.012, 0.007), soft=0.5, mirror=True)
     col = nt.mix(nt.math("MULTIPLY", (nos, 0), 0.6).outputs[0], col, (0.45, 0.35, 0.33, 1.0))
-    lips = nt.ellipse(obj, MOUTH, (0.046, 0.02, 0.014), soft=0.45)
+    lips = nt.ellipse(obj, MOUTH, _r(0.046, 0.02, 0.014), soft=0.45)
     col = nt.mix(nt.math("MULTIPLY", (lips, "Result"), 0.8).outputs[0], col, (0.95, 0.62, 0.60, 1.0))
-    line = nt.ellipse(obj, (MOUTH[0], MOUTH[1], MOUTH[2] + 0.004), (0.040, 0.02, 0.0035), soft=0.6)
+    line = nt.ellipse(obj, (MOUTH[0], MOUTH[1], MOUTH[2] + 0.004 * FACE_SCALE), _r(0.040, 0.02, 0.0035), soft=0.6)
     col = nt.mix((line, "Result"), col, (0.55, 0.40, 0.40, 1.0))
     nt.tree.links.new(col, out_socket_target)
     return col
@@ -212,9 +232,9 @@ def skin_rough_tree(nt):
     obj = tc.outputs["Object"]
     n = nt.add("ShaderNodeTexNoise", {"Vector": obj, "Scale": 80.0, "Detail": 3.0})
     r = nt.math("ADD", nt.math("MULTIPLY", (n, "Fac"), 0.12).outputs[0], 0.50).outputs[0]
-    lips = nt.ellipse(obj, MOUTH, (0.046, 0.02, 0.014), soft=0.45)
+    lips = nt.ellipse(obj, MOUTH, _r(0.046, 0.02, 0.014), soft=0.45)
     r = nt.mix((lips, "Result"), r, 0.38, kind="FLOAT")
-    eye = nt.ellipse(obj, EYE, (0.027, 0.025, 0.015), soft=0.25, mirror=True)
+    eye = nt.ellipse(obj, EYE, _r(0.027, 0.025, 0.015), soft=0.25, mirror=True)
     r = nt.mix((eye, 0), r, 0.15, kind="FLOAT")
     return r
 

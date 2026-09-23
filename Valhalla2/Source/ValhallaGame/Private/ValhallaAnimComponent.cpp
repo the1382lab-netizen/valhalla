@@ -16,7 +16,7 @@
 
 namespace
 {
-	constexpr int32 AnimCount = static_cast<int32>(EValhallaAnim::Death) + 1;
+	constexpr int32 AnimCount = ValhallaAnimCount;
 
 	/** The name an animation is logged under. */
 	const TCHAR* AnimName(EValhallaAnim Anim)
@@ -30,9 +30,42 @@ namespace
 		case EValhallaAnim::Cast:   return TEXT("A_Cast");
 		case EValhallaAnim::Hit:    return TEXT("A_Hit");
 		case EValhallaAnim::Death:  return TEXT("A_Death");
+		case EValhallaAnim::AttackSword:   return TEXT("A_Attack_Sword");
+		case EValhallaAnim::AttackDagger:  return TEXT("A_Attack_Dagger");
+		case EValhallaAnim::AttackMace:    return TEXT("A_Attack_Mace");
+		case EValhallaAnim::AttackStaff:   return TEXT("A_Attack_Staff");
+		case EValhallaAnim::Jog:           return TEXT("A_Jog");
+		case EValhallaAnim::PoseGripRight: return TEXT("P_GripRight");
+		case EValhallaAnim::PoseGripLeft:  return TEXT("P_GripLeft");
+		case EValhallaAnim::PoseShieldArm: return TEXT("P_ShieldArm");
+		case EValhallaAnim::BowDraw:       return TEXT("A_Bow_Draw");
+		case EValhallaAnim::BowRelease:    return TEXT("A_Bow_Release");
+		case EValhallaAnim::CastChannel:   return TEXT("A_Cast_Channel");
+		case EValhallaAnim::CastRelease:   return TEXT("A_Cast_Release");
+		case EValhallaAnim::CastChannelStaff: return TEXT("A_Cast_Channel_Staff");
+		case EValhallaAnim::CastReleaseStaff: return TEXT("A_Cast_Release_Staff");
+		case EValhallaAnim::CastStaff:     return TEXT("A_Cast_Staff");
 		}
 		return TEXT("A_Idle");
 	}
+
+	/** A skill's data row, or null. */
+	const FValhallaSkillTemplate* FindSkillRow(const UObject* WorldContext, FName SkillId)
+	{
+		const UGameInstance* GameInstance = UGameplayStatics::GetGameInstance(WorldContext);
+		const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+		return (Data && !SkillId.IsNone()) ? Data->FindSkill(SkillId) : nullptr;
+	}
+
+	/** True when a skill is presented as a bow shot (JSON castAnimation "bow"). */
+	bool IsBowSkill(const UObject* WorldContext, FName SkillId)
+	{
+		const FValhallaSkillTemplate* Skill = FindSkillRow(WorldContext, SkillId);
+		return Skill && Skill->CastAnimation == TEXT("bow");
+	}
+
+	/** Blend into a held cast pose, seconds: slower than a swing so the gather reads. */
+	constexpr float CastHoldBlendInSeconds = 0.22f;
 
 	/** True for the event kinds that mean "a blow was struck", hit or not. */
 	bool IsSwingOutcome(EValhallaCombatEventKind Kind)
@@ -144,6 +177,9 @@ void UValhallaAnimComponent::EnsureAnimInstance()
 	bStarted = true;
 	AnimInstance->SetLocomotionSequences(
 		Sequence(EValhallaAnim::Idle), Sequence(EValhallaAnim::Walk));
+	AnimInstance->SetStancePoses(
+		Sequence(EValhallaAnim::PoseGripRight), Sequence(EValhallaAnim::PoseGripLeft), Sequence(EValhallaAnim::PoseShieldArm));
+	ApplyStance();
 	AnimInstance->SetWalking(false);
 }
 
@@ -160,6 +196,10 @@ void UValhallaAnimComponent::LoadSequences()
 	{
 		const EValhallaAnim Anim = static_cast<EValhallaAnim>(Index);
 		const FString Path = UValhallaVisuals::AnimPath(Anim);
+		if (Path.IsEmpty())
+		{
+			continue;   // a slot this body profile does not have
+		}
 		UAnimSequence* Loaded = LoadObject<UAnimSequence>(nullptr, *Path);
 		Sequences[Index] = Loaded;
 
@@ -257,7 +297,29 @@ void UValhallaAnimComponent::PlayAction(EValhallaAnim Anim)
 
 void UValhallaAnimComponent::PlaySwing()
 {
-	PlayAction(UValhallaVisuals::AnimForAttackCycle(AttackCycle));
+	// The weapon decides the swing: a bow looses, a cast cycle gestures, and
+	// every melee weapon plays its own attack (bare hands punch).
+	PlayAction(AttackCycle == EValhallaAttackCycle::Melee
+		? WeaponAttackAnim
+		: UValhallaVisuals::AnimForAttackCycle(AttackCycle));
+}
+
+void UValhallaAnimComponent::SetWeaponLoadout(EValhallaAnim InAttackAnim, bool bInGripRight, bool bInGripLeft, bool bInShieldArm)
+{
+	WeaponAttackAnim = InAttackAnim;
+	bStanceGripRight = bInGripRight;
+	bStanceGripLeft = bInGripLeft;
+	bStanceShieldArm = bInShieldArm;
+	ApplyStance();
+}
+
+void UValhallaAnimComponent::ApplyStance()
+{
+	if (AnimInstance)
+	{
+		// A corpse lets go: no fist, no raised shield arm on a body lying down.
+		AnimInstance->SetStance(bStanceGripRight && !bDead, bStanceGripLeft && !bDead, bStanceShieldArm && !bDead);
+	}
 }
 
 void UValhallaAnimComponent::PlayHitReaction()
@@ -285,6 +347,7 @@ void UValhallaAnimComponent::SetDead(bool bInDead)
 	{
 		return;
 	}
+	ApplyStance();
 
 	if (bDead)
 	{
@@ -317,25 +380,65 @@ void UValhallaAnimComponent::TickCastHold()
 	{
 		bHoldingCast = true;
 		bActionPlaying = false;
-		CurrentAnim = EValhallaAnim::Cast;
+		bCastInterrupted = false;
 		EnsureAnimInstance();
-		if (AnimInstance)
+
+		// What the hold looks like depends on the skill and the hands: a bow
+		// skill draws and holds at full draw (a non-looping clip clamps on its
+		// last frame); a spell gathers and loops the gather, staff raised if
+		// one is held. The release is played when the cast bar completes.
+		if (IsBowSkill(this, SkillComponent->CastingSkillId) && Sequence(EValhallaAnim::BowDraw))
 		{
-			// Looped for the duration of the cast: the cast bar and the pose
-			// end together, whatever the sequence's own length is. It is the
-			// action *layer* that loops, so a caster who walks while casting
-			// still has legs.
-			AnimInstance->PlayAction(Sequence(EValhallaAnim::Cast), /*bLoop=*/true);
+			HeldCast = EHeldCast::Bow;
+			CurrentAnim = EValhallaAnim::BowDraw;
+			if (AnimInstance)
+			{
+				AnimInstance->PlayAction(Sequence(EValhallaAnim::BowDraw), /*bLoop=*/false, 0.1f);
+			}
+		}
+		else
+		{
+			const bool bStaff = WeaponAttackAnim == EValhallaAnim::AttackStaff && Sequence(EValhallaAnim::CastChannelStaff);
+			const EValhallaAnim Hold = bStaff ? EValhallaAnim::CastChannelStaff
+				: (Sequence(EValhallaAnim::CastChannel) ? EValhallaAnim::CastChannel : EValhallaAnim::Cast);
+			HeldCast = bStaff ? EHeldCast::Staff : EHeldCast::Spell;
+			CurrentAnim = Hold;
+			if (AnimInstance)
+			{
+				// Looped for the duration of the cast: the cast bar and the pose
+				// end together, whatever the sequence's own length is. It is the
+				// action *layer* that loops, so a caster who walks while casting
+				// still has legs.
+				AnimInstance->PlayAction(Sequence(Hold), /*bLoop=*/true, CastHoldBlendInSeconds);
+			}
 		}
 	}
 	else if (!bCasting && bHoldingCast)
 	{
 		bHoldingCast = false;
-		if (AnimInstance)
+		const EHeldCast Was = HeldCast;
+		HeldCast = EHeldCast::None;
+
+		// Completed: loose the arrow / push the spell out. Interrupted (moved,
+		// cancelled) or dead: just lower the hands.
+		const EValhallaAnim Release = Was == EHeldCast::Bow ? EValhallaAnim::BowRelease
+			: Was == EHeldCast::Staff ? EValhallaAnim::CastReleaseStaff
+			: EValhallaAnim::CastRelease;
+		if (!bCastInterrupted && !bDead && Sequence(Release))
+		{
+			PlayAction(Release);
+		}
+		else if (AnimInstance)
 		{
 			AnimInstance->StopAction();
 		}
+		bCastInterrupted = false;
 	}
+}
+
+void UValhallaAnimComponent::NoteCastInterrupted()
+{
+	bCastInterrupted = true;
 }
 
 bool UValhallaAnimComponent::IsActionFinished() const
@@ -359,6 +462,21 @@ void UValhallaAnimComponent::TickLocomotion()
 
 	const float Speed = Owner->GetVelocity().Size2D();
 	SetLocomotion(Speed > WalkSpeedThreshold ? EValhallaAnim::Walk : EValhallaAnim::Idle);
+
+	// Speed-matched locomotion on an external body: the walk or the jog,
+	// whichever needs the rate nearer 1, played at speed / (clip speed x the
+	// body's drawn scale) so the planted foot does not slide.
+	if (AnimInstance && UValhallaVisuals::UseExternalBody() && BodyMesh && Speed > WalkSpeedThreshold)
+	{
+		const float Scale = FMath::Max(0.01f, static_cast<float>(BodyMesh->GetComponentScale().Z));
+		const float WalkRate = Speed / (UValhallaVisuals::WalkClipSpeed * Scale);
+		const float JogRate = Speed / (UValhallaVisuals::JogClipSpeed * Scale);
+		// Hysteresis around the crossover so a speed hovering there does not flicker.
+		const float Crossover = bJogging ? 1.15f : 1.35f;
+		bJogging = Sequence(EValhallaAnim::Jog) && WalkRate > Crossover;
+		UAnimSequence* Cycle = bJogging ? Sequence(EValhallaAnim::Jog) : Sequence(EValhallaAnim::Walk);
+		AnimInstance->SetWalkSequence(Cycle, FMath::Clamp(bJogging ? JogRate : WalkRate, 0.45f, 1.6f));
+	}
 }
 
 void UValhallaAnimComponent::TickComponent(float DeltaSeconds, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction)
@@ -431,7 +549,20 @@ void UValhallaAnimComponent::DispatchCombatEvent(const UObject* WorldContext, co
 		// the cast time in ms, so zero is exactly "instant".
 		if (InstigatorAnim && Event.Amount <= 0.f)
 		{
-			InstigatorAnim->PlayAction(EValhallaAnim::Cast);
+			// An instant bow skill is a whole draw-and-loose; an instant spell
+			// is a quick gather-and-push (with the staff if one is held).
+			const bool bStaff = InstigatorAnim->WeaponAttackAnim == EValhallaAnim::AttackStaff;
+			InstigatorAnim->PlayAction(IsBowSkill(WorldContext, Event.SkillId) ? EValhallaAnim::Shoot
+				: bStaff ? EValhallaAnim::CastStaff : EValhallaAnim::Cast);
+		}
+		break;
+
+	case EValhallaCombatEventKind::SkillInterrupted:
+		// Broadcast before the cast state clears, so the hold ends lowered
+		// rather than released.
+		if (InstigatorAnim)
+		{
+			InstigatorAnim->NoteCastInterrupted();
 		}
 		break;
 

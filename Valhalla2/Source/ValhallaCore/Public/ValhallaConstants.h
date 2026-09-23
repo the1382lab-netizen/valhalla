@@ -49,6 +49,8 @@ namespace Valhalla
 	inline constexpr double FireballProjectileSpeed = 350.0;
 	inline constexpr double FireballAoeRadius = 96.0;
 	inline constexpr double FireballProjectileRadius = 10.0;
+	/** Reach used to vet a fireball's homing target when the skill has no range. Matches AValhallaSpellProjectile::MaxRange. */
+	inline constexpr double FireballProjectileMaxReach = 1600.0;
 	inline constexpr double FireballDamageFalloffMin = 0.35;
 
 	// ── Network (constants.ts:51) ───────────────────────────────────────

@@ -36,6 +36,8 @@ interface SkillTemplate {
   isAutoAttack?: boolean;
   /** Whether this skill requires a weapon to be equipped. */
   requiresWeapon?: boolean;
+  /** Client animation while casting: 'bow' draws and holds the bow, then looses. */
+  castAnimation?: 'bow';
   effectNotes: string;
 }
 
@@ -730,6 +732,16 @@ export const SkillEditor: React.FC = () => {
                       onChange={(e) => handleUpdateSkill({ requiresWeapon: e.target.checked || undefined })}
                     />
                     <span>Requires Weapon</span>
+                  </label>
+                </div>
+                <div className="form-group">
+                  <label className="form-label form-checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={selectedSkill.castAnimation === 'bow'}
+                      onChange={(e) => handleUpdateSkill({ castAnimation: e.target.checked ? 'bow' : undefined })}
+                    />
+                    <span>Bow Draw While Casting</span>
                   </label>
                 </div>
               </div>

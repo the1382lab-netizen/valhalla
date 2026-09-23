@@ -32,6 +32,23 @@ def render(path, objs, view="front", size=(900, 1100), center=(0.0, 0.0, 0.6), o
     cam.rotation_euler = (math.radians(90 - pitch), 0.0, a)
     scene.camera = cam
     scene.render.engine = engine
+    if engine != "BLENDER_WORKBENCH":
+        # a key light from the camera's side plus a soft grey world, or EEVEE
+        # renders a textured body as a flat cut-out
+        sun = bpy.data.objects.get("_ReviewSun")
+        if sun is None:
+            sun = bpy.data.objects.new("_ReviewSun", bpy.data.lights.new("_ReviewSun", "SUN"))
+            scene.collection.objects.link(sun)
+        sun.data.energy = 3.0
+        sun.rotation_euler = (math.radians(55), math.radians(-20), a + math.radians(35))
+        world = scene.world or bpy.data.worlds.new("World")
+        scene.world = world
+        world.use_nodes = True
+        bg = world.node_tree.nodes.get("Background")
+        if bg:
+            bg.inputs[0].default_value = (0.35, 0.35, 0.36, 1.0)
+            bg.inputs[1].default_value = 0.8
+    lights = {o for o in scene.objects if o.type == "LIGHT"}
     scene.display.shading.light = "STUDIO"
     scene.display.shading.color_type = color
     scene.display.shading.show_shadows = True
@@ -42,7 +59,7 @@ def render(path, objs, view="front", size=(900, 1100), center=(0.0, 0.0, 0.6), o
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGB"
     for o in scene.objects:
-        o.hide_render = o not in objs
+        o.hide_render = o not in objs and o not in lights
     os.makedirs(os.path.dirname(path), exist_ok=True)
     bpy.ops.render.render(write_still=True)
     return path

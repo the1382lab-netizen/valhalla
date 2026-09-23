@@ -655,7 +655,7 @@ def clear_old():
             bpy.data.meshes.remove(me)
 
 
-def export(names=(BODY, "SK_Hair_Brown_Short", "SK_Hair_Blonde", "SK_Hood_Bald_Cap"), path=OUT_GLB):
+def export(names=(BODY, "SK_Hair_Brown_Short", "SK_Hair_Blonde", "SK_Hood_Bald_Cap"), path=OUT_GLB, animations=True):
     """The body glb as the first pass exported it: armature + skinned meshes,
     deform bones only, every action as an animation, vertex colours kept."""
     arm = bpy.data.objects[ARMATURE]
@@ -671,7 +671,7 @@ def export(names=(BODY, "SK_Hair_Brown_Short", "SK_Hair_Blonde", "SK_Hood_Bald_C
     kwargs = dict(filepath=path, export_format="GLB", use_selection=True, export_yup=True,
                   export_apply=False, export_materials="EXPORT", export_normals=True,
                   export_texcoords=True, export_skins=True, export_def_bones=True,
-                  export_animations=True, export_animation_mode="ACTIONS", export_morph=True,
+                  export_animations=animations, export_animation_mode="ACTIONS", export_morph=True,
                   export_morph_normal=False, export_image_format="NONE")
     with bpy.context.temp_override(**_ctx()):
         try:

@@ -254,17 +254,6 @@ protected:
 	/** stats.ts:501 — the same for ranged. */
 	static constexpr float FallbackRangedAttackSpeedMs = 2000.f;
 
-	/**
-	 * Range of the magical auto-attack, cm.
-	 *
-	 * No 1.0 equivalent: 1.0 had exactly two auto-attacks, melee and the ranger's
-	 * bow, and a wizard auto-attacking meant walking into melee. 2.0 gives the
-	 * `isRangedMagic` classes (stats.ts:208 — wizard, cleric, shaman) a magical
-	 * ranged basic instead, at Magic Missile's range, so a caster is not obliged
-	 * to stand in the fire to contribute between cooldowns.
-	 */
-	static constexpr float MagicalAutoAttackRange = 450.f;
-
 private:
 	/** The target a timed cast was started against, re-validated when it completes. */
 	UPROPERTY(Transient)

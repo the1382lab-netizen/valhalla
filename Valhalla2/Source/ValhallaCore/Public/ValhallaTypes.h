@@ -396,9 +396,34 @@ struct VALHALLACORE_API FValhallaItemTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
 	bool bHasAttackSpeed = false;
 
-	/** JSON `attackDamage` — flat bonus added to the base damage constant. */
+	/** JSON `attackDamage` — flat bonus added to the base damage constant. Superseded by MinDamage/MaxDamage; used when those are absent. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
 	float AttackDamage = 0.f;
+
+	/**
+	 * JSON `minDamage` / `maxDamage` — the weapon's damage roll (2.0, EverQuest
+	 * style). Each auto-attack adds a uniform roll in [Min, Max] to the base
+	 * constant before stat scaling. Absent (Max 0) means a fixed AttackDamage.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
+	float MinDamage = 0.f;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")
+	float MaxDamage = 0.f;
+
+	/** The damage roll range: [MinDamage, MaxDamage], or AttackDamage for both when no range is set. */
+	void GetDamageRange(float& OutMin, float& OutMax) const
+	{
+		if (MaxDamage > 0.f)
+		{
+			OutMin = FMath::Min(MinDamage, MaxDamage);
+			OutMax = MaxDamage;
+		}
+		else
+		{
+			OutMin = OutMax = AttackDamage;
+		}
+	}
 
 	/** JSON `isRangedWeapon` — enables the ranged auto-attack when equipped. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Items")

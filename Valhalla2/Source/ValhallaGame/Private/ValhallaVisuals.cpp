@@ -117,7 +117,9 @@ EValhallaAttackCycle UValhallaVisuals::AttackCycleForWeaponStyle(FName WeaponSty
 {
 	// paperdoll.ts:48 WEAPON_STYLE_ANIM, entry for entry.
 	if (WeaponStyle == TEXT("bow"))   { return EValhallaAttackCycle::Shoot; }
-	if (WeaponStyle == TEXT("staff")) { return EValhallaAttackCycle::Cast; }
+	// A staff is swung like any melee weapon now that casters melee (2.0,
+	// 2026-09-22); 1.0 mapped it to the cast cycle because its casters' basic
+	// attack was a spell.
 	// sword, greatsword, mace, and `attackAnimFor`'s fallback for no weapon.
 	return EValhallaAttackCycle::Melee;
 }

@@ -14,6 +14,8 @@
         "strength": 3
       },
       "attackSpeedMs": 1600,
+      "minDamage": 4,
+      "maxDamage": 9,
       "inventoryIcon": "sword_iron.png",
       "spriteId": "sword_iron",
       "weaponStyle": "sword"
@@ -31,6 +33,8 @@
         "intelligence": 3
       },
       "attackSpeedMs": 2200,
+      "minDamage": 3,
+      "maxDamage": 7,
       "inventoryIcon": "staff_apprentice.png",
       "spriteId": "staff_apprentice",
       "weaponStyle": "staff"
@@ -48,8 +52,9 @@
         "dexterity": 3
       },
       "attackSpeedMs": 4000,
+      "minDamage": 3,
+      "maxDamage": 8,
       "isRangedWeapon": true,
-      "attackDamage": 5,
       "inventoryIcon": "bow_hunting.png",
       "spriteId": "bow_hunting",
       "weaponStyle": "bow"
@@ -68,6 +73,8 @@
         "strength": 1
       },
       "attackSpeedMs": 2000,
+      "minDamage": 2,
+      "maxDamage": 5,
       "inventoryIcon": "sword_iron.png",
       "spriteId": "sword_iron",
       "weaponStyle": "sword"
@@ -86,6 +93,8 @@
         "intelligence": 1
       },
       "attackSpeedMs": 1800,
+      "minDamage": 2,
+      "maxDamage": 6,
       "inventoryIcon": "mace_priests.png",
       "spriteId": "mace_priests",
       "weaponStyle": "mace"
@@ -104,6 +113,8 @@
         "strength": 1
       },
       "attackSpeedMs": 2000,
+      "minDamage": 3,
+      "maxDamage": 8,
       "inventoryIcon": "mace_priests.png",
       "spriteId": "mace_priests",
       "weaponStyle": "mace"

@@ -206,6 +206,15 @@ namespace Valhalla::Stats
 		return ClassId == NameWizard || ClassId == NameCleric || ClassId == NameShaman;
 	}
 
+	double RollWeaponDamage(double MinDamage, double MaxDamage, double Roll01)
+	{
+		if (MaxDamage <= MinDamage)
+		{
+			return MaxDamage;
+		}
+		return MinDamage + (MaxDamage - MinDamage) * FMath::Clamp(Roll01, 0.0, 1.0);
+	}
+
 	bool HasRangedAttack(FName ClassId)
 	{
 		// stats.ts:217 — ranger only.

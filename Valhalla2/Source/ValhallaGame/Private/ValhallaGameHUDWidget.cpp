@@ -2976,7 +2976,16 @@ void UValhallaGameHUDWidget::ShowItemTooltip(FName ItemId, int32 Quantity)
 	Stat(TEXT("HP"), S.Hp); Stat(TEXT("Mana"), S.Mana); Stat(TEXT("Strength"), S.Strength); Stat(TEXT("Stamina"), S.Stamina);
 	Stat(TEXT("Dexterity"), S.Dexterity); Stat(TEXT("Intelligence"), S.Intelligence); Stat(TEXT("Wisdom"), S.Wisdom);
 	Stat(TEXT("Physical resist"), S.PhysicalResist); Stat(TEXT("Spell resist"), S.SpellResist);
-	if (Item->AttackDamage > 0.f) { Body += FString::Printf(TEXT("\n%.0f damage"), Item->AttackDamage); }
+	{
+		float MinDamage = 0.f, MaxDamage = 0.f;
+		Item->GetDamageRange(MinDamage, MaxDamage);
+		if (MaxDamage > 0.f)
+		{
+			Body += FMath::IsNearlyEqual(MinDamage, MaxDamage)
+				? FString::Printf(TEXT("\n%.0f damage"), MaxDamage)
+				: FString::Printf(TEXT("\n%.0f-%.0f damage"), MinDamage, MaxDamage);
+		}
+	}
 	if (Item->bHasAttackSpeed) { Body += FString::Printf(TEXT("\n%.1fs attack speed"), Item->AttackSpeedMs / 1000.f); }
 	if (!Item->Description.IsEmpty()) { Body += FString::Printf(TEXT("\n\n%s"), *Item->Description); }
 	TooltipBody->SetText(AsText(Body));

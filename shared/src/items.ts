@@ -164,6 +164,13 @@ export interface ItemTemplate {
    * Configurable per-item in the game editor.
    */
   attackDamage?: number;
+  /**
+   * Valhalla 2.0 damage roll: each auto-attack adds a uniform roll in
+   * [minDamage, maxDamage] to the base damage before stat scaling. When absent
+   * the flat `attackDamage` is used; unarmed rolls 1–3.
+   */
+  minDamage?: number;
+  maxDamage?: number;
   /** Whether this is a ranged weapon (bow, crossbow). Enables ranged auto-attack when equipped. */
   isRangedWeapon?: boolean;
   /**

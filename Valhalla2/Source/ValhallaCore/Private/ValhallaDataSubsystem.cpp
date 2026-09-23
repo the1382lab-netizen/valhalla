@@ -405,6 +405,8 @@ namespace
 
 		Out.bHasAttackSpeed = OptFloat(Obj, TEXT("attackSpeedMs"), Out.AttackSpeedMs);
 		OptFloat(Obj, TEXT("attackDamage"), Out.AttackDamage);
+		OptFloat(Obj, TEXT("minDamage"), Out.MinDamage);
+		OptFloat(Obj, TEXT("maxDamage"), Out.MaxDamage);
 		OptBool(Obj, TEXT("isRangedWeapon"), Out.bIsRangedWeapon);
 
 		OptString(Obj, TEXT("inventoryIcon"), Out.InventoryIcon);

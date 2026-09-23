@@ -45,6 +45,9 @@ interface ItemTemplate {
   weaponStyle?: string;
   attackSpeedMs?: number;
   attackDamage?: number;
+  /** Damage roll range (2.0): each auto-attack rolls between these, before stat scaling. */
+  minDamage?: number;
+  maxDamage?: number;
   isRangedWeapon?: boolean;
 }
 
@@ -269,18 +272,36 @@ export const ItemEditor: React.FC = () => {
                 <>
                   <div className="form-row">
                     <div className="form-group">
-                      <label className="form-label">Attack Damage</label>
-                      <input
-                        className="form-input"
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={selectedItem.attackDamage ?? 0}
-                        onChange={(e) => {
-                          const v = parseInt(e.target.value, 10);
-                          handleUpdateItem({ attackDamage: v > 0 ? v : undefined });
-                        }}
-                      />
+                      <label className="form-label" title="Each auto-attack rolls a number in this range and adds it to the base damage before strength scaling. Unarmed is 1–3.">
+                        Damage (min – max)
+                      </label>
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={selectedItem.minDamage ?? selectedItem.attackDamage ?? 0}
+                          onChange={(e) => {
+                            const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            const max = Math.max(v, selectedItem.maxDamage ?? selectedItem.attackDamage ?? 0);
+                            handleUpdateItem({ minDamage: v, maxDamage: max > 0 ? max : undefined, attackDamage: undefined });
+                          }}
+                        />
+                        <span>–</span>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={selectedItem.maxDamage ?? selectedItem.attackDamage ?? 0}
+                          onChange={(e) => {
+                            const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                            const min = Math.min(v, selectedItem.minDamage ?? selectedItem.attackDamage ?? 0);
+                            handleUpdateItem({ minDamage: v > 0 ? min : undefined, maxDamage: v > 0 ? v : undefined, attackDamage: undefined });
+                          }}
+                        />
+                      </div>
                     </div>
                     <div className="form-group">
                       <label className="form-label">Attack Speed (ms)</label>
@@ -361,7 +382,7 @@ export const ItemEditor: React.FC = () => {
                           <option value="">None (melee swing)</option>
                           {WEAPON_STYLES.map(w => (
                             <option key={w} value={w}>
-                              {w} &rarr; {w === 'bow' ? 'shoot' : w === 'staff' ? 'cast' : 'attack'}
+                              {w} &rarr; {w === 'bow' ? 'shoot' : 'attack'}
                             </option>
                           ))}
                         </select>

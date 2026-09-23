@@ -39,7 +39,7 @@ enum class EValhallaAttackCycle : uint8
 	Melee,
 	/** `A_Shoot` — bow. */
 	Shoot,
-	/** `A_Cast` — staff. Also every non-auto-attack skill, whatever is held. */
+	/** `A_Cast` — every non-auto-attack skill, whatever is held. (A staff swings with A_Attack since casters melee.) */
 	Cast,
 };
 

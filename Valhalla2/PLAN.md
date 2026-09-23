@@ -667,6 +667,22 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       the front end opens and on every server data reload. Files are written
       only after every changed one downloaded and matched its hash.
 
+## Phase 11 — Weapon damage rolls; casters melee (2026-09-22)
+
+- [x] **Weapons roll damage.** Items take `minDamage` / `maxDamage`; each
+      auto-attack adds a uniform roll in that range to the base constant before
+      strength scaling (`Valhalla::Stats::RollWeaponDamage`). A 1.0 flat
+      `attackDamage` still works as a fixed range; unarmed rolls 1–3. Ranges:
+      dagger 2–5, bone totem 2–6, staff 3–7, mace 3–8, bow 3–8, sword 4–9.
+      Before this no melee weapon had any damage (only the bow's 5), so a
+      weapon only changed damage through its stat bonus, which the floor often
+      swallowed, and every non-crit hit on a target was identical.
+- [x] **Casters melee.** Wizard, cleric and shaman auto-attack with their
+      weapon like everyone else (EverQuest-style); their magic is their spells.
+      1.0's magical basic (`isRangedMagic`, 450 cm) is gone from the
+      auto-attack, and a staff now plays the attack swing rather than A_Cast.
+      Checked in PIE: cleric unarmed 17–19, with the Iron Mace 21–25.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

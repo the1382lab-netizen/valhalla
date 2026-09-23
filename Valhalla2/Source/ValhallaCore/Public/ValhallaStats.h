@@ -99,6 +99,13 @@ namespace Valhalla::Stats
 	/** stats.ts:216 — only the Ranger has a ranged basic attack. */
 	VALHALLACORE_API bool HasRangedAttack(FName ClassId);
 
+	/**
+	 * 2.0: a weapon damage roll — Min + (Max - Min) * Roll01, with Roll01
+	 * clamped to [0, 1] and a reversed range treated as fixed at Max. The
+	 * caller supplies the roll (FMath::FRand in play, fixed values in tests).
+	 */
+	VALHALLACORE_API double RollWeaponDamage(double MinDamage, double MaxDamage, double Roll01);
+
 	// ── Damage pipeline (CombatSystem.ts:343 applyStatDamage) ───────────
 
 	/**

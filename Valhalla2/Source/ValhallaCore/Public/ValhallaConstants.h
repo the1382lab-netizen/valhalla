@@ -59,6 +59,11 @@ namespace Valhalla
 	inline constexpr double BaseRangedDamage = 8.0;
 	inline constexpr double BaseSpellDamage = 12.0;
 
+	// ── Unarmed damage roll (2.0) ───────────────────────────────────────
+	// Fists roll like a very poor weapon, so a hit without one still varies.
+	inline constexpr double UnarmedMinDamage = 1.0;
+	inline constexpr double UnarmedMaxDamage = 3.0;
+
 	// ── Formula tuning constants (stats.ts) ─────────────────────────────
 	/** computePhysicalDamage: base + strength * this. (stats.ts:79) */
 	inline constexpr double StrengthDamageScaling = 0.8;

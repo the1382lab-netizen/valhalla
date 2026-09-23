@@ -846,9 +846,9 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 	ToTarget.Z = 0.0;
 	const double Distance = ToTarget.Size2D();
 
-	// stats.ts:208 — wizard, cleric and shaman throw magic instead of punching.
-	// See MagicalAutoAttackRange: this is a 2.0 addition, not a port.
-	const bool bMagical = Valhalla::Stats::IsRangedMagic(PlayerState->ClassId);
+	// Every class melees with its weapon, EverQuest-style (Kevin, 2026-09-22):
+	// casters' magic comes from their spells, not from the auto-attack. 1.0's
+	// magical basic for wizard / cleric / shaman (stats.ts:208) is gone.
 	const bool bRangedPhysical = AutoAttackSkillId == SkillRangedAttack;
 
 	// Measured surface to surface, the way AValhallaNPC measures its own reach:
@@ -867,10 +867,6 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 	if (bRangedPhysical)
 	{
 		MaxRange = Skill->Range + CapsuleGap;
-	}
-	else if (bMagical)
-	{
-		MaxRange = MagicalAutoAttackRange + CapsuleGap;
 	}
 
 	// SkillSystem.ts:475 — out of range is a pause, not a stop. The player may
@@ -912,36 +908,25 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 
 	const FValhallaResolvedStats& Stats = PlayerState->GetStats();
 
-	// SkillSystem.ts:513 — the weapon's flat `attackDamage` is added to the base
-	// constant *before* the stat scaling, not after it, so it is multiplied by
-	// nothing. items.ts:178 says so in as many words: "Flat bonus added to the
-	// base damage constant before stat scaling."
-	//
-	// Note that 1.0 adds it on the *magical* branch too (SkillSystem.ts:513 reads
-	// the weapon once and uses `weaponAttackDamage` in both branches), even
-	// though a staff's damage is nominally a physical weapon stat. Mirrored: a
-	// wizard's Oak Staff is worth its attackDamage on a magical auto-attack.
-	double WeaponAttackDamage = 0.0;
+	// The weapon's damage roll (2.0): a uniform roll in the weapon's
+	// [minDamage, maxDamage] — or its flat 1.0 `attackDamage` when it has no
+	// range, or 1-3 with no weapon at all — added to the base constant
+	// *before* the stat scaling, where SkillSystem.ts:513 added attackDamage.
+	double WeaponMin = Valhalla::UnarmedMinDamage;
+	double WeaponMax = Valhalla::UnarmedMaxDamage;
 	if (const FValhallaItemTemplate* Weapon = PlayerState->GetEquippedWeapon())
 	{
-		WeaponAttackDamage = Weapon->AttackDamage;
+		float Min = 0.f, Max = 0.f;
+		Weapon->GetDamageRange(Min, Max);
+		WeaponMin = Min;
+		WeaponMax = Max;
 	}
+	const double WeaponRoll = Valhalla::Stats::RollWeaponDamage(WeaponMin, WeaponMax, FMath::FRand());
 
-	double RawDamage;
-	if (bMagical)
-	{
-		RawDamage = Valhalla::Stats::ComputeSpellDamage(Valhalla::BaseSpellDamage + WeaponAttackDamage, Stats.Intelligence);
-	}
-	else if (bRangedPhysical)
-	{
-		RawDamage = Valhalla::Stats::ComputePhysicalDamage(Valhalla::BaseRangedDamage + WeaponAttackDamage, Stats.Strength);
-	}
-	else
-	{
-		RawDamage = Valhalla::Stats::ComputePhysicalDamage(Valhalla::BaseMeleeDamage + WeaponAttackDamage, Stats.Strength);
-	}
+	const double RawDamage = Valhalla::Stats::ComputePhysicalDamage(
+		(bRangedPhysical ? Valhalla::BaseRangedDamage : Valhalla::BaseMeleeDamage) + WeaponRoll, Stats.Strength);
 
-	UValhallaCombatLibrary::ApplyDamage(Character, Target, RawDamage, bMagical, AutoAttackSkillId);
+	UValhallaCombatLibrary::ApplyDamage(Character, Target, RawDamage, /*bMagical=*/false, AutoAttackSkillId);
 
 	const float IntervalMs = GetAutoAttackIntervalMs();
 	NextAutoAttackAt = Now + IntervalMs / 1000.0;

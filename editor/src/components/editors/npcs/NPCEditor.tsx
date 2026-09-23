@@ -18,6 +18,7 @@ interface NPCTemplate {
   damage?: number;
   minDamage?: number;
   maxDamage?: number;
+  weaponId?: string;
   attackSpeed?: number;
   attackRange?: number;
   moveSpeed?: number;
@@ -85,6 +86,21 @@ export const NPCEditor: React.FC = () => {
   const availableItems = useMemo(() => {
     return Object.keys(items.data || {}).sort();
   }, [items.data]);
+
+  // Weapon dropdown: every item in the master list that equips in the weapon slot.
+  const availableWeapons = useMemo(() => {
+    return Object.keys(items.data || {})
+      .filter(id => items.data[id]?.equipSlot === 'weapon')
+      .sort((a, b) => (items.data[a]?.name || a).localeCompare(items.data[b]?.name || b));
+  }, [items.data]);
+
+  const weaponRangeLabel = (id: string): string => {
+    const it = items.data[id];
+    if (!it) return '';
+    const min = it.minDamage ?? it.attackDamage;
+    const max = it.maxDamage ?? it.attackDamage;
+    return min != null && max != null ? ` (${min}–${max})` : '';
+  };
 
   const availableLootTables = useMemo(() => {
     return Object.keys(lootTables.data || {}).sort();
@@ -411,6 +427,32 @@ export const NPCEditor: React.FC = () => {
                   </div>
                 </div>
 
+                <div className="form-group">
+                  <label className="form-label" title="The item this NPC holds. It shows in the NPC's hand, sets its attack animation, and each hit adds the weapon's damage roll on top of the NPC's own.">
+                    Weapon
+                  </label>
+                  <select
+                    className="form-select"
+                    value={selectedNpc.weaponId || ''}
+                    onChange={(e) => handleUpdateNpc({ weaponId: e.target.value || undefined })}
+                  >
+                    <option value="">None (unarmed)</option>
+                    {selectedNpc.weaponId && !availableWeapons.includes(selectedNpc.weaponId) && (
+                      <option value={selectedNpc.weaponId}>{selectedNpc.weaponId} (missing)</option>
+                    )}
+                    {availableWeapons.map(id => (
+                      <option key={id} value={id}>
+                        {(items.data[id]?.name || id) + weaponRangeLabel(id)}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Adds the weapon's damage roll to each hit
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-row">
                 <div className="form-group">
                   <label className="form-label">Attack Speed (ms)</label>
                   <input

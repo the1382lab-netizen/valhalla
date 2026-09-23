@@ -276,6 +276,26 @@ export const ValidationPanel: React.FC = () => {
         });
       }
 
+      // Validate weapon reference: must be an item that goes in the weapon slot
+      if (npc.weaponId) {
+        const weapon = items?.[npc.weaponId];
+        if (!weapon) {
+          foundIssues.push({
+            severity: 'error',
+            category: 'npcs',
+            id: npcId,
+            message: `NPC "${npc.name || npcId}" references invalid weapon "${npc.weaponId}"`,
+          });
+        } else if (weapon.equipSlot !== 'weapon') {
+          foundIssues.push({
+            severity: 'warning',
+            category: 'npcs',
+            id: npcId,
+            message: `NPC "${npc.name || npcId}" weapon "${npc.weaponId}" is not a weapon-slot item`,
+          });
+        }
+      }
+
       // Validate skill references
       if (Array.isArray(npc.skills)) {
         npc.skills.forEach((skillId: string) => {

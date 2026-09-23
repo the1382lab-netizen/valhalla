@@ -329,6 +329,19 @@ protected:
 	UPROPERTY(ReplicatedUsing = OnRep_BodyScale)
 	int32 BodyColor = 0;
 
+	/**
+	 * The template's `weaponId` (an items.json weapon), replicated so every
+	 * machine draws the same prop and plays the same attack. NAME_None: unarmed.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_BodyScale)
+	FName WeaponId;
+
+	/** The weapon id WeaponMesh currently shows, so a reapply only reloads on change. */
+	FName AppliedWeaponId;
+
+	/** Draws WeaponId into WeaponMesh and sets the attack cycle it implies. */
+	void ApplyWeaponVisual();
+
 	/** The animated body — the same rig and the same skeleton a player uses. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> BodyMesh;
@@ -352,6 +365,10 @@ protected:
 	/** Gloves, a follower of BodyMesh. Set from GlovesMeshAsset. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
 	TObjectPtr<USkeletalMeshComponent> GlovesMesh;
+
+	/** The template's weapon, in the right hand (socket_weapon_r), like a player's. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
+	TObjectPtr<UStaticMeshComponent> WeaponMesh;
 
 	/** Idle / Walk / attack / hit / death. Identical driving to a player's. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")

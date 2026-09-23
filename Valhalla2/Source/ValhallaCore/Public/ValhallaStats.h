@@ -106,6 +106,15 @@ namespace Valhalla::Stats
 	 */
 	VALHALLACORE_API double RollWeaponDamage(double MinDamage, double MaxDamage, double Roll01);
 
+	/**
+	 * An NPC's hit before mitigation (2.0): its own roll in [NpcMin, NpcMax],
+	 * plus — when it carries a weapon — the weapon's roll in [WeaponMin,
+	 * WeaponMax]. Two independent rolls, so a Test Enemy (7–13) with an Iron
+	 * Sword (4–9) hits for 11–22. Never below 1.
+	 */
+	VALHALLACORE_API double RollNPCMeleeDamage(double NpcMin, double NpcMax, double NpcRoll01,
+		bool bHasWeapon, double WeaponMin, double WeaponMax, double WeaponRoll01);
+
 	// ── Damage pipeline (CombatSystem.ts:343 applyStatDamage) ───────────
 
 	/**

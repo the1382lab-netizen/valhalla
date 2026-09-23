@@ -27,6 +27,12 @@ export interface NPCTemplate {
   /** Valhalla 2.0 damage roll: each hit rolls uniformly in [minDamage, maxDamage]. */
   minDamage?: number;
   maxDamage?: number;
+  /**
+   * Item id (items.json) of the weapon this NPC carries. It shows in the NPC's
+   * hand, picks its attack animation, and each hit adds the weapon's own
+   * [minDamage, maxDamage] roll on top of the NPC's damage roll.
+   */
+  weaponId?: string;
   /** Milliseconds between attacks (default: 1500). */
   attackSpeed?: number;
   /** Distance in px the NPC must be within to attack (default: 40). */

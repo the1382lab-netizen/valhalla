@@ -55,6 +55,14 @@ bool FValhallaDamageRollTest::RunTest(const FString& /*Parameters*/)
 	Wolf.GetDamageRange(Min, Max);
 	TestTrue(TEXT("an NPC with a range rolls in it"), Min == 7.f && Max == 13.f);
 
+	// An armed NPC adds its weapon's roll to its own: Test Enemy 7–13 with an
+	// Iron Sword 4–9 hits for 11–22 before mitigation.
+	TestEqual(TEXT("armed NPC, both rolls low"), RollNPCMeleeDamage(7.0, 13.0, 0.0, true, 4.0, 9.0, 0.0), 11.0);
+	TestEqual(TEXT("armed NPC, both rolls high"), RollNPCMeleeDamage(7.0, 13.0, 1.0, true, 4.0, 9.0, 1.0), 22.0);
+	TestEqual(TEXT("the two rolls are independent"), RollNPCMeleeDamage(7.0, 13.0, 0.0, true, 4.0, 9.0, 1.0), 16.0);
+	TestEqual(TEXT("unarmed NPC ignores the weapon numbers"), RollNPCMeleeDamage(7.0, 13.0, 1.0, false, 4.0, 9.0, 1.0), 13.0);
+	TestEqual(TEXT("an NPC hit is never below 1"), RollNPCMeleeDamage(0.0, 0.0, 0.5, false, 0.0, 0.0, 0.5), 1.0);
+
 	// The whole melee number for a level-1 warrior (strength 20) swinging the
 	// Iron Mace (+1 strength): 10 + [3, 8] + 21 * 0.8 = 29.8 .. 34.8 before
 	// defense and the floor, against 27.8 .. 29.8 bare-handed.

@@ -215,6 +215,17 @@ namespace Valhalla::Stats
 		return MinDamage + (MaxDamage - MinDamage) * FMath::Clamp(Roll01, 0.0, 1.0);
 	}
 
+	double RollNPCMeleeDamage(double NpcMin, double NpcMax, double NpcRoll01,
+		bool bHasWeapon, double WeaponMin, double WeaponMax, double WeaponRoll01)
+	{
+		double Damage = RollWeaponDamage(NpcMin, NpcMax, NpcRoll01);
+		if (bHasWeapon)
+		{
+			Damage += RollWeaponDamage(WeaponMin, WeaponMax, WeaponRoll01);
+		}
+		return FMath::Max(1.0, Damage);
+	}
+
 	bool HasRangedAttack(FName ClassId)
 	{
 		// stats.ts:217 — ranger only.

@@ -486,6 +486,7 @@ namespace
 		RequireFloat(Obj, TEXT("hp"), Out.Hp, Context);
 		OptFloat(Obj, TEXT("mana"), Out.Mana);
 		OptName(Obj, TEXT("lootTableId"), Out.LootTableId);
+		OptName(Obj, TEXT("weaponId"), Out.WeaponId);
 		RequireEnum(Obj, TEXT("behaviorType"), Out.BehaviorType, &Valhalla::ParseNPCBehavior, Context);
 
 		// npcs.ts:21 — defaults to true for enemies, false for friendly NPCs.

@@ -708,6 +708,14 @@ struct VALHALLACORE_API FValhallaNPCTemplate
 		}
 	}
 
+	/**
+	 * JSON `weaponId` — an items.json weapon the NPC carries (2.0). It is drawn
+	 * in the NPC's right hand, picks its attack animation, and each hit adds the
+	 * weapon's own damage roll on top of the NPC's. NAME_None: unarmed.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	FName WeaponId;
+
 	/** JSON `attackSpeed` — ms between attacks; 1.0 default is 1500. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float AttackSpeedMs = 1500.f;

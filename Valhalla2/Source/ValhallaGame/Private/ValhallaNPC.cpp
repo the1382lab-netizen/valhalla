@@ -245,6 +245,14 @@ AValhallaNPC::AValhallaNPC()
 		Follower->SetLeaderPoseComponent(BodyMesh);
 	}
 
+	// The template's weapon, in the same hand socket a player's goes in.
+	WeaponMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("WeaponMesh"));
+	WeaponMesh->SetupAttachment(BodyMesh, UValhallaVisuals::WeaponSocket());
+	WeaponMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	WeaponMesh->SetCollisionProfileName(TEXT("NoCollision"));
+	WeaponMesh->SetGenerateOverlapEvents(false);
+	WeaponMesh->SetCastShadow(false);
+
 	AnimComponent = CreateDefaultSubobject<UValhallaAnimComponent>(TEXT("AnimComponent"));
 
 	bReplicates = true;
@@ -284,6 +292,7 @@ void AValhallaNPC::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLife
 	DOREPLIFETIME(AValhallaNPC, bFriendly);
 	DOREPLIFETIME(AValhallaNPC, BodyScale);
 	DOREPLIFETIME(AValhallaNPC, BodyColor);
+	DOREPLIFETIME(AValhallaNPC, WeaponId);
 
 	// The threat table is not here and never will be. Knowing who an NPC is
 	// about to switch to is a tactical advantage the server does not give away.
@@ -424,6 +433,51 @@ void AValhallaNPC::ApplyAppearance()
 		Component->SetLeaderPoseComponent(BodyMesh);
 		UE_LOG(LogValhallaVisual, Log, TEXT("npc=%s asset=%s"), *DisplayName, *GetPathNameSafe(Wanted));
 	}
+
+	ApplyWeaponVisual();
+}
+
+void AValhallaNPC::ApplyWeaponVisual()
+{
+	// The weapon decides the attack animation, exactly as it does for a player
+	// (AValhallaCharacter::RefreshEquipmentVisuals): sword/mace swing, bow
+	// shoots, staff swings. Unarmed is the melee cycle.
+	if (AnimComponent)
+	{
+		AnimComponent->SetAttackCycle(UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId));
+	}
+
+	if (!WeaponMesh || AppliedWeaponId == WeaponId)
+	{
+		return;
+	}
+	AppliedWeaponId = WeaponId;
+
+	if (WeaponId.IsNone())
+	{
+		WeaponMesh->SetStaticMesh(nullptr);
+		return;
+	}
+
+	bool bIsSkeletal = true;
+	const FString AssetPath = UValhallaVisuals::EquipmentAssetPathForItem(this, WeaponId, bIsSkeletal);
+	UStaticMesh* Loaded = (!AssetPath.IsEmpty() && !bIsSkeletal) ? LoadObject<UStaticMesh>(nullptr, *AssetPath) : nullptr;
+	WeaponMesh->SetStaticMesh(Loaded);
+	if (!Loaded)
+	{
+		UE_LOG(LogValhallaVisual, Warning, TEXT("npc=%s weapon=%s asset=%s MISSING"),
+			*DisplayName, *WeaponId.ToString(), AssetPath.IsEmpty() ? TEXT("<no art>") : *AssetPath);
+		return;
+	}
+
+	// A bow is held pitched up in the right hand, the same correction a player gets.
+	FRotator PropRotation = FRotator::ZeroRotator;
+	if (UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId) == EValhallaAttackCycle::Shoot)
+	{
+		PropRotation.Pitch = UValhallaVisuals::BowWeaponSocketPitch;
+	}
+	WeaponMesh->SetRelativeRotation(PropRotation);
+	UE_LOG(LogValhallaVisual, Log, TEXT("npc=%s weapon=%s asset=%s"), *DisplayName, *WeaponId.ToString(), *AssetPath);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -447,6 +501,7 @@ void AValhallaNPC::InitializeFromTemplate(const FValhallaNPCTemplate& InTemplate
 	bFriendly = InTemplate.Type == EValhallaNPCType::Npc;
 	BodyScale = ResolveBodyScale(InTemplate);
 	BodyColor = InTemplate.SpriteColor;
+	WeaponId = InTemplate.WeaponId;
 	ApplyAppearance();
 	Level = FMath::Max(1, InTemplate.Level);
 	MaxHp = InTemplate.Hp;
@@ -644,6 +699,7 @@ void AValhallaNPC::ReapplyTemplate(const FValhallaNPCTemplate& NewTemplate)
 	bFriendly = NewTemplate.Type == EValhallaNPCType::Npc;
 	BodyScale = ResolveBodyScale(NewTemplate);
 	BodyColor = NewTemplate.SpriteColor;
+	WeaponId = NewTemplate.WeaponId;
 	Level = FMath::Max(1, NewTemplate.Level);
 	MaxHp = NewTemplate.Hp;
 	Hp = bAlive ? FMath::Max(1.f, MaxHp * HpFraction) : 0.f;
@@ -972,13 +1028,30 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 
 			// The damage roll (2.0): a uniform roll in the template's
 			// [minDamage, maxDamage], exactly like a player's weapon — or the
-			// fixed 1.0 `damage` when the template has no range.
+			// fixed 1.0 `damage` when the template has no range — plus, when the
+			// NPC carries a weapon, that weapon's own roll on top.
 			float MinDamage = 0.f, MaxDamage = 0.f;
 			Template.GetDamageRange(MinDamage, MaxDamage);
-			const double BaseDamage = FMath::Max(1.0, Valhalla::Stats::RollWeaponDamage(MinDamage, MaxDamage, FMath::FRand()));
 
-			UE_LOG(LogValhallaCombat, Log, TEXT("%s attacks %s (dist %.0f <= %.0f, every %.0f ms)"),
-				*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance, AttackRange, Template.AttackSpeedMs);
+			float WeaponMin = 0.f, WeaponMax = 0.f;
+			bool bArmed = false;
+			if (!Template.WeaponId.IsNone())
+			{
+				const UGameInstance* GameInstance = GetGameInstance();
+				const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+				if (const FValhallaItemTemplate* Weapon = Data ? Data->FindItem(Template.WeaponId) : nullptr)
+				{
+					Weapon->GetDamageRange(WeaponMin, WeaponMax);
+					bArmed = true;
+				}
+			}
+
+			const double BaseDamage = Valhalla::Stats::RollNPCMeleeDamage(
+				MinDamage, MaxDamage, FMath::FRand(), bArmed, WeaponMin, WeaponMax, FMath::FRand());
+
+			UE_LOG(LogValhallaCombat, Log, TEXT("%s attacks %s (dist %.0f <= %.0f, every %.0f ms) weapon=%s roll=%.1f"),
+				*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance, AttackRange, Template.AttackSpeedMs,
+				bArmed ? *Template.WeaponId.ToString() : TEXT("none"), BaseDamage);
 
 			// The same pipeline a player's swing goes through, so an NPC's hit
 			// can miss, be dodged, be blocked and be absorbed by a shield —

@@ -686,6 +686,14 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       take the same `minDamage` / `maxDamage` roll (falling back to the flat
       `damage`). Test Enemy 7–13, Tough Guy 30–50; editable in the NPC editor.
       Checked in PIE: Test Enemy raw hits 7.3, 7.7, 8.1, 10.7, 10.9.
+- [x] **NPC weapons.** An NPC template can name a `weaponId` from items.json
+      (web editor: Weapon dropdown listing every weapon-slot item, with its
+      damage range; the validation panel flags a missing or non-weapon id).
+      The NPC holds the item's mesh in `socket_weapon_r`, its weaponStyle
+      picks the attack animation, and each hit adds the weapon's roll on top
+      of the NPC's own (`Valhalla::Stats::RollNPCMeleeDamage`). The weapon's
+      stat bonuses and attack speed do not apply to NPCs. Test Enemy carries
+      the Iron Sword: 7–13 + 4–9 = 11–22; PIE hits 12.6–20.0.
 
 ## Backlog
 

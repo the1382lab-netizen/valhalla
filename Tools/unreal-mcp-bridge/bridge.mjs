@@ -21,6 +21,10 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 
 const UPSTREAM_URL = process.env.UNREAL_MCP_URL || "http://127.0.0.1:8000/mcp";
 const RETRY_SECONDS = Number(process.env.UNREAL_MCP_RETRY_SECONDS || 240);
+// Claude Desktop gives up on a tool call after about 60 s and may then mark the
+// whole server failed. Answer before that: a call Unreal has not answered in
+// CALL_TIMEOUT_SECONDS returns an error and the upstream is redialled next time.
+const CALL_TIMEOUT_SECONDS = Number(process.env.UNREAL_MCP_CALL_TIMEOUT_SECONDS || 50);
 
 const log = (...a) => console.error("[unreal-mcp-bridge]", new Date().toISOString(), ...a);
 
@@ -28,11 +32,13 @@ let upstream = null;      // connected Client, or null
 let connecting = null;    // in-flight connect promise
 
 function dropUpstream(reason) {
-  if (upstream) {
-    log("upstream dropped:", reason);
-    try { upstream.close().catch(() => {}); } catch {}
-  }
+  const old = upstream;
+  if (!old) return;
+  // Clear it *before* closing: close() fires the transport's onclose, which
+  // calls back in here, and with `upstream` still set that recursed forever.
   upstream = null;
+  log("upstream dropped:", reason);
+  try { old.close().catch(() => {}); } catch {}
 }
 
 async function connectOnce() {
@@ -73,8 +79,12 @@ async function withUpstream(fn) {
     return await fn(await getUpstream());
   } catch (e) {
     const msg = String(e?.message || e);
+    // Connection-level failures, plus a stale session: after an editor restart
+    // Unreal no longer knows our Mcp-Session-Id and answers 404 "Unknown session
+    // id ... client should reinitialize". Both mean: drop the client, dial again.
     const connErr = /ECONNREFUSED|ECONNRESET|fetch failed|Not connected|closed|socket hang up|network/i.test(msg);
-    if (!connErr) throw e;
+    const staleSession = /HTTP 404|Unknown session|reinitiali[sz]e|session not found|Bad Request: No valid session/i.test(msg);
+    if (!connErr && !staleSession) throw e;
     dropUpstream("request failed: " + msg);
     return await fn(await getUpstream());
   }
@@ -98,10 +108,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   }
 });
 
+function withTimeout(promise, seconds, what) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} got no answer from Unreal in ${seconds}s`)), seconds * 1000);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (req) => {
   try {
-    return await withUpstream((c) => c.callTool({ name: req.params.name, arguments: req.params.arguments || {} }));
+    return await withTimeout(
+      withUpstream((c) => c.callTool({ name: req.params.name, arguments: req.params.arguments || {} },
+                                     undefined, { timeout: CALL_TIMEOUT_SECONDS * 1000 })),
+      CALL_TIMEOUT_SECONDS, "tools/call " + req.params.name);
   } catch (e) {
+    if (/no answer from Unreal|timed out|timeout/i.test(String(e?.message || e))) {
+      dropUpstream("call timed out: " + (e?.message || e));
+    }
     return { isError: true, content: [{ type: "text", text: `Unreal MCP unavailable: ${e?.message || e}. Is the Unreal Editor open with the MCP server started (Editor Preferences > Model Context Protocol > Auto Start Server, or console 'ModelContextProtocol.StartServer')?` }] };
   }
 });

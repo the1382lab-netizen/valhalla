@@ -702,6 +702,37 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
       threat. Straight-line chasing still gets stuck on walls: pathfinding is
       backlog item B-16.
 
+## Phase 12 — B-15 art overhaul, Wave 0: style foundation (2026-09-22)
+
+Direction: a modern Neverwinter Nights remaster. Decisions: mid-range PC target
+(GTX 1660 class), golden area = Bjorn's market square, creatures stay in Wave 6.
+All art by Opus + Blender MCP; CC0 textures; AI generators off.
+
+- [x] **Art bible** — `Docs/ArtBible.md`: world scale is fixed (122 cm
+      character, 64 cm grid, 180 cm walls; props ~0.68 × real), palette,
+      material parameters, texel density and triangle budgets, naming,
+      per-asset checklist.
+- [x] **M_ValhallaPBR** — `valhalla_tools/build_pbr.py`. Keeps BaseColor /
+      UseVertexColor / Emissive* (runtime tint and hair still work); adds a
+      texture set (BC / DirectX normal / ORM), world-aligned UVs for ground,
+      grime and macro variation. All 53 M_ValhallaToon instances re-parented
+      with roughness/metallic by family (`reparent_to_toon()` rolls back). A
+      live master is changed with `upgrade_pbr()`: `delete_all_material_expressions`
+      on a master in use crashes the editor (`!IsRooted()`).
+- [x] **Lighting and post** — `valhalla_tools/lighting_remaster.py` (`LOOK`),
+      applied to L_World in place and used by `build_world.py`: warm sun, Lumen
+      sky fill, faint cool fill, haze, gentle grade. Outline retired
+      (`valhalla.Visual.Outline 1` brings it back). Removed the hand-placed
+      DirectionalLights in L_Grasslands / L_Desert that doubled every shadow.
+- [x] **CC0 texture pipeline** — Blender MCP Poly Haven on;
+      `Blender assets/scripts/valhalla_textures.py` → `Import/Textures/<Set>/`
+      → `valhalla_tools/import_texture_sets.py` → `MI_<Set>`. Proven with
+      CobbleFloor (Poly Haven cobblestone_floor_001; previewed, applied in Wave 1).
+- [x] **unreal-mcp bridge** — reconnects after an editor restart (stale
+      session 404), no longer recurses on a dropped connection, and times out a
+      call Unreal never answers at 50 s. Tested against a mock server.
+- Review shots: `Saved/ArtReview/wave0/` (before, lighting, textured-cobble preview).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

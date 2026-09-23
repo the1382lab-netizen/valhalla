@@ -106,6 +106,9 @@ def ensure_gameplay_levels():
 #: The toon outline. Authored by `build_toon.py`.
 OUTLINE_MATERIAL = "/Game/Valhalla/Materials/PP_Outline"
 
+#: B-15 Wave 0: build the remaster lighting and post (no outline).
+REMASTER_LOOK = True
+
 
 def _log(message):
     unreal.log("VALHALLA_WORLD {}".format(message))
@@ -345,6 +348,15 @@ def build_lighting():
     fog.set_actor_label("HeightFog")
     fog.set_folder_path("Lighting")
 
+    # B-15 Wave 0: the remaster look overrides the Phase 4 numbers above (warm
+    # sun, Lumen-lit shadows with a faint fill, haze). One source of truth, so
+    # a rebuild and the in-place Wave 0 edit of L_World agree.
+    from . import lighting_remaster
+    lighting_remaster.configure_sun(sun)
+    lighting_remaster.configure_sky_light(sky_light)
+    lighting_remaster.configure_fill(fill)
+    lighting_remaster.configure_fog(fog)
+
     return [sun, sky_light, atmosphere, fog]
 
 
@@ -373,6 +385,14 @@ def build_post_process():
     # "global" has to mean when the world is 44000 cm wide.
     volume.set_editor_property("unbound", True)
     volume.set_editor_property("priority", 0.0)
+
+    # B-15 Wave 0 retired the outline: the volume now carries the remaster's
+    # exposure and grade instead. The Phase 4c path below is kept for
+    # reference and only runs if REMASTER_LOOK is switched off.
+    if REMASTER_LOOK:
+        from . import lighting_remaster
+        lighting_remaster.configure_post(volume)
+        return volume
 
     outline = unreal.EditorAssetLibrary.load_asset(OUTLINE_MATERIAL)
     if outline is None:

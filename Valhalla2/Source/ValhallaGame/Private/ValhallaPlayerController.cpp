@@ -31,6 +31,20 @@
 #include "ValhallaSkillComponent.h"
 #include "ValhallaVisuals.h"
 
+namespace
+{
+	/**
+	 * B-15 Wave 0 retired the Phase 4c black outline in favour of physically
+	 * based materials and lighting. 1 puts PP_Outline back on the player camera
+	 * (takes effect on the next possession), for side-by-side comparison.
+	 */
+	TAutoConsoleVariable<int32> CVarValhallaOutline(
+		TEXT("valhalla.Visual.Outline"),
+		0,
+		TEXT("1: draw the Phase 4c black outline post-process on the player camera. 0 (default): off, the B-15 remaster look."),
+		ECVF_Default);
+}
+
 AValhallaPlayerController::AValhallaPlayerController()
 {
 	// The cursor stays visible for click-to-target, loot and aoeGround skills
@@ -100,6 +114,14 @@ void AValhallaPlayerController::ApplyOutlinePostProcess()
 	if (!Outline)
 	{
 		UE_LOG(LogValhallaVisual, Warning, TEXT("outline material %s is missing"), OutlineMaterialPath);
+		return;
+	}
+
+	// Retired by default (B-15). Take it off if an earlier possession put it on.
+	if (CVarValhallaOutline.GetValueOnGameThread() == 0)
+	{
+		Camera->PostProcessSettings.WeightedBlendables.Array.RemoveAll(
+			[Outline](const FWeightedBlendable& Blendable) { return Blendable.Object == Outline; });
 		return;
 	}
 

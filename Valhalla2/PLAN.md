@@ -1,0 +1,675 @@
+# Valhalla 2.0 — Port Plan
+
+Porting the Valhalla 1.0 TypeScript multiplayer game (Colyseus + Phaser) to
+Unreal Engine 5.8 / C++20.
+
+**Ground rules for every phase**
+
+- The 1.0 repo at `../../valhalla` stays the single source of balance data.
+  2.0 reads `shared/data/*.json` at runtime; it does not duplicate them into
+  `.uasset` files, so the two projects cannot drift.
+- Game rules live in `ValhallaCore` and depend only on
+  Core/CoreUObject/Engine/Json. If a rule needs a `UWorld`, it is in the wrong
+  module.
+- Every ported formula is checked against a fixture generated from the running
+  1.0 server, not against someone's reading of the code.
+- 1.0 distances are in pixels. Conversion to Unreal units happens once, in
+  Phase 3, and nowhere else.
+
+---
+
+## Phase 0 — Prereqs
+
+- [x] UE 5.8 installed, `Valhalla2` Blueprint project created.
+- [x] Visual Studio 2022 with the C++ game development workload.
+- [x] 1.0 repo checked out beside the UE project at `../../valhalla`.
+- [x] First successful `Build.bat Valhalla2Editor Win64 Development`.
+- [x] Editor opens the project with both C++ modules loaded.
+
+## Phase 1 — Data + rules
+
+### Phase 1a — data model, loader, stat math (this pass)
+
+- [x] Project converted to C++: `Valhalla2.Target.cs`, `Valhalla2Editor.Target.cs`,
+      `Valhalla2Server.Target.cs`.
+- [x] `ValhallaGame` primary game module (minimal, Phase 2 fills it).
+- [x] `ValhallaCore` runtime module with `LogValhallaCore`.
+- [x] `.uproject` declares both modules and the `ValhallaTools` plugin.
+- [x] `ValhallaTypes.h` — StatBlock, ResolvedStats, ClassTemplate, ItemTemplate,
+      SkillTemplate, NPCTemplate, LootEntry/LootTable, ZoneConfig, StartingItem,
+      plus the string-backed UENUMs and their parsers.
+- [x] `ValhallaConstants.h` — every constant from `constants.ts` and `stats.ts`.
+- [x] `UValhallaDataSettings` (`DataRoot`, resolved against `FPaths::ProjectDir()`)
+      and its `Config/DefaultGame.ini` section.
+- [x] `UValhallaDataSubsystem` — loads all 7 JSON files, hand-written field by
+      field, never fatal on bad data, counts logged, `Reload()` public.
+- [x] `ValhallaStats` — every exported function of `stats.ts`, plus
+      `ResolveDamage` as a deterministic mirror of `CombatSystem.applyStatDamage`.
+- [x] Automation tests `Valhalla.Core.Stats.*` and `Valhalla.Core.Data.Loads`.
+- [x] `Plugins/ValhallaTools` with the `ValhallaDataTools` Python toolset.
+- [x] Compile, then run `Automation RunTests Valhalla.` and confirm the fixture
+      comparisons actually pass. 15/15 green as of Phase 5.
+
+### Phase 1b — remaining rules
+
+- [x] Skill resolution: cast time, cooldown groups, resource costs, buff
+      stacking modes — `UValhallaSkillComponent` and `UValhallaCombatLibrary`,
+      pinned by `Valhalla.Game.Skills.Cooldowns` and `.BuffStacking`.
+- [x] Loot rolling (weighted entries + drop chance) as a deterministic function
+      taking its rolls, like `ResolveDamage` —
+      `UValhallaInventoryLibrary::RollLootTable`. Note `weight` is read and
+      ignored, because `rollLootTable` (LootBagSystem.ts:140) never consults it.
+- [x] XP award and level-up, including the level 20 stat cap vs. level 25 XP cap.
+- [x] Equipment stat aggregation: class base + level growth + equipped items —
+      `UValhallaInventoryLibrary::ComputeStatsWithEquipment`. The summation is
+      ported from GameScene.ts:4285, the only place in 1.0 that ever does it;
+      the 1.0 *server* never applied equipment bonuses at all.
+
+## Phase 2 — Netcode core
+
+- [x] Decide the authority model: dedicated server (`Valhalla2Server` target) is
+      authoritative for all combat; clients predict movement only.
+- [x] `AValhallaGameMode` / `AValhallaGameState` / `AValhallaPlayerState`.
+- [x] Replicated character stats driven by `FValhallaResolvedStats` — the vitals
+      and vision range only. The resolved stat block is server-only on purpose;
+      see AValhallaPlayerState's class comment.
+- [x] Server RPCs for the 1.0 message set (`MessageType` in `types.ts`): input,
+      cast skill, auto-attack start/stop, inventory actions, chat, party.
+- [x] Combat events as multicast RPCs (hit, miss, dodge, block, died, respawned).
+- [x] Server-side RNG feeding `ResolveDamage`, with the rolls logged so a
+      contested hit can be replayed exactly — `FValhallaDamageRolls`.
+- [x] Invulnerability window (`Valhalla::InvulnerabilityMs`) enforced server-side.
+
+## Phase 3 — World
+
+- [x] Pixel -> Unreal unit conversion, defined once: 1.0 pixels and 2.0
+      centimetres are 1:1, so a 64 px tile is a 64 cm tile and a 64 x 64 map is
+      4096 cm square. `build_zone.py`'s `TILE`/`N`/`ZONE_CM` are the only place
+      it is written down.
+- [x] One persistent world hosting every zone, as 1.0's single Colyseus room
+      did. `L_World` carries the lighting and nothing else; `L_Grasslands` and
+      `L_Desert` are always-loaded streaming sublevels, the desert at +40000 cm
+      on X. One server, one `AValhallaGameState`, one `ServerFixedTick`, both
+      zones resident. See `build_world.py`'s docstring for the three
+      alternatives this was chosen over.
+- [x] `AValhallaZoneVolume` + `UValhallaZoneSubsystem`: zone bounds, display
+      name and default spawn discovered from level actors rather than config,
+      because a streaming sublevel's offset is not in any config file.
+      `PlayerState::ZoneId` is derived from the volume the pawn is in, as step 8
+      of the fixed tick.
+- [x] Zone connections and travel: `AValhallaPortal` + `AValhallaZoneEntry`,
+      server-side overlap, velocity zeroed, 1 s cooldown — the ping-pong guard
+      1.0's `checkZoneTransitions` never had. Announced as a `zoneChange`
+      combat event.
+- [x] Overlay-driven spawning. `maps/overlays-2.0/<zone>.json` is 1.0's overlay
+      in zone-local centimetres with the portal's destination split into
+      `targetZone` + `targetEntry`. Enemy and NPC spawns are *created* from it;
+      portals, entries and player spawns are *validated* against the placed
+      actors. `valhalla.ReloadOverlays` re-reads it without leaving PIE.
+- [x] Levels built by reproducible Python (`build_grasslands.py`,
+      `build_desert.py`): floors as one `AValhallaTileField` per tile mesh,
+      everything that can block sight as individual actors — see
+      `AValhallaTileField`'s class comment for why that split is forced rather
+      than chosen.
+- [x] Top-down captures for the Phase 6 editor: `capture_zone_topdown` writes
+      `maps/thumbs/<zone>.png` (2048², orthographic) and `<zone>.json` with the
+      five numbers needed to turn a click into a coordinate.
+- [x] Material consolidation: 92 Interchange per-mesh copies collapsed to 39
+      canonical `M_ValhallaToon` instances under
+      `/Game/Valhalla/Environment/Materials`.
+- [ ] Tiled map import (`TiledMapParser.ts`). **Not done, and deliberately.**
+      The 2.0 zones are Unreal levels built by script from the Blender kits;
+      importing 1.0's isometric Tiled tile grids would produce a second,
+      worse description of the same zones. What the 1.0 maps still own — enemy
+      groups, portals, spawn points — comes across as the overlay, which is the
+      part a designer actually edits. If a 1.0 map ever has to be traced, the
+      reference is still `TiledMapParser.ts`.
+- [ ] Navigation mesh generation. The NPCs move by the ported flat state
+      machine and direct steering, as 1.0's did, so nothing needs a navmesh
+      yet; Phase 4d's behaviour trees are what will.
+
+**What Phase 3 owes Phase 5.** Line of sight is already automatic for any level
+the importer builds, provided it keeps three conventions:
+
+1. **Name blockers `VB_`.** A static mesh whose asset name starts with `VB_`
+   gets the `VisionBlocker` collision profile at import (`import_gltf_batch`),
+   and anything placed from it blocks sight. Nothing else does: the channel's
+   default response is Ignore, so floors, trees and rocks are transparent
+   without being touched. Re-running `apply_vision_blocker_profile` fixes a
+   level that was built before a re-import.
+2. **Drop one `AValhallaFogBounds` per level**, sized to the playable area.
+   Without it the fog falls back to the bounds of every `VB_`/`SM_` static mesh
+   plus ten per cent, which works but is a guess; and the box is stretched over
+   1024 texels, so an oversized one costs resolution.
+3. **Nothing else.** Relevancy culling is on the actor classes, not on the
+   level, and the fog renderer is spawned by the player controller. A new level
+   needs no Phase 5 wiring at all beyond the two points above.
+
+## Phase 4 — Characters
+
+- [x] Character actor + movement tuned to `ClassTemplate.baseSpeed`.
+- [x] glTF asset pipeline. `import_gltf_batch` handles the environment kits;
+      characters go through `import_character_glb`, which drives Interchange
+      with an override pipeline so all 20 skeletal meshes and 7 animations
+      bind to one `SK_Valhalla_Skeleton` — `import_gltf_batch` cannot, because
+      an automated `AssetImportTask` mints a fresh skeleton per source file.
+- [x] Animation: idle / walk / melee / ranged / cast / hit / death, chosen by
+      the equipped weapon's `weaponStyle` rather than by class, as 1.0 did.
+      `UValhallaAnimComponent`, driven by velocity, the replicated cast state
+      and the combat events — so simulated proxies and NPCs animate too.
+- [x] Equipment visuals — the 1.0 paperdoll layers are seven skinned follower
+      components on `SetLeaderPoseComponent(BodyMesh)` plus two socketed
+      props, keyed on `ItemTemplate.spriteId` exactly as 1.0 keyed its sprites.
+- [x] NPC spawning from `npc-templates.json` — `AValhallaNPCSpawner`. NPCs use
+      the same rig and animation driving as players, with a fixed worn kit.
+- [ ] Behaviour trees per `behaviorType` (Phase 4d). The ported flat state
+      machine in `AValhallaNPC::ServerFixedTick` is what runs today, and it is
+      what a behaviour tree will have to be checked against.
+
+## Phase 5 — Line of sight
+
+- [x] Dedicated `VisionBlocker` trace channel and collision profile, declared in
+      `Config/DefaultEngine.ini`. The channel's default response is Ignore, so
+      only the `VB_` meshes block it and nothing else needed editing. This
+      closes the TODO `import_gltf_batch` had been carrying since Phase 4.
+- [x] Per-class vision range from `FValhallaClassTemplate::VisionRange`, read
+      off the viewer's own `AValhallaPlayerState` — 1200 warrior/cleric/shaman/
+      wizard, 1350 rogue, 1800 ranger.
+- [x] Server-side visibility culling. `UValhallaVisibilitySubsystem::IsVisibleFrom`
+      is a 2D range test plus a `VisionBlocker` line trace eye to eye, cached
+      per (viewer, target) pair for `CacheTicks` server ticks; `IsNetRelevantFor`
+      on `AValhallaCharacter`, `AValhallaNPC`, `AValhallaSpellProjectile` and
+      `AValhallaLootBag` asks it and nothing else. Owner, self and party
+      members' pawns are unconditional.
+- [x] Fog of war presentation on the client. `AValhallaFogRenderer` rebuilds the
+      1.0 visibility polygon each frame from the `VisionBlocker` geometry around
+      the pawn, draws it into two world-space masks, and `PP_Fog` reads world XY
+      back out of the scene depth to dim the scene to 1.0 / 0.5 / 0.05.
+- [x] `valhalla.DebugListActors` — what each PIE client world was actually sent.
+      The proof that culling works, because a client world contains exactly the
+      actors that were replicated into it.
+
+**Known and accepted.** `AValhallaPlayerState` is always relevant (Unreal sends
+every player state to every client), so character names, levels and HP bars leak
+for players whose pawns are culled. `RelevantTimeout=0.5` is net-driver-global,
+so a culled actor lingers on a client for up to half a second before its channel
+closes. A projectile that flies out of line of sight mid-flight stops updating
+where it is; its detonation still arrives as a multicast combat event.
+
+## Phase 6 — Editor continuity
+
+- [x] Keep the 1.0 web editor as the authoring tool; 2.0 only ever reads.
+- [x] **Phase 6b — the admin API.** `UValhallaAdminServer`, a world subsystem
+      in `ValhallaGame` serving the 1.0 `server/src/routes/admin.ts` contract
+      verbatim on loopback port 2568 (`ValhallaDataSettings.AdminApiPort`), so
+      the existing React Live Dashboard drives the 2.0 server unchanged.
+      Compiled into the Editor and Server targets only
+      (`WITH_VALHALLA_ADMIN_API`), started by `AValhallaGameMode::InitGame` and
+      stopped on `EndPlay`, one instance per process. Coordinates cross the
+      boundary as **zone-local centimetres** — the zone volume's min corner is
+      (0, 0) — converted by `ToZoneLocalCm`/`FromZoneLocalCm` and nowhere else,
+      which is what keeps `L_Desert`'s +40000 cm streaming offset out of the
+      wire format. `sessionId` is `APlayerState::GetPlayerId()` as a string and
+      `npcId` is the NPC actor's `GetName()`.
+- [x] Watcher on `DataRoot` calling `UValhallaDataSubsystem::Reload()` —
+      `AValhallaGameState::TickDataWatcher`, a 2 s poll of the seven data files'
+      and every overlay's mtime rather than an `IDirectoryWatcher`, because a
+      packaged dedicated server does not have the editor's DirectoryWatcher
+      module. `valhalla.DataHotReload`, default on in non-shipping. A data
+      change runs `AValhallaGameMode::ReloadGameData`, which re-resolves every
+      logged-in player (Phase 2c's `RecomputeStats`, which now also re-reads
+      `visionRange`) and re-reads every live NPC's template; an overlay change
+      runs `UValhallaZoneSubsystem::ReloadOverlays`. Both are the same functions
+      the `reload-data` / `reload-overlays` routes call.
+- [x] `FValhallaItemTemplate::MeshId` — optional JSON `meshId`, and
+      `GetArtId()` (meshId else spriteId) as the single rule every art lookup
+      in `ValhallaVisuals` goes through. 1.0's sprite grouping was right for
+      sprites and is wrong for meshes; this is how an item opts out without
+      editing the field the 1.0 client still reads.
+- [ ] Editor utility to diff loaded data against the files on disk.
+- [ ] Validation commandlet wrapping `validate_data_json` for CI.
+
+**Done in Phase 7b.** `UValhallaAdminServer::Authorize` now requires
+`Authorization: Bearer <UValhallaDataSettings::ServerSecret>` when
+`bAdminApiRequireSecret` is set, comparing in constant time. The flag defaults
+*off* in the Editor and *on* in a Server build, because the 1.0 React dashboard
+reaches 2568 through `editor/src/server.ts`'s proxy and that proxy does not
+send the header yet — teaching it to is Phase 8's, and it is the one thing
+that stops the flag being on everywhere.
+
+## Phase 7 — Backend
+
+### Phase 7a — the server-to-server routes (the 1.0 repo's side)
+
+- [x] `server/src/routes/internal.ts`, guarded by `X-Server-Secret`:
+      `GET /api/health`, `POST /api/auth/verify`,
+      `GET /api/characters/:id/load?userId=`, `PUT /api/characters/:id/save`.
+      Mounted at `/api` *before* the JWT-protected `charactersRouter` so that
+      `/api/characters/:id/load` is not swallowed by it.
+
+### Phase 7b — the 2.0 client and server (this pass)
+
+- [x] Account and character persistence — **1.0's server kept**, not replaced.
+      The 1.0 repo is the source of truth for data and an account is data; two
+      services would mean two user tables and a decision about which one a
+      player's characters really live in. A 1.0 client and a 2.0 client now log
+      into the same account and see the same characters.
+- [x] `UValhallaBackendSubsystem` — a GameInstance subsystem over
+      `FHttpModule`, split by audience rather than by instance: the client half
+      (`Register`/`Login`/`ListCharacters`/`CreateCharacter`/`DeleteCharacter`)
+      authenticates with the player's bearer token, the server half
+      (`Verify`/`LoadCharacter`/`SaveCharacter`/`Health`) with
+      `X-Server-Secret`. 10 s timeouts, every call logged at Verbose, passwords
+      never logged and tokens only as their first eight characters.
+- [x] Character creation applying `ClassTemplate.startingItems` — `POST
+      /api/characters` does it, exactly as 1.0's `CharacterService.createCharacter`
+      always did. `AValhallaGameMode::InitializeJoiningPlayer`'s
+      `GrantStartingItems` call is now **skipped for any joiner with a verified
+      token**, and the load's `bNeedsStartingItems` (no inventory AND no
+      equipment AND level 1) is the only thing that can re-grant it. That is
+      the line Phase 2c said Phase 7 would replace, and this is the replacement.
+- [x] Inventory and equipment persistence, through one
+      `UValhallaBackendSubsystem::BuildSaveData`. Saved on `Logout`, on a 30 s
+      per-player timer (`Valhalla::SaveIntervalMs`, constants.ts:62) and on a
+      zone change — the last because a crash between a portal and the next
+      autosave would otherwise bring a character back in the zone it left at a
+      position local to the zone it arrived in.
+- [x] Session flow: login -> character select -> zone join. `L_FrontEnd` is a
+      client-only map (`GameDefaultMap`; `ServerDefaultMap` stays `L_World`)
+      carrying `AValhallaFrontEndGameMode` as its World Settings override, and
+      its UI is built from `WidgetTree` in C++ with no Blueprint assets — a
+      login screen is the one screen where a silent change to what a field is
+      bound to is a security bug, and a `.uasset` cannot be reviewed in a diff.
+- [x] Server join: `PreLoginAsync` -> `Verify` -> reject with the backend's own
+      reason, then `PostLogin` -> `LoadCharacter` with the pawn spawn deferred
+      (`HandleStartingNewPlayer_Implementation` returns early while a load is
+      pending) and finally `RestartPlayerAtTransform` at the saved position.
+      Spawning first and teleporting on arrival would put a character in the
+      grasslands for a whole round trip, visible to everyone.
+- [x] Automation tests `Valhalla.Game.Backend.SaveDataJson` and
+      `.ApplyLoaded`. 22/22 green.
+
+**Two things that bite, both written down where they bite.** Unreal's ini
+parser swallows `//` comments (`FParse::ELineExtendedFlags::SwallowDoubleSlashComments`),
+so an unquoted `BackendUrl=http://host:port` arrives in C++ as `"http:"` and
+every request then fails exactly like a backend that is down; the ini quotes
+the value and `GetResolvedBackendUrl` repairs and warns about it anyway. And
+`UWorld::ServerTravel` with `bAbsolute=true` discards the base URL, so the
+front-end map's redirect to `L_World` moved a PIE server off
+`ULevelEditorPlaySettings::ServerPort` onto the default 7777 while every client
+kept knocking on 17777 — the travel is relative for that reason.
+
+**Play-In-Editor.** Open `L_FrontEnd`, set Play Net Mode to *Standalone* with
+2 clients, *Launch Separate Server* on and *Run Under One Process* on. The two
+clients start on the front end and the server — which PIE also hands
+`L_FrontEnd` — travels itself to `L_World` on its first tick.
+`valhalla.AutoLogin` is a comma-separated list of `user:pass:charname[:class]`
+dealt to front-end clients in start order, exactly as `valhalla.ClassAssignment`
+deals classes and for the same reason: every PIE client in one process shares
+one set of cvars. `valhalla.AutoLoginNow <entry>` does one client on demand,
+and `valhalla.FrontEnd.PieServerAddress` is where the travel goes in PIE.
+
+- [ ] Character *deletion* of the account itself. The backend has no route for
+      it and 2.0 does not invent one.
+- [ ] The action bar is carried through a load and a save untouched; Phase 8
+      owns it. Dropping it here would have silently wiped a bar the 1.0 client
+      still renders.
+
+## Phase 8 — Polish
+
+- [x] The editor proxy (`editor/src/server.ts`) sends
+      `Authorization: Bearer <VALHALLA_SERVER_SECRET>` to 2568, and
+      `bAdminApiRequireSecret` is on everywhere (Phase 9).
+- [ ] Front-end polish: the two screens are functional and plain. A character
+      row is a tinted button with one line of text; there is no portrait, no
+      class art, no keyboard navigation and no "remember me".
+- [ ] Audio, and the pass over skill telegraphs.
+
+### Phase 8a — VFX and animation (done, in baseline `fe9d055`)
+
+- [x] Niagara systems `NS_Slash/Bolt/Impact/AoERing/Cone/Heal/BuffAura/Debuff`
+      (`build_vfx.py`, `build_vfx_materials.py`), chosen per skill by
+      `UValhallaVfxLibrary` and spawned client-side from combat events by
+      `UValhallaVfxSubsystem`; `AValhallaSpellProjectile` for fireball.
+- [x] `UValhallaAnimInstance` (two-way blend idle/walk + one-shot attack, cast,
+      hit, death) and the toon/outline materials.
+- [x] Automation test `Valhalla.Game.Vfx.Mapping`.
+
+### Phase 8b — the UMG game HUD (done)
+
+`UValhallaGameHUDWidget` (Source/ValhallaGame, ~3,000 lines) is one
+`UUserWidget` built from `WidgetTree` in C++ — no Blueprint assets, like the
+7b front end — and laid out from `ui-config.json` through the typed
+`FValhallaUIConfig` (ValhallaCore; every field defaulted, so a missing section
+never blanks the HUD). `AValhallaHUD` creates it for the local player and keeps
+only the world-anchored, clickable "Loot (n)" bag labels (Phase 9); the Phase 2
+canvas HUD is behind `valhalla.DebugHud 1`.
+
+- [x] Vitals (`hud.*`), action bar with generated skill icons (category-tinted
+      tile + `iconAbbrev`) and a cooldown sweep (`actionBar.*`), cast bar
+      (`castBar.*`), target frame with buff tokens, party frame with an
+      Accept / Decline invite prompt (`ClientPartyInvite`), nameplates
+      (`nameplates.*`), floating combat text, death overlay (`deathOverlay.*`).
+- [x] Combat log (50 lines, the 1.0 wording) with the 11 right-click filters.
+- [x] Chat box (`chat.*`): Enter opens it (UI-only input, so WASD does not walk
+      while typing), `/g /world /p /w <name> /invite /accept /decline /leave`
+      (`ValhallaChatCommands`, pure and tested), Tab cycles the channel, idle
+      lines fade. Kept clear of the action bar on narrow viewports.
+- [x] Character + inventory panel (I or B; `inventory.*`): 1.0 item icons
+      imported to `/Game/Valhalla/UI/Icons/Items` (`import_ui_icons.py`, 68
+      textures, check-before-create), tooltips, click to equip/unequip, drag to
+      move/equip, right-click drop with a confirm.
+- [x] Skills pane (K): drag, or click a skill then click a slot
+      (`ServerSetActionBar`).
+- [x] Loot panel: Phase 9's `TryOpenLootBag` (click a bag or its label) opens
+      it; take one, Loot All, Close; closes out of reach or when emptied.
+- [x] Live layout: `valhalla.ReloadUI`, and a 2 s poll of the file's
+      timestamp, rebuild the HUD from the UI Layout editor's saves.
+      `valhalla.UI [@class] <verb>` drives a client's HUD for scripted gates.
+- [x] **Instant casts lost their events.** Every combat event was its own
+      unreliable `NetMulticast`; the engine sends at most
+      `net.MaxRPCPerNetUpdate` (2) calls of one unreliable RPC per actor net
+      update, so an instant skill's third event onward (its `skillEffect`,
+      the one the VFX and the log need) never reached a client. Events are
+      now queued and flushed once per server frame as one reliable
+      `MulticastCombatEvents(TArray)`, in order. The client mirrors cooldowns
+      from `skillEffect` for the action bar sweep; the game state raises
+      `OnCombatEvent` for the HUD.
+- [x] VFX: saturated palette with the sprite glow 2.5 -> 1.6; a fireball's cast
+      event no longer draws a second impact (`SpawnsProjectileActor`).
+- [x] Tests `Valhalla.Game.UI.ConfigParse`, `Valhalla.Game.UI.ChatCommands`.
+      25/25 green.
+- [ ] Left for 8c: vendor / dialogue windows (data is parsed only), a
+      minimap, keybinding UI, locked (level-gated) skills can still be put on
+      the bar (they show dimmed and fail on use), skill range is centre to
+      centre while melee reach is surface to surface (Shield Bash, range 64,
+      is "Out of range" at an NPC's own attack distance), audio.
+
+## Phase 9 — Live-play fixes (Kevin's list, 2026-09-22)
+
+The 1.0 Phaser client is **retired**. The 1.0 Node server stays as the
+account/character backend, and the web editor stays as the data and live-ops
+tool; neither needs a Colyseus game room any more.
+
+- [x] **Backend reads the editor's JSON at startup.** `DataManager` used to
+      initialize only when a 1.0 game room opened, which 2.0 never does, so
+      the internal routes validated saves against the hard-coded
+      `ITEM_CATALOG` and refused (400) any character carrying an editor-only
+      item. Now `initializeAndWatch()` runs in `index.ts` and reloads on every
+      `shared/data/*.json` change, keeping the old data if a file is caught
+      half-written. `server/scripts/smoke-internal.ts` pins it.
+- [x] **NPCs are placed in Unreal.** NPC *types* are Blueprints of
+      `AValhallaNPC` under `/Game/Valhalla/NPCs` (`BP_NPC_*`): Class Defaults
+      name the npc-templates.json entry (stats, behaviour, loot, respawn time
+      stay in the JSON) and the look (armour meshes, scale, tint, fixed name).
+      `AValhallaNPCSpawner` ("NPC Spawn Point" in Place Actors) spawns **one**
+      instance of one type, on the floor under the marker, facing its arrow,
+      with an editor preview of the NPC and Map Check warnings for a missing
+      type/template or a capsule inside geometry.
+- [x] **EverQuest respawn.** Death starts the spawn point's countdown
+      (template `respawnMs`, edited in seconds in the NPC editor, or the spawn
+      point's Respawn Time Override); the corpse decays first and a fresh
+      instance spawns. A type dragged straight into a level also works and
+      stands itself back up on the template's timer.
+- [x] **Spawn points live in gameplay sublevels** (`L_Grasslands_Gameplay`,
+      `L_Desert_Gameplay`, streamed at their zone's offset) that
+      `build_world.py` creates once and never clears. `npc_setup.py` created the
+      first types and turned every overlay `enemy_spawn`/`npc_spawn` into
+      individual spawn points, moved clear of geometry; the overlay loader now
+      ignores those entries with a warning. The Map Objects page no longer
+      places NPCs.
+- [x] **Friendly NPCs.** Template `type: "npc"` is not hostile (cannot be
+      attacked, never aggroes) — replicated as `bFriendly`. Bjorn the Trader
+      has his own template (`merchant_bjorn`) and type. Vendors/dialogue are
+      still parsed only.
+- [x] **Body scale fix.** `spriteSize` scales the capsule with the mesh (it
+      used to bury anything above 1.0), and scale/tint replicate so clients
+      draw what the server has.
+- [x] **Controls.** Right mouse button = hold and drag to orbit the camera
+      (pitch clamped), wheel = zoom. Right click no longer attacks or loots.
+      (Superseded in part by the Controls rework below: the drag now also
+      turns the body, and the mouse no longer aims.)
+      Auto-attacks are the action bar's skills, and each is its own kind:
+      Auto Melee (`melee_attack`) and Auto Ranged (`ranged_attack`, needs a
+      ranged weapon) — `ServerStartAutoAttackWith`.
+- [x] **Loot.** Bags have a generous click sphere on a dedicated `Interact`
+      trace channel (ECC_GameTraceChannel2) that nothing else blocks; their
+      "Loot (n)" label is drawn over the world and is itself clickable, so an
+      NPC or corpse in front of a bag no longer hides it. Clicking opens a loot
+      window (take one item, Loot All, close); out of reach says "You are too
+      far away to loot that."
+- [x] **Admin API: MMO actions.** `/player-action` (set-vitals, heal, kill,
+      resurrect, give-item, remove-item, set-level, grant-xp,
+      teleport-to-player, unstuck, freeze, god-mode, reset-cooldowns,
+      clear-buffs, message, mute, save), `/player-inspect`, `/broadcast`,
+      `/spawn-point-action`; `kick-player` takes a reason; `/state` lists spawn
+      points and admin flags. Every POST is appended to
+      `Saved/Logs/ValhallaAdminAudit.log`.
+- [x] **Live Dashboard.** Errors are shown; zone tabs come from the server;
+      a player list grouped by zone with the full right-click admin menu,
+      inspect window and broadcast; spawn points drawn with their countdown.
+- [x] **Melee reach fix.** Player auto-attack range is now measured surface to
+      surface (both capsule radii), like the NPC side; before, an NPC standing
+      at its own attack distance was always just out of the player's reach.
+      Pressing an auto-attack with a different enemy selected switches to it.
+- [x] **Admin ids are world-unique.** Actors in a gameplay sublevel are
+      reported as `<Level>.<Name>` (both sublevels have a
+      `ValhallaNPCSpawner_0`).
+- [x] **Unity builds off** for both modules: once the tree was committed,
+      UBT's adaptive unity merged files that each define the same helper in an
+      anonymous namespace.
+- [x] **Ban / suspend an account.** Backend: `users.banned_until` /
+      `ban_reason` / `banned_by` (migrated on start); login, `/api/auth/verify`
+      and every JWT route answer 403 with the end date and reason; internal
+      `GET /api/accounts/bans`, `POST /api/accounts/ban|unban` (X-Server-Secret).
+      UE: `UValhallaBackendSubsystem::BanAccount/UnbanAccount/ListBans`,
+      player-action `ban` (the player's account, then kicks every connection
+      on it) and `/account-action` (ban / unban / list-bans by username, for
+      offline accounts). `/state` players carry `account` and `userId`.
+      Dashboard: "Ban / suspend account…" on a player, and a "Bans…" dialog.
+      Smoke test covers it (81 assertions); e2e checked through the admin API.
+- [x] **Clients reload data when the server does.** `AValhallaGameState::
+      DataVersion` (replicated) is bumped by `ReloadGameData`; its OnRep reloads
+      the client's data subsystem, redraws every paperdoll and prints "Game data
+      updated by the server." Clients read their own `DataRoot`, so a remote
+      client needs the same data files.
+
+**Where it lives (from `git diff fe9d055`, merged with 8b in one tree).**
+Controls: `AValhallaPlayerController` (IA_CameraOrbit/Look/Zoom replace
+IA_SecondaryClick; `TryOpenLootBag`, `CloseLootWindow`, the Interact-channel
+bag trace; admin freeze and mute honoured client/server side) and
+`AValhallaCharacter::AddCameraOrbit/AddCameraZoom`. Auto-attack kinds:
+`UValhallaSkillComponent::ServerStartAutoAttackWith`. NPCs:
+`AValhallaNPC` (template/type/look, `bFriendly`, scale + tint replication,
+respawn), `AValhallaNPCSpawner` (single spawn, editor preview, Map Check),
+`UValhallaZoneSubsystem` (overlay spawns ignored), `build_world.py` /
+`build_zone.py` / `npc_setup.py`, `BP_NPC_*`, the `_Gameplay` sublevels.
+Loot: `AValhallaLootBag::InteractChannel` (+ `Interact` trace channel in
+DefaultEngine.ini); its window is now the 8b UMG loot panel. Admin:
+`UValhallaAdminServer` (+~900 lines), `UValhallaBackendSubsystem` ban routes,
+`AValhallaPlayerState` admin flags, god mode in
+`UValhallaCombatLibrary::ApplyDamage`, `AValhallaGameMode` data reload ->
+`AValhallaGameState::DataVersion`. Both modules `bUseUnity = false`.
+
+- [ ] Delete the retired 1.0 code paths (Colyseus `GameRoom`, the Tiled/legacy
+      map editor, sprite-sheet fields). **On hold** (Kevin, 2026-09-22) — the
+      Node backend and the web editor stay regardless; decide what counts as
+      retired first. Snapshot commit `3630d75` in the 1.0 repo precedes it.
+
+## Controls rework (Kevin, 2026-09-22)
+
+Kevin: "Moving your mouse shouldn't re-position the character. Moving with WASD
+will point your character in a new direction, or holding down mouse and moving
+the camera will also point you in a new direction." And: a player who is not
+facing the NPC they hit or cast on is not turned; the hit/cast fails with
+"You must be facing your target".
+
+Why: the Phase 2 port kept 1.0's cursor `aimAngle` — the body faced the mouse
+every frame — which in a 3D third-person view read as the character twitching
+whenever the mouse moved, and made facing meaningless (the server auto-turned
+players to their auto-attack target anyway).
+
+- [x] **The mouse does not aim.** `UpdateAimFromCursor` / `UpdateAimYaw` are
+      gone. The cursor stays visible for click-to-target and loot (Phase 9,
+      unchanged). It is read once, at the key press, for an `aoeGround` skill
+      only (`AValhallaPlayerController::SampleCursorGroundPoint`); every other
+      skill is sent the caster's own position.
+- [x] **WASD turns the body.** `bOrientRotationToMovement = true`,
+      `RotationRate = (0, 720, 0)`; movement stays camera-relative (W walks
+      away from the camera). CharacterMovement predicts and replicates it.
+- [x] **The right-mouse drag turns camera and body together.** Each orbit step
+      turns the boom, then sets the body's yaw to the boom's
+      (`OrbitCameraBy` -> `AValhallaCharacter::SetFacingYawFromCamera`); pitch
+      is camera-only. Sent by `ServerSetFacingYaw` (was `ServerSetAimYaw`;
+      2 degree deadzone, 20 Hz, now Reliable because the server's yaw is what
+      the facing rule reads, plus a forced send when the drag ends).
+      **Who wins:** while the character is walking (acceleration, or more than
+      5 cm/s), orient-to-movement owns the yaw and the drag only turns the view
+      — which bends the walk with the new WASD basis. Standing still, the drag
+      owns it. Pending moves are flushed before each facing send so a late move
+      cannot turn the server's body back towards the walk.
+- [x] **Facing rule, no auto-turn.** `UValhallaCombatLibrary::IsFacing(Actor,
+      Target, HalfAngleDeg = Valhalla::FacingHalfAngleDegrees)` — 2D, the
+      target within 60 degrees either side of the actor's yaw (inclusive); a
+      target under 1 cm away counts as faced. Applied on the server to:
+      auto-attack swings (melee, ranged and the casters' magical basic — the
+      swing is skipped, the loop stays on, the timer is not advanced so the
+      swing lands the moment the player turns; a `skillFailed` with reason
+      `notFacing` at most once per `NotFacingMessageIntervalSeconds` = 2 s) and
+      `ValidateCast` for `singleEnemy` and `singleAlly`-at-someone-else
+      (refused before any cooldown, resource or cast bar), re-checked when a
+      timed cast completes. Self, `aoeSelf`, `aoeGround` and `cone` are exempt
+      (a cone is already measured off the caster's yaw, ±45). The 1.0
+      auto-face in `TickAutoAttack` (SkillSystem.ts:510) is removed; nothing on
+      the server turns a player for combat. NPCs are unchanged.
+- [x] **HUD.** `FValhallaCombatEvent::Reason` (new) carries `notFacing`; the
+      combat log prints the server's sentence as is, and a "Not facing" floater
+      rises over the player like miss / dodge.
+- [x] If an `aoeGround` press finds no cursor over the world (outside the
+      viewport, above the horizon) it aims at the selected target, else the
+      caster.
+- [x] Gate helpers: `valhalla.DebugFacing` (every player's yaw in every PIE
+      world, camera yaw for the local one); `valhalla.UI @class orbit <deg>`
+      (the drag, through the same `OrbitCameraBy`), `walk <w|a|s|d> <sec>`
+      (holds a key through HandleMove's body, `ApplyMoveInput`) and
+      `press <slot> <x> <y>` (the key press with the aoeGround cursor read at a
+      viewport pixel). Slate key presses do not reach PIE input and typing in
+      the editor console takes the cursor off the viewport, so these three are
+      the gate's hands; type them into the editor console.
+- [x] Test `Valhalla.Game.Combat.Facing`. 26/26.
+
+**Gate (2026-09-22, L_World, PIE_Client, 2 clients, one process, warrior +
+wizard). Pass.** (a) Slate hovers swept the warrior's in-game cursor across
+the viewport for 5.7 s ((527,48) → (1164,15) …): yaw -45.0 before and after,
+server and client. (b) Camera -45: S → 135, A → -135, W → -45, D → 45 (client
+and server agree). Drag 90° while walking W: at the end of the drag the body
+was still -45 and orient-to-movement then turned it to 45. (c) orbit 90: camera
+-45 → 45 and body -45 → 45 on the client, the server and the other client.
+(d) Test Enemy directly behind, Auto Melee on: no swings for 27 s and
+`You must be facing your target` at 40.6, 42.9, 44.9, 46.9 … s; turned to face
+it (orbit -135) at 07.280 and the first swing landed at 07.315, then every
+3.2 s. (e) Magic Missile (`singleEnemy`; Fireball is `aoeGround` in
+skills.json, so exempt) at an enemy behind: refused, mana 150 → 150, cooldown
+0, no cast, "Not facing" floater; after facing it: cast, hit 76, mana 110,
+cooldown 2.5 s. (f) Fireball `press 2 400 300`: independent deprojection of
+that pixel (2183.7, 1206.8); `spellImpact … at (2183.71, 1206.75)`, cast with
+the point 110° off the wizard's facing. (g) 26/26; no ensure, no new error
+lines. Screenshots in `outputs/controls/`.
+
+## Phase 8c gate — first playable (independent verifier, 2026-09-22)
+
+Exit criterion: "four-player party in grasslands completes a fight, loot,
+level-up and zone change with no server errors". Run from `L_FrontEnd`,
+PIE_Standalone, separate server, one process, **4 clients**, throwaway accounts
+`pt_0115690_1..4` (characters Ptwar/Ptcle/Ptran/Ptwiz5690, deleted afterwards;
+the backend has no route to delete users). **Verdict: pass, after one fix
+(below) and with the known issues listed.**
+
+| # | Item | Result |
+|---|------|--------|
+| 1 | 4 in `L_World` grasslands, right class + starting gear | Pass. `Login:` lines for all four. Only the wizard gets gear, because only rogue and wizard have `startingItems` in classes.json (data gap, not code). |
+| 2 | Party 4/4 via `/invite` x3 + `/accept` x3 | Pass. `partyUpdate received: party 1 with 4 member(s)` on all 4 clients; screenshot `02`. |
+| 3 | Fight, floating text + log, NPC deaths, loot, 4-way XP | Pass. Auto-attacks plus Shield Bash, Aimed Shot, Magic Missile and Fireball, Smite, and Minor Heal on the warrior (`heal 39 Ptcle5690 -> Ptwar5690`). 4 kills, each `awardKillXP party 1: … split 4 ways = 27 each`. Warrior and ranger looted by clicking the loot panel. The cleric and wizard clicks never reached their panels (see Known issues), so they used `valhalla.DebugLootNearest`. |
+| 4 | Level-up | Pass, from kills alone: `levelUp Ptwar5690 -> level 2` (all four). |
+| 5 | Zone change, party frame, chat scoping, LoS | Pass. `zoneChange Ptran5690: grasslands -> desert`, and the same for Ptwiz5690. `general` reached 2 clients per zone; `party` reached 4. In the desert, `DebugListActors` shows 3 NPCs for the wizard (1200 cm vision) and 6 for the ranger (1800), out of 21 in the zone. |
+| 6 | Persistence across a PIE restart | **Failed first, passed after the fix.** Level 2, xp 8, zone, position, inventory and equipment all came back. `valhalla.SaveNow` does not work in this PIE recipe; autosave and the admin `save` action were used instead. |
+| 7 | Hot reload of skills.json | Pass. `valhalla.DataHotReload: …skills.json changed` then `4 players re-resolved, 39 NPCs updated`. The file was restored byte-identical (md5 `71b9eafb…` before and after). |
+| 8 | `GET /api/admin/state` | Pass. With the bearer secret: 2 players in grasslands and 2 in desert (4 in grasslands earlier). Without it: 401. |
+| 9 | Server health | Partial. No `Error:`, ensure or `LogNet: Warning` apart from the spawn failure the fix removes. The fixed tick was 99.9 % of wall clock with the editor in the foreground, but 88 % over the whole run: while the editor sat throttled in the background at about 3 fps, the 0.25 s catch-up clamp dropped time. Visibility: 14–29 traces/s. |
+| 10 | Automation | Pass, 25/25. |
+
+**Fix made (gate-blocking).** `AValhallaGameMode::SpawnLoadedPawn` spawned at
+floor + `PlacementZOffsetCm` (8 cm), which puts the capsule centre inside the
+floor, so `SpawnActor failed because of collision` refused 3 of 4 saved
+positions and those players were left with no pawn. It now adds the pawn's
+capsule half-height, and falls back to `RestartPlayer` if the spot is still
+blocked. It was applied with Live Coding; the on-disk DLL needs a normal
+`Build.bat` before the next editor start.
+
+### Known issues (from the 8c run and review)
+
+- `ValhallaLevelTools.run_console_command` (Python) runs every **client**
+  Server RPC locally. Editor scripting sets `GAllowActorScriptExecutionInEditor`,
+  so `valhalla.UI … press/say` driven that way never reaches the server. Type
+  those commands into the editor console instead. The docstring's claim that it
+  is "not a different code path" is wrong for client commands.
+- `valhalla.SaveNow` does not use `AuthorityWorldFor`, so it fails from the
+  editor console when the server is a separate PIE world.
+- A cleric cannot target a party member except by clicking their body; party
+  frame rows are not clickable targets.
+- Loot-panel clicks through SlateInspector reached 2 of 4 PIE windows only;
+  not diagnosed.
+- A loot bag's 5-minute lifespan is not extended when a second kill merges
+  into it, and its despawn is not logged.
+- The `Join request` log line prints the full JWT (`ValhallaGameMode.cpp:582`),
+  and so does the engine's `LogNet: Browse` line.
+- Combat events go to every client as one reliable multicast from the game
+  state, with no relevancy filter and no size cap (`ValhallaGameState.cpp:372`).
+  That leaks fight positions past LoS, and a lagging client risks reliable-buffer
+  overflow.
+- The admin API sends `Access-Control-Allow-Origin: *`, and the default secret
+  is the public `dev-server-secret`. Nothing refuses it on a Server build.
+- Damage paths outside the pipeline:
+  - Magic Missile and Backstab skip `ResolveDamage`, i-frames and god mode.
+  - Player DoTs ignore god mode and shield.
+  - Single-enemy skills do not check `bFriendly`.
+  - The i-frame map `GInvulnerableUntil` is global and never pruned.
+- Not persisted: `bAlive`, god/freeze/mute, buffs, cooldowns, and a customised
+  action bar (saved as eight empty strings).
+- Relevancy fails open while a joiner has no pawn, which is the whole async load.
+- Warrior, cleric and ranger have no `startingItems`. `M_Rope` and
+  `M_Cloth_Blue` lack the SkeletalMesh usage flag. The front end logs
+  `SpawnActor failed because no class was specified` once per client.
+
+## Phase 10 — One repo, and data for remote clients (2026-09-22)
+
+- [x] **The two folders are one repo.** `Valhalla 2.0/` is the git root:
+      `Valhalla2/` (this Unreal project, same path as before), `shared/`
+      (`shared/data` is still the single source of game data), `server/`,
+      `editor/`, `maps/` (`overlays-2.0`, `thumbs`), `Import/`,
+      `Blender assets/`, `Tools/` (`fixtures`, `unreal-mcp-bridge`).
+      `DataRoot` is now `../shared/data`. The old `valhalla/` checkout is
+      retired; its last state is the tag `archive/1.0-final` (branch `dev`).
+- [x] **Retired 1.0 code not carried over:** the Phaser client, the Colyseus
+      game room (the backend is plain Express now), the Tiled/legacy map
+      editor, the Zone editor, the paperdoll preview and the sprite-sheet
+      fields, 1.0 sprites, Tiled maps and 1.0 overlays, `tools/mapgen`,
+      `tools/paperdoll-gen`. Kept because Unreal uses them: `spriteId`,
+      `spriteColor`, `spriteSize`, `bodyId`, and `inventoryIcon` (the icon
+      PNGs moved to `Import/UI/Icons`).
+- [x] **B-03, game data for packaged and remote clients.** Backend
+      `GET /api/data/manifest` (`dataVersion` 0 plus a SHA-1 per file) and
+      `GET /api/data/<file>`. A client that can't see `shared/data` (a
+      packaged build, or `valhalla.Data.ForceDownload 1`) reads
+      `Saved/Data`, seeded from `Content/Data` (staged by
+      `stage_game_data.py`, packaged via `DirectoriesToAlwaysStageAsNonUFS`),
+      and `UValhallaBackendSubsystem::SyncGameData` brings it up to date when
+      the front end opens and on every server data reload. Files are written
+      only after every changed one downloaded and matched its hash.
+
+## Backlog
+
+Open features and improvements are tracked in Google Drive, folder
+"Valhalla 2.0 Backlog": the index document "Valhalla 2.0 — Backlog"
+(https://docs.google.com/document/d/1t8Nxo8UwOyYsKzbcqIqjJgBHlUppuRCjfFmqMn5D5wM/edit)
+links one plan document per item (B-01 ...). Check it before starting new work.

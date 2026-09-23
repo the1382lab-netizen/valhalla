@@ -1,0 +1,21 @@
+{
+  "name": "valhalla",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "shared",
+    "server",
+    "editor"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:editor\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:editor": "npm run dev --workspace=editor",
+    "build": "npm run build --workspace=shared && npm run build --workspace=server",
+    "smoke": "npx tsx server/scripts/smoke-internal.ts"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0",
+    "typescript": "^5.4.0"
+  }
+}

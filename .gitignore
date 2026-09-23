@@ -1,9 +1,13 @@
-# Unreal Engine
-Binaries/
-DerivedDataCache/
-Intermediate/
-Saved/
-Build/
+# ── Unreal project (Valhalla2/) ─────────────────────────────
+Valhalla2/Binaries/
+Valhalla2/DerivedDataCache/
+Valhalla2/Intermediate/
+Valhalla2/Saved/
+Valhalla2/Build/
+# Game data copied in by stage_game_data.py before packaging (source: shared/data)
+Valhalla2/Content/Data/
+Valhalla2/Plugins/**/Binaries/
+Valhalla2/Plugins/**/Intermediate/
 .vs/
 .vscode/
 *.VC.db
@@ -14,12 +18,28 @@ Build/
 *.suo
 *.xcodeproj
 *.xcworkspace
-Plugins/**/Binaries/
-Plugins/**/Intermediate/
-# Local agent config
-.mcp.json
-# OS
+
+# ── Node (server/, editor/, shared/, Tools/) ────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+.vite-temp/
+
+# ── Local data, logs, backups ───────────────────────────────
+# The dev account database: player accounts and password hashes, never committed.
+server/*.db
+*.log
+*.bak
+*.blend1
+
+# ── OS / Python / local agent config ────────────────────────
 Thumbs.db
 .DS_Store
 __pycache__/
 *.pyc
+.mcp.json
+
+# Leftover from the repo merge (delete when convenient)
+Valhalla2/.gitignore.moved-to-root
+job.done

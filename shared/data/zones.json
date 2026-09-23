@@ -1,0 +1,41 @@
+{
+  "version": "1.0.0",
+  "zones": {
+    "grasslands": {
+      "id": "grasslands",
+      "name": "Grasslands",
+      "mapFile": "grasslands.json",
+      "defaultSpawn": {
+        "x": 672,
+        "y": 672
+      }
+    },
+    "desert": {
+      "id": "desert",
+      "name": "Scorched Desert",
+      "mapFile": "desert.json",
+      "defaultSpawn": {
+        "x": 160,
+        "y": 3680
+      }
+    },
+    "cave_dungeon": {
+      "id": "cave_dungeon",
+      "name": "Greyfell Cave",
+      "mapFile": "cave_dungeon.json",
+      "defaultSpawn": {
+        "x": 2080,
+        "y": 3808
+      }
+    },
+    "grasslands_v2": {
+      "id": "grasslands_v2",
+      "name": "Eldmoor Grasslands",
+      "mapFile": "grasslands_v2.json",
+      "defaultSpawn": {
+        "x": 2208,
+        "y": 1824
+      }
+    }
+  }
+}

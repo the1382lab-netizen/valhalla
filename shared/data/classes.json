@@ -38,7 +38,7 @@
         "dodgeRating": 0.002
       },
       "allowedArmor": "plate",
-      "baseSpeed": 110,
+      "baseSpeed": 200,
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 3600,
       "baseRangedAttackSpeedMs": 0,
@@ -81,7 +81,7 @@
         "dodgeRating": 0.002
       },
       "allowedArmor": "mail",
-      "baseSpeed": 300,
+      "baseSpeed": 200,
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4400,
       "baseRangedAttackSpeedMs": 0,
@@ -124,7 +124,7 @@
         "dodgeRating": 0.008
       },
       "allowedArmor": "leather",
-      "baseSpeed": 300,
+      "baseSpeed": 200,
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 3000,
       "baseRangedAttackSpeedMs": 4000,
@@ -167,7 +167,7 @@
         "dodgeRating": 0.01
       },
       "allowedArmor": "leather",
-      "baseSpeed": 134,
+      "baseSpeed": 250,
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 2400,
       "baseRangedAttackSpeedMs": 0,
@@ -227,7 +227,7 @@
         "dodgeRating": 0.003
       },
       "allowedArmor": "mail",
-      "baseSpeed": 122,
+      "baseSpeed": 200,
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4000,
       "baseRangedAttackSpeedMs": 0,

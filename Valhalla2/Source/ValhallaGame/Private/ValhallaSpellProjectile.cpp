@@ -60,7 +60,7 @@ AValhallaSpellProjectile::AValhallaSpellProjectile()
 	// standing. It is now culled like everything else, which has one visible
 	// consequence — see IsNetRelevantFor.
 	bAlwaysRelevant = false;
-	NetCullDistanceSquared = 1.0e12f;
+	SetNetCullDistanceSquared(1.0e12f);
 	SetNetUpdateFrequency(30.f);
 
 	// The projectile never lives long enough to be worth cleaning up by hand if

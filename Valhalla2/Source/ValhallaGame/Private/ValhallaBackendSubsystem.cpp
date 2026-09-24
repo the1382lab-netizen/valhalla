@@ -286,9 +286,10 @@ void UValhallaBackendSubsystem::Login(const FString& Username, const FString& Pa
 	UE_LOG(LogValhallaBackend, Verbose, TEXT("login user='%s'"), *Username);
 
 	Send(TEXT("POST"), TEXT("/api/auth/login"), MakeCredentialBody(Username, Password), FString(), /*bServerAuth=*/false,
-		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 /*Status*/, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
 		{
 			FValhallaAuthSession Session;
+			Session.HttpStatus = Status;
 			if (bSuccess)
 			{
 				Session.Token    = GetStringField(Json, TEXT("token"));

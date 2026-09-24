@@ -70,6 +70,9 @@ struct VALHALLAGAME_API FValhallaAuthSession
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Backend")
 	TArray<FValhallaCharacterSummary> Characters;
 
+	/** HTTP status of the login that produced this (or failed to). 403 = the account is banned. */
+	int32 HttpStatus = 0;
+
 	bool IsValid() const { return !Token.IsEmpty() && UserId > 0; }
 };
 
@@ -479,7 +482,27 @@ public:
 	/** How long any one call may take before it is a failure, seconds. */
 	static constexpr float RequestTimeoutSeconds = 10.f;
 
+	// ── Why the last game server let this client go (B-14) ──────────────
+
+	/**
+	 * Kept by AValhallaPlayerController::ClientWasKicked (a kick, or a ban with
+	 * its end date and reason) so the front end can show it after the
+	 * disconnect has sent the client back to L_FrontEnd. Lives here because
+	 * this subsystem is per game instance and survives that travel.
+	 */
+	void SetDisconnectNotice(const FString& Notice) { DisconnectNotice = Notice; }
+
+	/** The notice, and clears it. Empty when the last session ended normally. */
+	FString TakeDisconnectNotice()
+	{
+		FString Out = MoveTemp(DisconnectNotice);
+		DisconnectNotice.Reset();
+		return Out;
+	}
+
 private:
+	FString DisconnectNotice;
+
 	/**
 	 * Fire one request and hand the parsed body to a continuation.
 	 *

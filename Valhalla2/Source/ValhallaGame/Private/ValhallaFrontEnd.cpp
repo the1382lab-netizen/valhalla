@@ -728,6 +728,18 @@ void AValhallaFrontEndController::BeginPlay()
 		AutoLoginSlot, *UValhallaDataSettings::Get()->GetResolvedBackendUrl());
 
 	SyncGameDataIfNeeded();
+
+	// Back from a game server that kicked or banned us (B-14): say why, and do
+	// not let a dev auto-login walk straight back in as if nothing happened.
+	UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this);
+	const FString Notice = Backend ? Backend->TakeDisconnectNotice() : FString();
+	if (!Notice.IsEmpty())
+	{
+		UE_LOG(LogValhallaFrontEnd, Warning, TEXT("front end (client %d): disconnected by the server: %s"), AutoLoginSlot, *Notice);
+		LoginScreen->SetError(Notice);
+		return;
+	}
+
 	TryAutoLoginFromCVar();
 }
 
@@ -1173,7 +1185,7 @@ void AValhallaFrontEndController::AutoLogin(const FString& Username, const FStri
 
 	TWeakObjectPtr<AValhallaFrontEndController> WeakThis(this);
 	Backend->Login(Username, Password,
-		[WeakThis, Username, Password](bool bSuccess, const FValhallaAuthSession& InSession, const FString& /*Error*/)
+		[WeakThis, Username, Password](bool bSuccess, const FValhallaAuthSession& InSession, const FString& Error)
 		{
 			AValhallaFrontEndController* Self = WeakThis.Get();
 			if (!Self)
@@ -1189,6 +1201,18 @@ void AValhallaFrontEndController::AutoLogin(const FString& Username, const FStri
 					Self->LoginScreen->SetBusy(false);
 				}
 				Self->ShowCharacterSelect();
+				return;
+			}
+
+			// A banned account exists: registering would only fail with
+			// "Username already taken" and hide the ban's end date and reason.
+			if (InSession.HttpStatus == 403)
+			{
+				if (Self->LoginScreen)
+				{
+					Self->LoginScreen->SetBusy(false);
+				}
+				Self->ReportError(Error);
 				return;
 			}
 

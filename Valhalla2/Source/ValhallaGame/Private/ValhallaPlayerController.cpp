@@ -29,6 +29,7 @@
 #include "ValhallaPartySubsystem.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaAnimComponent.h"
+#include "ValhallaBackendSubsystem.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaVisuals.h"
 
@@ -54,6 +55,20 @@ AValhallaPlayerController::AValhallaPlayerController()
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = true;
 	DefaultMouseCursor = EMouseCursor::Default;
+}
+
+void AValhallaPlayerController::ClientWasKicked_Implementation(const FText& KickReason)
+{
+	Super::ClientWasKicked_Implementation(KickReason);
+
+	const FString Reason = KickReason.IsEmpty() ? FString(TEXT("You were disconnected by the server.")) : KickReason.ToString();
+	UE_LOG(LogValhallaGame, Warning, TEXT("kicked by the server (%s): %s"),
+		PlayerState ? *PlayerState->GetPlayerName() : TEXT("?"), *Reason);
+
+	if (UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this))
+	{
+		Backend->SetDisconnectNotice(Reason);
+	}
 }
 
 void AValhallaPlayerController::BeginPlay()

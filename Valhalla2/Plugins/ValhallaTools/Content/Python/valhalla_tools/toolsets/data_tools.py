@@ -61,6 +61,97 @@ def _set_collision_profile(body_instance_owner, profile_name):
     return previous
 
 
+#: Editor Preferences > General > Performance > "Use Less CPU when in
+#: Background". While it is on and the editor is not the foreground window the
+#: editor ticks at about 3 fps, and the automation controller's
+#: FWaitForInteractiveFrameRate (>= 10 fps before the first test) then waits its
+#: full 600 s before every run — minutes of nothing for a suite that takes
+#: seconds (B-14).
+_PERF_SETTINGS_CDO = "/Script/UnrealEd.Default__EditorPerformanceSettings"
+_THROTTLE_PROPERTY = "bThrottleCPUWhenNotForeground"
+
+#: Lines the automation command line prints when a ``Automation RunTests`` queue
+#: has drained (AutomationCommandline.cpp).
+_RUN_DONE_MARKERS = ("Automation Test Queue Empty", "**** TEST COMPLETE.")
+
+#: Give the restore up after this long and put the setting back anyway.
+_RESTORE_DEADLINE_SECONDS = 45 * 60
+
+
+def _get_background_throttle():
+    """The live value of the setting, or None if it cannot be read."""
+    settings = unreal.load_object(None, _PERF_SETTINGS_CDO)
+    if settings is None:
+        return None
+    values = json.loads(unreal.ToolsetLibrary.get_object_properties(settings, [_THROTTLE_PROPERTY]))
+    return bool(values.get(_THROTTLE_PROPERTY))
+
+
+def _set_background_throttle(enabled):
+    """Set the setting for this editor session only (the saved preference is untouched)."""
+    settings = unreal.load_object(None, _PERF_SETTINGS_CDO)
+    if settings is not None:
+        unreal.ToolsetLibrary.set_object_properties(settings, json.dumps({_THROTTLE_PROPERTY: bool(enabled)}))
+
+
+class _ThrottleRestore:
+    """Puts the background throttle back once the test run has finished.
+
+    ``Automation RunTests`` returns at once, so the restore watches the editor
+    log from a Slate post-tick callback for the end-of-queue line.
+    """
+
+    handle = None
+    log_path = ""
+    offset = 0
+    started = 0.0
+    next_poll = 0.0
+
+    @classmethod
+    def arm(cls):
+        import time
+
+        cls.disarm()
+        cls.log_path = os.path.join(unreal.Paths.project_log_dir(), "Valhalla2.log")
+        try:
+            cls.offset = os.path.getsize(cls.log_path)
+        except OSError:
+            cls.offset = 0
+        cls.started = time.monotonic()
+        cls.next_poll = cls.started + 2.0
+        cls.handle = unreal.register_slate_post_tick_callback(cls._tick)
+
+    @classmethod
+    def disarm(cls):
+        if cls.handle is not None:
+            unreal.unregister_slate_post_tick_callback(cls.handle)
+            cls.handle = None
+
+    @classmethod
+    def _tick(cls, _delta_seconds):
+        import time
+
+        now = time.monotonic()
+        if now < cls.next_poll:
+            return
+        cls.next_poll = now + 2.0
+
+        done = now - cls.started > _RESTORE_DEADLINE_SECONDS
+        try:
+            with open(cls.log_path, "r", encoding="utf-8", errors="ignore") as log:
+                log.seek(cls.offset)
+                new_text = log.read()
+                cls.offset = log.tell()
+            done = done or any(marker in new_text for marker in _RUN_DONE_MARKERS)
+        except OSError:
+            pass
+
+        if done:
+            cls.disarm()
+            _set_background_throttle(True)
+            unreal.log("run_valhalla_tests: run finished; 'Use Less CPU when in Background' restored to on.")
+
+
 @unreal.uclass()
 class ValhallaDataTools(unreal.ToolsetDefinition):
     """Tools for the Valhalla 2.0 port: data validation, mesh import, tests."""
@@ -425,17 +516,39 @@ class ValhallaDataTools(unreal.ToolsetDefinition):
         run has been requested, not when it finishes. Read the results in the
         Session Frontend's Automation tab or in the editor log.
 
+        If Editor Preferences' "Use Less CPU when in Background" is on, it is
+        turned off for the run (a background editor at 3 fps would otherwise
+        sit out the automation controller's 10-minute frame-rate wait first)
+        and turned back on when the log reports the queue empty, or after 45
+        minutes at the latest. The saved preference is not changed.
+
         Args:
             test_filter: Test name prefix to run. Defaults to ``Valhalla.``, which
                 covers the whole ported suite.
 
         Returns:
             A JSON object as text with keys ``status`` (always ``started``),
-            ``filter`` (the value of test_filter) and ``command`` (the console command that was executed).
+            ``filter`` (the value of test_filter), ``command`` (the console
+            command that was executed) and ``backgroundThrottle`` (``"off for
+            the run"``, ``"already off"`` or ``"unknown"``).
         """
+        try:
+            throttled = _get_background_throttle()
+        except Exception as error:  # an engine without ToolsetLibrary: run anyway
+            unreal.log_warning("run_valhalla_tests: cannot read {}: {}".format(_THROTTLE_PROPERTY, error))
+            throttled = None
+
+        if throttled:
+            _set_background_throttle(False)
+            _ThrottleRestore.arm()
+            throttle_state = "off for the run"
+        else:
+            throttle_state = "already off" if throttled is False else "unknown"
+
         command = "Automation RunTests {}".format(test_filter)
         unreal.SystemLibrary.execute_console_command(None, command)
         return json.dumps(
-            {"status": "started", "filter": test_filter, "command": command},
+            {"status": "started", "filter": test_filter, "command": command,
+             "backgroundThrottle": throttle_state},
             indent=2,
         )

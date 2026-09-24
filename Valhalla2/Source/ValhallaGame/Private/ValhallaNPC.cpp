@@ -297,7 +297,7 @@ AValhallaNPC::AValhallaNPC()
 	// health straight out of memory. The cull distance is left enormous so that
 	// the line-of-sight override below is the only thing that decides.
 	bAlwaysRelevant = false;
-	NetCullDistanceSquared = 1.0e12f;
+	SetNetCullDistanceSquared(1.0e12f);
 }
 
 bool AValhallaNPC::IsNetRelevantFor(const AActor* RealViewer, const AActor* ViewTarget, const FVector& /*SrcLocation*/) const

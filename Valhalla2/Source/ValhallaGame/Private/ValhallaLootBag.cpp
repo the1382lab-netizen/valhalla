@@ -80,7 +80,7 @@ AValhallaLootBag::AValhallaLootBag()
 	// the override below tests the viewer's own vision range first, and 2000 cm
 	// was never the right number for a ranger anyway.
 	bAlwaysRelevant = false;
-	NetCullDistanceSquared = 1.0e12f;
+	SetNetCullDistanceSquared(1.0e12f);
 }
 
 bool AValhallaLootBag::IsNetRelevantFor(const AActor* RealViewer, const AActor* ViewTarget, const FVector& /*SrcLocation*/) const

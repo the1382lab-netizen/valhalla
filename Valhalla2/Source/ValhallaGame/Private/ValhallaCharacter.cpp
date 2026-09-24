@@ -266,7 +266,7 @@ AValhallaCharacter::AValhallaCharacter()
 	// and a party member three zones up a hill must not drop out of a party
 	// because of a number that knows nothing about parties.
 	bAlwaysRelevant = false;
-	NetCullDistanceSquared = 1.0e12f;
+	SetNetCullDistanceSquared(1.0e12f);
 }
 
 bool AValhallaCharacter::IsNetRelevantFor(const AActor* RealViewer, const AActor* ViewTarget, const FVector& /*SrcLocation*/) const

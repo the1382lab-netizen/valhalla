@@ -72,3 +72,21 @@ Launch options, for when the defaults don't fit:
 - A residential IP can change. If it does, edit the `Caddyfile` and the two
   `Public*` lines in `DefaultGame.ini`, and send testers the new launch option
   or a new build.
+
+## Testing multiplayer in PIE
+
+- **Start Play from `L_FrontEnd`**, not `L_World`. Play settings: Net Mode
+  *Play Standalone*, **Number of Players 2** (or more), *Launch Separate Server*
+  on, *Run Under One Process* on. The dedicated server sees it has loaded the
+  front-end map and travels itself to `L_World`; each client gets the login
+  screen, logs in through the backend (`npm run dev:server` must be running)
+  and joins with its token, so accounts, saves, bans and the admin `state`
+  behave as they will for testers.
+- To skip typing, set `valhalla.AutoLogin "user1:pass:Char1:warrior,user2:pass:Char2:wizard"`
+  in the editor console before Play: entries are dealt to the clients in start
+  order, and missing accounts and characters are created.
+- Starting Play from `L_World` with *Launch Separate Server* gives an
+  **offline copy**: the clients join without a token (dev sessions), so there is
+  no account, nothing is saved, and account actions (ban) refuse them.
+- Don't run `start-gameserver.bat` at the same time: PIE's server wants admin
+  port 2568 too.

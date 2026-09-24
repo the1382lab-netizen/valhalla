@@ -61,6 +61,14 @@ public:
 	virtual void SetupInputComponent() override;
 	virtual void OnPossess(APawn* InPawn) override;
 	virtual void AcknowledgePossession(APawn* InPawn) override;
+
+	/**
+	 * The engine's is empty, so a kicked player used to land on the login
+	 * screen with no idea why. Keeps the server's sentence (for a ban: "This
+	 * account is suspended until <date> UTC. Reason: <reason>") for the front
+	 * end, which shows it after the disconnect (B-14).
+	 */
+	virtual void ClientWasKicked_Implementation(const FText& KickReason) override;
 	//~ End APlayerController interface
 
 	/**

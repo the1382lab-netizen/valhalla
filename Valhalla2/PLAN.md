@@ -892,6 +892,60 @@ in place for `valhalla.Visual.BodyProfile 0`.
       and logs the folder. Logic and self-check:
       `valhalla_tools/level_protection.py` (`self_check()`, 13 checks).
 
+## B-14 — Phase 9 testing follow-ups (2026-09-23)
+
+Run from `L_FrontEnd`, PIE Standalone, separate server, one process, 2 clients,
+`valhalla.AutoLogin` with throwaway accounts `b14t_2140_a` / `b14t_2140_b`
+(characters Bwar2140 / Bwiz2140, deleted afterwards; the backend has no route
+to delete users). Admin calls went through the editor's `/api/admin/*` proxy,
+the same routes the Live Dashboard uses.
+
+- [ ] **Right-drag orbit — hand check for Kevin.** In code: pitch clamped to
+      `CameraPitchMin = -80` .. `CameraPitchMax = -15` degrees
+      (`AValhallaCharacter::AddCameraOrbit`); `BeginCameraOrbit` stores the
+      cursor position and hides it, `EndCameraOrbit` shows it again and
+      `SetMouseLocation`s it back to where the drag started.
+- [x] **Ban a logged-in real account.** Fix first: a kick's reason never
+      reached the player (the engine's `ClientWasKicked` is empty, and a
+      banned auto-login fell through to "register" and hid the ban). Now
+      `AValhallaPlayerController::ClientWasKicked` keeps the sentence in
+      `UValhallaBackendSubsystem` (`SetDisconnectNotice`), the front end shows
+      it on the login screen after the disconnect and skips the auto-login, and
+      `AutoLogin` reports a 403 login instead of registering
+      (`FValhallaAuthSession::HttpStatus`). Result, `player-action ban`, 1440
+      min, reason "B-14 ban test (throwaway account)": `kicked by the server
+      (Bwar2140): This account is suspended until 2026-09-25 02:14 UTC. Reason:
+      B-14 ban test (throwaway account)`, the same text on the client's login
+      screen; login 403 with it (HTTP and a fresh PIE: `AutoLogin stopped: This
+      account is suspended until …`); `account-action unban` → `login ok
+      'b14t_2140_a'` and in-world again.
+- [x] **Two real clients through the front end.** `DebugListActors` on each
+      client lists both characters; `/state` shows both accounts (userId 15,
+      16); `reload-data` → `data version 1 from the server: client reload ok`
+      twice; portal to the desert and back for both (`zoneChange … grasslands
+      -> desert`, `desert -> grasslands`) with `saved char=39/40 (zone
+      change)` and `(admin)`.
+- [x] **Level streaming.** Fresh server: grasslands 18 NPCs (18/18 spawn
+      points, all `L_Grasslands_Gameplay`), desert 21 (21/21,
+      `L_Desert_Gameplay`), 39 in total.
+- [x] **Slow automated tests.** Editor Preferences → Performance → "Use Less
+      CPU when in Background" is now off. `run_valhalla_tests` turns it off for
+      the run if it is on and restores it when the log says the queue is empty.
+      Full `Valhalla.` suite from a background editor: 619 s before (600 s of
+      `FWaitForInteractiveFrameRate` at 3 fps, then "Giving up"), 11 s after
+      through the tool with the throttle on (wait passed at 51 fps in 5 s),
+      0.6 s through `RunTestsByFilter "StartsWith:Valhalla."`. 26/27:
+      `Valhalla.Core.Data.MeshIdFallback` fails on items.json (iron_dagger and
+      bone_totem now author a meshId) — test data, not this change.
+- [x] **`NetCullDistanceSquared`** is set through `SetNetCullDistanceSquared()`
+      in the character, NPC, loot bag and spell projectile constructors (all
+      four direct writes in `Source/`). Rebuild: no C4996 or other compiler
+      warnings.
+- [x] "Testing multiplayer in PIE" note in `deploy/README.md`.
+- Known: `FrontEndClientCounter` is static, so a second PIE run deals the
+      `valhalla.AutoLogin` entries in the other order (client 3 got entry 1).
+      Harmless for two throwaway accounts.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

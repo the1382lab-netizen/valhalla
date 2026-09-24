@@ -622,12 +622,12 @@
    "x": 5120,
    "y": 8896,
    "targetZone": "grasslands",
-   "targetEntry": "entry_from_eldmoor",
+   "targetEntry": "grasslands_from_eldmoor",
    "label": "Grasslands",
    "marker": "rune-stone, visible"
   },
   {
-   "id": "entry_from_grasslands",
+   "id": "eldmoor_from_grasslands",
    "type": "zone_entry",
    "x": 5120,
    "y": 8448,
@@ -640,12 +640,12 @@
    "x": 8896,
    "y": 512,
    "targetZone": "desert",
-   "targetEntry": "entry_from_eldmoor",
+   "targetEntry": "desert_from_eldmoor",
    "label": "Scorched Desert",
    "marker": "rune-stone, visible; in the yard of the ruined Miller's Stead"
   },
   {
-   "id": "entry_from_desert",
+   "id": "eldmoor_from_desert",
    "type": "zone_entry",
    "x": 8640,
    "y": 640,
@@ -656,15 +656,15 @@
    "id": "hidden_portal_greyfell",
    "type": "portal",
    "x": 384,
-   "y": 1664,
+   "y": 1612.8,
    "targetZone": "cave_dungeon",
-   "targetEntry": "entry_from_eldmoor",
+   "targetEntry": "greyfell_from_eldmoor",
    "label": "(unmarked)",
    "marker": "hidden variant: no rune-stone, no glow; trigger inside the cleft",
    "phase": 2
   },
   {
-   "id": "entry_from_greyfell",
+   "id": "eldmoor_from_greyfell",
    "type": "zone_entry",
    "x": 448,
    "y": 1920,
@@ -673,7 +673,7 @@
    "phase": 2
   },
   {
-   "id": "entry_from_greyfell_lair_exit",
+   "id": "eldmoor_from_greyfell_lair",
    "type": "zone_entry",
    "x": 896,
    "y": 2944,
@@ -713,7 +713,7 @@
    "note": "at the north end of the town's N-S road; the Desert portal is on the east edge at (4000,864)"
   },
   "entry": {
-   "id": "entry_from_eldmoor",
+   "id": "grasslands_from_eldmoor",
    "x": 2048,
    "y": 380,
    "note": "on the road between the two northern houses"
@@ -728,7 +728,7 @@
    "note": "at the east end of the Desert's E-W road; its Grasslands portal (96,864) and entry (480,864) are on the west edge, no clash; a small rock stands near (4000,820) and may need nudging"
   },
   "entry": {
-   "id": "entry_from_eldmoor",
+   "id": "desert_from_eldmoor",
    "x": 3616,
    "y": 864,
    "note": "on the road, 3.5 m west of the portal"
@@ -1116,11 +1116,11 @@
    "id": "F_KEEP_HALL",
    "at": "A4 great hall",
    "tile": [
-    76,
+    80,
     5
    ],
    "cm": [
-    4864,
+    5120,
     320
    ],
    "kind": "fireplace",
@@ -2387,11 +2387,11 @@
     "id": "T_W",
     "tile": [
      50,
-     20
+     16
     ],
     "cm": [
      3200,
-     1280
+     1024
     ],
     "room": "Postern Tower"
    },
@@ -2444,13 +2444,13 @@
   "postern": {
    "tile": [
     50,
-    20
+    19
    ],
    "cm": [
     3200,
-    1280
+    1216
    ],
-   "note": "door in the postern tower's west face, reached by the highland path; opens into the muster yard"
+   "note": "postern door in the west curtain at y 18-20 (a half-width keep gate), beside the postern tower at (50,16); reached by the highland path; opens into the Postern Tower chamber and the muster yard"
   },
   "undercroftRamp": {
    "top": {
@@ -2807,7 +2807,7 @@
     },
     "levelBand": "9-10",
     "spawnCount": 5,
-    "contents": "Two long tables with benches, fireplace on the north wall at (76,5), dais at the east end (86,8) with the Castellan's chair and the Ashvane banner (a black hound on ash-grey), a ramp slot along the north wall (x 66-76, y 5-7) descending west into the undercroft, with a 90 cm parapet on its south edge. Door from the courtyard at (72,12).",
+    "contents": "Two long tables with benches, fireplace on the north wall at (80,5) (east of the ramp slot), dais at the east end (86,8) with the Castellan's chair and the Ashvane banner (a black hound on ash-grey), a ramp slot along the north wall (x 66-76, y 5-7) descending west into the undercroft, with a 90 cm parapet on its south edge. Door from the courtyard at (72,12).",
     "spawns": [
      {
       "template": "renegade_hallguard (9)",
@@ -3065,37 +3065,39 @@
   "trigger": {
    "tile": [
     6,
-    26
+    25.2
    ],
    "cm": [
     384,
-    1664
+    1612.8
    ]
   },
   "facing": "south",
   "description": "A narrow cleft at the foot of Greyfell Tor's southern cliff face, at the far west end where the cliff meets the zone edge. It opens south into the scree pocket.",
   "screen": [
    {
-    "prop": "boulder (large, art gap: rock outcrop)",
+    "prop": "boulder (large, VB_BoulderLarge_A, yaw 15)",
     "tile": [
-     3,
-     30
+     4,
+     29.5
     ],
     "cm": [
-     192,
-     1920
-    ]
+     256,
+     1888.0
+    ],
+    "yaw": 15
    },
    {
-    "prop": "boulder (large)",
+    "prop": "boulder (large, VB_BoulderLarge_A, yaw -15)",
     "tile": [
-     9,
-     31
+     8,
+     29.5
     ],
     "cm": [
-     576,
-     1984
-    ]
+     512,
+     1888.0
+    ],
+    "yaw": -15
    },
    {
     "prop": "dead tree",
@@ -3197,9 +3199,9 @@
     ]
    }
   ],
-  "approach": "From the scree pocket: climb north-west from the highland path's bend at (34,48) across open scree with no path, past the scavenger's ground, to the cliff foot at (12,32); walk WEST along the cliff foot, around the back (north side) of the boulder at (9,31); the cleft is then in front of you at (6,27). From the south or east the two boulders and the fallen logs hide the gap completely.",
+  "approach": "From the scree pocket: climb north-west from the highland path's bend at (34,48) across open scree with no path, past the scavenger's ground, to the cliff foot at (12,32); walk WEST along the cliff foot through the 140 cm passage between the cliff face (front at y 26) and boulder B at (8,29.5); the cleft is then in front of you at (6,27). The two boulders (each 3.7 tiles wide, yawed 15 and -15 degrees so their ends overlap by at least 20 cm) stand shoulder to shoulder 3 tiles south of the mouth, so from the south there is no line of sight into it at the 90 cm trace height; the logs, bushes and dead trees south of them hide the boulders' shape. The trigger is inside the passage at (6,25.2), 60 cm up.",
   "whyHard": "No path or signpost leads there; it is 17 m from the nearest path point (30,40) and 15.5 m from Hask's Hold, both beyond the 10-16 m fog radius; the tor cliff and boulders block line of sight; a dense mist pocket sits over the scree; nothing glows; and the only reason to wander there is R8, a single scavenger. The hint is Wyn Cotter's hail line at the outpost.",
-  "phase2": "The trigger just inside the cleft is a hidden-portal variant (rune-stone marker off) to cave_dungeon entry 'entry_from_eldmoor'. Greyfell's tier-1 entrance tunnels begin here; the optional lair exit returns players to (14,46) below the scree. Testers use the admin teleport."
+  "phase2": "The trigger just inside the cleft is a hidden-portal variant (rune-stone marker off) to cave_dungeon entry 'greyfell_from_eldmoor' (entry ids are prefixed with the zone they stand in, see section 4). Greyfell's tier-1 entrance tunnels begin here; the optional lair exit returns players to (14,46) below the scree. Testers use the admin teleport."
  },
  "mistPockets": [
   {

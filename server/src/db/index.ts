@@ -97,6 +97,20 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
     );
   `);
 
+  // B-21: per-character UI settings (HUD layout, style, chat, nameplates).
+  // One row per character; ui_json is the client's FValhallaUserUISettings
+  // document, opaque to the backend (checked only for being a JSON object and
+  // its size). updated_at is ISO 8601, set by the backend on every write.
+  // CREATE TABLE IF NOT EXISTS is the migration: an older database gains the
+  // table on its next start, and nothing else refers to it.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS character_settings (
+      character_id INTEGER PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+      ui_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
   // ── Migrations for databases created before a column existed ──
   // SQLite has no `ADD COLUMN IF NOT EXISTS`, so check the table info first.
   const charCols = db.exec('PRAGMA table_info(characters);');

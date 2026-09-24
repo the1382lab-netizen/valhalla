@@ -298,6 +298,14 @@ using FValhallaSimpleCallback = TFunction<void(bool /*bSuccess*/, const FString&
 /** bOk, how many files were replaced (0 = already current), and why it failed. */
 using FValhallaDataSyncCallback = TFunction<void(bool /*bOk*/, int32 /*FilesUpdated*/, const FString& /*Error*/)>;
 using FValhallaJsonCallback = TFunction<void(bool /*bSuccess*/, int32 /*StatusCode*/, const TSharedPtr<FJsonObject>& /*Json*/, const FString& /*Error*/)>;
+/**
+ * B-21 `GET /api/characters/:id/settings`: bOk, the HTTP status (404 = nothing
+ * saved, or not this account's character: use the defaults; 0 = unreachable),
+ * the `ui` document and the backend's `updatedAt` (ISO 8601).
+ */
+using FValhallaSettingsGetCallback = TFunction<void(bool /*bOk*/, int32 /*StatusCode*/, const TSharedPtr<FJsonObject>& /*Ui*/, const FString& /*UpdatedAt*/, const FString& /*Error*/)>;
+/** B-21 `PUT /api/characters/:id/settings`: bOk, the status, the stored `updatedAt`. */
+using FValhallaSettingsPutCallback = TFunction<void(bool /*bOk*/, int32 /*StatusCode*/, const FString& /*UpdatedAt*/, const FString& /*Error*/)>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  The subsystem
@@ -323,6 +331,7 @@ using FValhallaJsonCallback = TFunction<void(bool /*bSuccess*/, int32 /*StatusCo
  * server, and the split is by method, not by instance:
  *
  *   client  Register / Login / ListCharacters / CreateCharacter / DeleteCharacter
+ *           / GetCharacterSettings / PutCharacterSettings (B-21)
  *           — authenticated by the player's own bearer token.
  *   server  Verify / LoadCharacter / SaveCharacter / Health
  *           — authenticated by `X-Server-Secret`, which is the shared secret in
@@ -370,6 +379,30 @@ public:
 
 	/** `DELETE /api/characters/:id`. */
 	void DeleteCharacter(const FString& Token, int32 CharacterId, FValhallaSimpleCallback OnDone);
+
+	/** B-21 `GET /api/characters/:id/settings` — the character's UI settings document. */
+	void GetCharacterSettings(const FString& Token, int32 CharacterId, FValhallaSettingsGetCallback OnDone);
+
+	/** B-21 `PUT /api/characters/:id/settings` with body `{ "ui": Ui }` (the backend refuses over 64 KB). */
+	void PutCharacterSettings(const FString& Token, int32 CharacterId, const TSharedRef<FJsonObject>& Ui, FValhallaSettingsPutCallback OnDone);
+
+	// ── The in-world player session (B-21) ─────────────────────────────
+
+	/**
+	 * The front end hands the session over at Enter World, just before the
+	 * ClientTravel that destroys it (the token otherwise lives only on
+	 * AValhallaFrontEndController). Held in memory only — never written to
+	 * disk, never replicated, never logged but redacted — so that the in-world
+	 * client can call its own player routes (UI settings) with its own bearer
+	 * token. Cleared when the front end opens again or logs out.
+	 */
+	void SetPlayerSession(const FString& Token, int32 UserId, int32 CharacterId);
+	void ClearPlayerSession();
+	bool HasPlayerSession() const { return !PlayerToken.IsEmpty() && PlayerCharacterId > 0; }
+	const FString& GetPlayerToken() const { return PlayerToken; }
+	/** `characters.id` of the character this client entered the world as; 0 = none (offline PIE). */
+	int32 GetPlayerCharacterId() const { return PlayerCharacterId; }
+	int32 GetPlayerUserId() const { return PlayerUserId; }
 
 	// ── Server routes (X-Server-Secret) ─────────────────────────────────
 
@@ -502,6 +535,11 @@ public:
 
 private:
 	FString DisconnectNotice;
+
+	/** SetPlayerSession's. Memory only. */
+	FString PlayerToken;
+	int32 PlayerUserId = 0;
+	int32 PlayerCharacterId = 0;
 
 	/**
 	 * Fire one request and hand the parsed body to a continuation.

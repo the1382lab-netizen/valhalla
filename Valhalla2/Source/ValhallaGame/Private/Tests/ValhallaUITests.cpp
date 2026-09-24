@@ -15,6 +15,12 @@
 //     out from a Blueprint, the designer panel names (which WBP_GameHUD must
 //     match) are BindWidget / BindWidgetOptional members of the right types,
 //     and the bar widget clamps its fraction.
+//   Valhalla.Game.UI.MovablePanels — B-21: every movable panel names a
+//     BindWidget(Optional) widget member, the flowing ones a Size Box;
+//     ResolvePanelLayout keeps the designer's layout for empty settings and
+//     applies a set entry and UiScale; ApplyUserLayout on a HUD with no layout
+//     is a no-op; in WBP_GameHUD each movable panel is its own root-canvas
+//     child (the B-21 split of Character + Inventory).
 //
 // None needs a world or a viewport; all run headless (the bar test makes one
 // bare widget object, never constructed into Slate).
@@ -29,6 +35,10 @@
 #include "Components/ScrollBox.h"
 #include "Components/Border.h"
 #include "Components/UniformGridPanel.h"
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/CanvasPanel.h"
+#include "Components/SizeBox.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Serialization/JsonReader.h"
@@ -359,6 +369,151 @@ bool FValhallaUIHudBlueprintGroundworkTest::RunTest(const FString& /*Parameters*
 	TestEqual(TEXT("SetOverlayFraction(0.4) -> 0.4"), Bar->GetOverlayFraction(), 0.4f);
 	TestFalse(TEXT("a bare bar has no designer tree"), Bar->HasDesignerTree());
 
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.MovablePanels (B-21)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIMovablePanelsTest,
+	"Valhalla.Game.UI.MovablePanels",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIMovablePanelsTest::RunTest(const FString& /*Parameters*/)
+{
+	// ── The list ────────────────────────────────────────────────────────
+	const TArray<FValhallaMovablePanel>& Panels = UValhallaGameHUDWidget::GetMovablePanels();
+	TestEqual(TEXT("eleven movable panels"), Panels.Num(), 11);
+	TSet<FName> Keys, Members, Flowing, Hideable;
+	for (const FValhallaMovablePanel& Info : Panels)
+	{
+		const FString Name = Info.Key.ToString();
+		TestFalse(*FString::Printf(TEXT("%s: key is unique"), *Name), Keys.Contains(Info.Key));
+		TestFalse(*FString::Printf(TEXT("%s: member is unique"), *Name), Members.Contains(Info.Member));
+		Keys.Add(Info.Key);
+		Members.Add(Info.Member);
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), Info.Member);
+		if (TestNotNull(*FString::Printf(TEXT("%s: %s is a member"), *Name, *Info.Member.ToString()), Property))
+		{
+			TestTrue(*FString::Printf(TEXT("%s: %s is a widget"), *Name, *Info.Member.ToString()), Property->PropertyClass->IsChildOf(UWidget::StaticClass()));
+#if WITH_EDITORONLY_DATA
+			TestTrue(*FString::Printf(TEXT("%s: %s binds by name"), *Name, *Info.Member.ToString()),
+				Property->HasMetaData(TEXT("BindWidget")) || Property->HasMetaData(TEXT("BindWidgetOptional")));
+#endif
+		}
+		TestTrue(*FString::Printf(TEXT("%s: listed in the panel names"), *Name),
+			UValhallaGameHUDWidget::GetRequiredPanelNames().Contains(Info.Member) || UValhallaGameHUDWidget::GetOptionalPanelNames().Contains(Info.Member));
+		if (Info.Sizing != EValhallaPanelSizing::Scaled)
+		{
+			Flowing.Add(Info.Key);
+			TestFalse(*FString::Printf(TEXT("%s: a flowing panel names its Size Box"), *Name), Info.SizeBox.IsNone());
+		}
+		if (Info.bHideable)
+		{
+			Hideable.Add(Info.Key);
+		}
+		TestTrue(*FString::Printf(TEXT("%s: FindMovablePanel"), *Name), UValhallaGameHUDWidget::FindMovablePanel(Info.Key) == &Info);
+	}
+	for (const TCHAR* Key : { TEXT("Vitals"), TEXT("ActionBar"), TEXT("CastBar"), TEXT("TargetFrame"), TEXT("Party"), TEXT("CombatLog"),
+		TEXT("Chat"), TEXT("Loot"), TEXT("Skills"), TEXT("Character"), TEXT("Inventory") })
+	{
+		TestTrue(*FString::Printf(TEXT("%s is movable"), Key), Keys.Contains(FName(Key)));
+	}
+	TestTrue(TEXT("flowing: chat, combat log, skills"), Flowing.Num() == 3 && Flowing.Contains(TEXT("Chat")) && Flowing.Contains(TEXT("CombatLog")) && Flowing.Contains(TEXT("Skills")));
+	TestFalse(TEXT("windows the player opens cannot be hidden"), Hideable.Contains(TEXT("Loot")) || Hideable.Contains(TEXT("Skills"))
+		|| Hideable.Contains(TEXT("Character")) || Hideable.Contains(TEXT("Inventory")));
+	TestNull(TEXT("an unknown key is not movable"), UValhallaGameHUDWidget::FindMovablePanel(TEXT("Tooltip")));
+
+	// ── ResolvePanelLayout ──────────────────────────────────────────────
+	FValhallaPanelLayout Designer;
+	Designer.AnchorMin = Designer.AnchorMax = FVector2D(0.0, 1.0);
+	Designer.Alignment = FVector2D(0.0, 1.0);
+	Designer.Position = FVector2D(232.0, -8.0);
+	Designer.Size = FVector2D(360.0, 170.0);
+	const FValhallaPanelLayout Same = UValhallaGameHUDWidget::ResolvePanelLayout(Designer, nullptr, 1.f);
+	TestTrue(TEXT("no entry, scale 1: exactly the designer's"), Same.Equals(Designer, 1.e-4f));
+	FValhallaPanelLayout Unset = Designer;
+	Unset.Position = FVector2D(999.0, 999.0);
+	Unset.bSet = false;
+	TestTrue(TEXT("an entry that is not bSet is ignored"), UValhallaGameHUDWidget::ResolvePanelLayout(Designer, &Unset, 1.f).Equals(Designer, 1.e-4f));
+
+	FValhallaPanelLayout User;
+	User.AnchorMin = User.AnchorMax = FVector2D(1.0, 1.0);
+	User.Alignment = FVector2D(1.0, 1.0);
+	User.Position = FVector2D(-20.0, -30.0);
+	User.Size = FVector2D(500.0, 0.0);
+	User.Scale = 1.2f;
+	User.bVisible = false;
+	User.bSet = true;
+	const FValhallaPanelLayout Placed = UValhallaGameHUDWidget::ResolvePanelLayout(Designer, &User, 1.f);
+	TestTrue(TEXT("a set entry takes its anchors and alignment"), Placed.AnchorMin.Equals(FVector2D(1.0, 1.0)) && Placed.Alignment.Equals(FVector2D(1.0, 1.0)));
+	TestTrue(TEXT("and its position"), Placed.Position.Equals(FVector2D(-20.0, -30.0)));
+	TestTrue(TEXT("a zero size axis keeps the designer's"), Placed.Size.Equals(FVector2D(500.0, 170.0)));
+	TestEqual(TEXT("its scale"), Placed.Scale, 1.2f);
+	TestTrue(TEXT("its visibility, and bSet"), !Placed.bVisible && Placed.bSet);
+	const FValhallaPanelLayout Big = UValhallaGameHUDWidget::ResolvePanelLayout(Designer, &User, 1.5f);
+	TestTrue(TEXT("UiScale multiplies the position"), Big.Position.Equals(FVector2D(-30.0, -45.0), 1.e-3));
+	TestTrue(TEXT("and the render scale"), FMath::IsNearlyEqual(Big.Scale, 1.8f, 1.e-4f));
+	TestTrue(TEXT("but not the content size"), Big.Size.Equals(FVector2D(500.0, 170.0)));
+	const FValhallaPanelLayout DesignerBig = UValhallaGameHUDWidget::ResolvePanelLayout(Designer, nullptr, 2.f);
+	TestTrue(TEXT("UiScale scales an unset panel too"), DesignerBig.Position.Equals(FVector2D(464.0, -16.0), 1.e-3) && FMath::IsNearlyEqual(DesignerBig.Scale, 2.f));
+	TestTrue(TEXT("UiScale is clamped"), FMath::IsNearlyEqual(UValhallaGameHUDWidget::ResolvePanelLayout(Designer, nullptr, 9.f).Scale, FValhallaUserUISettings::MaxUiScale));
+
+	// ── ApplyUserLayout with no layout is a no-op ───────────────────────
+	UValhallaGameHUDWidget* Bare = NewObject<UValhallaGameHUDWidget>(GetTransientPackage(), NAME_None, RF_Transient);
+	FValhallaUserUISettings Everything;
+	Everything.UiScale = 1.5f;
+	Everything.Panels.Add(TEXT("Chat"), User);
+	TestEqual(TEXT("empty settings on a HUD with no layout: nothing applied"), Bare->ApplyUserLayout(FValhallaUserUISettings()), 0);
+	TestEqual(TEXT("full settings on a HUD with no layout: nothing applied"), Bare->ApplyUserLayout(Everything), 0);
+	TestNull(TEXT("and no designer layout recorded"), Bare->GetDesignerLayout(TEXT("Chat")));
+	const UValhallaGameHUDWidget* Cdo = GetDefault<UValhallaGameHUDWidget>();
+	TestNull(TEXT("the CDO records no designer layout"), Cdo->GetDesignerLayout(TEXT("Vitals")));
+
+	// ── WBP_GameHUD: every movable panel on the root canvas, on its own ──
+	if (!FPackageName::DoesPackageExist(TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD")))
+	{
+		AddWarning(TEXT("WBP_GameHUD is not in this build; its tree was not checked."));
+		return true;
+	}
+	const UWidgetBlueprintGeneratedClass* HudClass = Cast<UWidgetBlueprintGeneratedClass>(
+		StaticLoadClass(UValhallaGameHUDWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C")));
+	const UWidgetTree* Tree = HudClass ? HudClass->GetWidgetTreeArchetype() : nullptr;
+	const UCanvasPanel* Root = Tree ? Cast<UCanvasPanel>(Tree->RootWidget) : nullptr;
+	if (!TestNotNull(TEXT("WBP_GameHUD has a Canvas Panel root"), Root))
+	{
+		return true;
+	}
+	TSet<const UWidget*> CanvasChildren;
+	for (const FValhallaMovablePanel& Info : Panels)
+	{
+		const UWidget* Widget = Tree->FindWidget(Info.Member);
+		if (!TestNotNull(*FString::Printf(TEXT("WBP_GameHUD has %s"), *Info.Member.ToString()), Widget))
+		{
+			continue;
+		}
+		while (Widget && Widget->GetParent() && Widget->GetParent() != Root)
+		{
+			Widget = Widget->GetParent();
+		}
+		const bool bOnCanvas = Widget && Widget->GetParent() == Root;
+		TestTrue(*FString::Printf(TEXT("%s sits in a root-canvas child"), *Info.Key.ToString()), bOnCanvas);
+		if (bOnCanvas)
+		{
+			TestFalse(*FString::Printf(TEXT("%s's canvas child (%s) is its own"), *Info.Key.ToString(), *Widget->GetName()), CanvasChildren.Contains(Widget));
+			CanvasChildren.Add(Widget);
+		}
+		if (Info.Sizing != EValhallaPanelSizing::Scaled && Info.Key != TEXT("Chat"))
+		{
+			TestNotNull(*FString::Printf(TEXT("WBP_GameHUD has %s's Size Box %s"), *Info.Key.ToString(), *Info.SizeBox.ToString()),
+				Cast<USizeBox>(Tree->FindWidget(Info.SizeBox)));
+		}
+	}
+	const UBorder* Chat = Cast<UBorder>(Tree->FindWidget(TEXT("ChatPanel")));
+	TestTrue(TEXT("ChatPanel holds the chat Size Box"), Chat && Cast<USizeBox>(Chat->GetContent()) != nullptr);
+	TestNull(TEXT("the Character + Inventory pair is split (no InventoryPair)"), Tree->FindWidget(TEXT("InventoryPair")));
 	return true;
 }
 

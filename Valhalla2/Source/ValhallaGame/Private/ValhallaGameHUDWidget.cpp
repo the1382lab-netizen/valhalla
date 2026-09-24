@@ -62,6 +62,7 @@
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaStats.h"
+#include "ValhallaUserSettingsSubsystem.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaHUD);
 
@@ -288,10 +289,15 @@ namespace
 	 *   orbit <degrees>  (the right-mouse drag: camera and, standing, the body)
 	 *   press <slot> <x> <y>  (with the aoeGround cursor read at viewport pixel x, y)
 	 *   walk <w|a|s|d> <seconds>  (hold one movement key)
+	 *   B-21 (the player's UI settings, this HUD's game instance):
+	 *   settings  (print the JSON) | resetlayout | panels  (log each movable panel's geometry)
+	 *   movepanel <Key> <x> <y>  (place a panel at canvas offset x, y from its designer anchor: dev, until edit mode)
+	 *   hidepanel <Key> | showpanel <Key> | uiscale <0.5..2> | opacity <0.2..1>
 	 */
 	FAutoConsoleCommandWithWorldAndArgs GUICommand(
 		TEXT("valhalla.UI"),
-		TEXT("Dev only. valhalla.UI [@class] <inventory|skills|chat [text]|say <line>|loot|close|arm <skill>|filter <key>|tooltip <i>|reload|press <slot> [x y]|orbit <deg>|walk <wasd> <s>> — drive a client's HUD."),
+		TEXT("Dev only. valhalla.UI [@class] <inventory|skills|chat [text]|say <line>|loot|close|arm <skill>|filter <key>|tooltip <i>|reload|press <slot> [x y]|orbit <deg>|walk <wasd> <s>")
+		TEXT("|settings|resetlayout|panels|movepanel <key> <x> <y>|hidepanel <key>|showpanel <key>|uiscale <s>|opacity <a>> — drive a client's HUD."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& InArgs, UWorld* World)
 		{
 			TArray<FString> Args = InArgs;
@@ -325,6 +331,64 @@ namespace
 				else if (Verb == TEXT("filter"))   { Hud.ToggleLogFilter(FName(*Rest)); }
 				else if (Verb == TEXT("tooltip"))  { Hud.PinInventoryTooltip(FCString::Atoi(*Rest)); }
 				else if (Verb == TEXT("reload"))   { Hud.ReloadFromDisk(); }
+				else if (Verb == TEXT("settings") || Verb == TEXT("resetlayout") || Verb == TEXT("panels") || Verb == TEXT("movepanel")
+					|| Verb == TEXT("hidepanel") || Verb == TEXT("showpanel") || Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
+				{
+					// B-21: the player's UI settings for this HUD's character.
+					UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(&Hud);
+					if (!UserSettings)
+					{
+						UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI %s: no UI settings subsystem."), *Verb);
+						return;
+					}
+					if (Verb == TEXT("settings"))
+					{
+						UE_LOG(LogValhallaHUD, Log, TEXT("UI settings for character %d (%s, %s):\n%s"), UserSettings->GetCharacterId(),
+							*UValhallaUserSettingsSubsystem::CachePathFor(UserSettings->GetCharacterId()),
+							UserSettings->IsDirty() ? TEXT("unsaved changes") : TEXT("saved"), *UserSettings->Get().ToJsonString());
+					}
+					else if (Verb == TEXT("resetlayout"))
+					{
+						UserSettings->ResetToDefaults(EValhallaUISettingsSection::Layout);
+					}
+					else if (Verb == TEXT("panels"))
+					{
+						Hud.LogPanelGeometry();
+					}
+					else if (Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
+					{
+						const float Value = FCString::Atof(*Rest);
+						const bool bScale = Verb == TEXT("uiscale");
+						UserSettings->Mutate([bScale, Value](FValhallaUserUISettings& S) { (bScale ? S.UiScale : S.PanelOpacity) = Value; });
+					}
+					else
+					{
+						const FName Key = Args.IsValidIndex(1) ? FName(*Args[1]) : NAME_None;
+						const FValhallaPanelLayout* Designer = Hud.GetDesignerLayout(Key);
+						if (!UValhallaGameHUDWidget::FindMovablePanel(Key) || !Designer)
+						{
+							UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI %s: '%s' is not a movable panel on this HUD."), *Verb, *Key.ToString());
+							return;
+						}
+						const FValhallaPanelLayout Base = *Designer;
+						const bool bMove = Verb == TEXT("movepanel");
+						if (bMove && Args.Num() < 4)
+						{
+							UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI movepanel needs <key> <x> <y>."));
+							return;
+						}
+						const FVector2D Position = bMove ? FVector2D(FCString::Atof(*Args[2]), FCString::Atof(*Args[3])) : FVector2D::ZeroVector;
+						UserSettings->Mutate([&](FValhallaUserUISettings& S)
+						{
+							FValhallaPanelLayout* Existing = S.Panels.Find(Key);
+							FValhallaPanelLayout Layout = Existing && Existing->bSet ? *Existing : Base;
+							Layout.bSet = true;
+							if (bMove) { Layout.Position = Position; }
+							else { Layout.bVisible = Verb == TEXT("showpanel"); }
+							S.Panels.Add(Key, Layout);
+						});
+					}
+				}
 				else if (Verb == TEXT("press"))
 				{
 					// An action bar slot, exactly as its key or a click on the
@@ -1374,6 +1438,13 @@ void UValhallaGameHUDWidget::NativeOnInitialized()
 		LogFilters.Add(FName(Info.Key), true);
 	}
 
+	// B-21: this character's UI settings (the disk cache now, the backend's
+	// when it answers: OnChanged, bound in NativeConstruct, re-applies them).
+	if (UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		UserSettings->EnsureLoadedForCurrentCharacter();
+	}
+
 	Rebuild();
 }
 
@@ -1382,6 +1453,13 @@ void UValhallaGameHUDWidget::NativeConstruct()
 	Super::NativeConstruct();
 	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	BindCombatEvents();
+
+	if (UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this); UserSettings && !UserSettingsHandle.IsValid())
+	{
+		UserSettingsHandle = UserSettings->OnChanged.AddUObject(this, &UValhallaGameHUDWidget::HandleUserSettingsChanged);
+		// A load may have finished between NativeOnInitialized and now.
+		HandleUserSettingsChanged(UserSettings->Get());
+	}
 }
 
 void UValhallaGameHUDWidget::NativeDestruct()
@@ -1391,6 +1469,14 @@ void UValhallaGameHUDWidget::NativeDestruct()
 		GameState->OnCombatEvent.Remove(CombatEventHandle);
 	}
 	BoundGameState.Reset();
+	// B-21: a change still waiting for its debounce is saved now (EndPlay,
+	// travel, the HUD being replaced).
+	if (UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		UserSettings->OnChanged.Remove(UserSettingsHandle);
+		UserSettings->FlushPendingSave();
+	}
+	UserSettingsHandle.Reset();
 	Super::NativeDestruct();
 }
 
@@ -1516,6 +1602,15 @@ void UValhallaGameHUDWidget::BuildAll()
 	// so the HUD runs, blank but for the nameplates and floating text.
 	BindDesignerPanels();
 	PopulateDesignerPanels();
+
+	// B-21: the player's layout over the designer's (the designer's is
+	// recorded the first time, after click-through has settled visibility).
+	CaptureDesignerDefaults();
+	if (const UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		ApplyUserLayout(UserSettings->Get());
+		ApplyUserStyle(UserSettings->Get());
+	}
 
 	SetInventoryShown(bInventoryOpen);
 	SkillsRoot->SetVisibility(bSkillsOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -1744,6 +1839,366 @@ bool UValhallaGameHUDWidget::ApplyClickThrough(UWidget* Widget)
 		Widget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	}
 	return bHoldsClickable;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Player layout (B-21) — the settings subsystem's Panels over the designer's
+// ═════════════════════════════════════════════════════════════════════════════
+
+namespace
+{
+	/** `Widget`, or the ancestor of it that sits directly on `Canvas`. */
+	UWidget* CanvasChildOf(UWidget* Widget, const UCanvasPanel* Canvas)
+	{
+		while (Widget && Widget->GetParent() && Widget->GetParent() != Canvas)
+		{
+			Widget = Widget->GetParent();
+		}
+		return Widget && Widget->GetParent() == Canvas ? Widget : nullptr;
+	}
+
+	/** A Size Box override: a positive value sets it, anything else clears it (auto). */
+	void SetWidthOrClear(USizeBox* Box, float Value)
+	{
+		if (Value > 0.f) { Box->SetWidthOverride(Value); } else { Box->ClearWidthOverride(); }
+	}
+	void SetHeightOrClear(USizeBox* Box, float Value)
+	{
+		if (Value > 0.f) { Box->SetHeightOverride(Value); } else { Box->ClearHeightOverride(); }
+	}
+	void SetMaxHeightOrClear(USizeBox* Box, float Value)
+	{
+		if (Value > 0.f) { Box->SetMaxDesiredHeight(Value); } else { Box->ClearMaxDesiredHeight(); }
+	}
+
+	// An unset override reads 0 (its default), which the setters above treat as "auto".
+	float BoxWidth(const USizeBox* Box) { return Box->GetWidthOverride(); }
+	float BoxHeight(const USizeBox* Box) { return Box->GetHeightOverride(); }
+	float BoxMaxHeight(const USizeBox* Box) { return Box->GetMaxDesiredHeight(); }
+}
+
+const TArray<FValhallaMovablePanel>& UValhallaGameHUDWidget::GetMovablePanels()
+{
+	// Keep the members in step with the header's BindWidget(Optional) panels
+	// (Valhalla.Game.UI.MovablePanels checks). Flowing: the Size Box named here
+	// takes Size; scaled: fixed content, the player scales it.
+	using ESizing = EValhallaPanelSizing;
+	static const TArray<FValhallaMovablePanel> Panels = {
+		{ TEXT("Vitals"),      TEXT("VitalsPanel"),      ESizing::Scaled,           NAME_None,              true  },
+		{ TEXT("ActionBar"),   TEXT("ActionBarRow"),     ESizing::Scaled,           NAME_None,              true  },
+		{ TEXT("CastBar"),     TEXT("CastBar"),          ESizing::Scaled,           NAME_None,              true  },
+		{ TEXT("TargetFrame"), TEXT("TargetFramePanel"), ESizing::Scaled,           NAME_None,              true  },
+		{ TEXT("Party"),       TEXT("PartyPanel"),       ESizing::Scaled,           NAME_None,              true  },
+		{ TEXT("CombatLog"),   TEXT("CombatLogPanel"),   ESizing::FlowingBox,       TEXT("CombatLogSize"),  true  },
+		{ TEXT("Chat"),        TEXT("ChatPanel"),        ESizing::FlowingMaxHeight, TEXT("ChatSize"),       true  },
+		{ TEXT("Loot"),        TEXT("LootPanel"),        ESizing::Scaled,           NAME_None,              false },
+		{ TEXT("Skills"),      TEXT("SkillsPanel"),      ESizing::FlowingMaxHeight, TEXT("SkillsSize"),     false },
+		{ TEXT("Character"),   TEXT("CharacterPanel"),   ESizing::Scaled,           NAME_None,              false },
+		{ TEXT("Inventory"),   TEXT("InventoryPanel"),   ESizing::Scaled,           NAME_None,              false },
+	};
+	return Panels;
+}
+
+const FValhallaMovablePanel* UValhallaGameHUDWidget::FindMovablePanel(FName Key)
+{
+	return GetMovablePanels().FindByPredicate([Key](const FValhallaMovablePanel& Info) { return Info.Key == Key; });
+}
+
+FValhallaPanelLayout UValhallaGameHUDWidget::ResolvePanelLayout(const FValhallaPanelLayout& Designer, const FValhallaPanelLayout* User, float UiScale)
+{
+	const bool bUser = User && User->bSet;
+	const float Scale = FMath::IsFinite(UiScale)
+		? FMath::Clamp(UiScale, FValhallaUserUISettings::MinUiScale, FValhallaUserUISettings::MaxUiScale) : 1.f;
+	FValhallaPanelLayout Out = bUser ? *User : Designer;
+	Out.Position = Out.Position * Scale;
+	Out.Scale = Scale * (bUser ? FMath::Clamp(User->Scale, FValhallaPanelLayout::MinScale, FValhallaPanelLayout::MaxScale) : 1.f);
+	Out.Size = FVector2D(
+		bUser && User->Size.X > 0.0 ? User->Size.X : Designer.Size.X,
+		bUser && User->Size.Y > 0.0 ? User->Size.Y : Designer.Size.Y);
+	Out.bVisible = bUser ? User->bVisible : true;
+	Out.bSet = bUser;
+	return Out;
+}
+
+const FValhallaPanelLayout* UValhallaGameHUDWidget::GetDesignerLayout(FName Key) const
+{
+	const FPanelState* State = PanelStates.Find(Key);
+	return State ? &State->Designer : nullptr;
+}
+
+void UValhallaGameHUDWidget::CaptureDesignerDefaults()
+{
+	// Once per HUD: Rebuild keeps the designer's tree, whose canvas slots carry
+	// the player's layout after the first ApplyUserLayout.
+	if (bDesignerDefaultsCaptured || !bLayoutFromBlueprint || !RootCanvas)
+	{
+		return;
+	}
+	bDesignerDefaultsCaptured = true;
+
+	TSet<UWidget*> Claimed;
+	for (const FValhallaMovablePanel& Info : GetMovablePanels())
+	{
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), Info.Member);
+		UWidget* Member = Property ? Cast<UWidget>(Property->GetObjectPropertyValue_InContainer(this)) : nullptr;
+		UWidget* Widget = CanvasChildOf(Member, RootCanvas);
+		UCanvasPanelSlot* CanvasSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr;
+		if (!CanvasSlot)
+		{
+			// A hidden stand-in (the designer left it out) is on no canvas.
+			continue;
+		}
+		if (Claimed.Contains(Widget))
+		{
+			// Two panels in one canvas child (a pre-B-21 WBP_GameHUD's InventoryPair): the first one moves it.
+			UE_LOG(LogValhallaHUD, Warning, TEXT("game HUD: movable panel %s shares %s with another panel; it cannot be moved on its own."),
+				*Info.Key.ToString(), *Widget->GetName());
+			continue;
+		}
+		Claimed.Add(Widget);
+
+		FPanelState State;
+		State.Widget = Widget;
+		const FAnchors Anchors = CanvasSlot->GetAnchors();
+		State.Designer.AnchorMin = FVector2D(Anchors.Minimum);
+		State.Designer.AnchorMax = FVector2D(Anchors.Maximum);
+		State.Designer.Alignment = FVector2D(CanvasSlot->GetAlignment());
+		State.Designer.Position = FVector2D(CanvasSlot->GetPosition());
+		State.Designer.Scale = 1.f;
+		State.Designer.bVisible = true;
+		State.Designer.bSet = false;
+		State.DesignerVisibility = Widget->GetVisibility();
+		State.DesignerTransform = Widget->GetRenderTransform();
+		State.DesignerPivot = FVector2D(Widget->GetRenderTransformPivot());
+
+		if (Info.Sizing != EValhallaPanelSizing::Scaled)
+		{
+			USizeBox* Box = Info.Key == TEXT("Chat") ? ChatSizer.Get() : Cast<USizeBox>(WidgetTree->FindWidget(Info.SizeBox));
+			if (Box)
+			{
+				State.SizeBox = Box;
+				State.Designer.Size = Info.Sizing == EValhallaPanelSizing::FlowingBox
+					? FVector2D(BoxWidth(Box), BoxHeight(Box))
+					: FVector2D(BoxWidth(Box), BoxMaxHeight(Box));
+			}
+			else
+			{
+				UE_LOG(LogValhallaHUD, Warning, TEXT("game HUD: %s has no '%s' Size Box; the %s panel cannot be resized."),
+					*GetClass()->GetName(), *Info.SizeBox.ToString(), *Info.Key.ToString());
+			}
+		}
+
+		// Its background(s): the canvas child when it is a border, and a border
+		// straight inside it (the combat log's well). The chat's brush is
+		// OpenChat / CloseChat's (ChatOpenBrush).
+		if (Info.Key != TEXT("Chat"))
+		{
+			if (UBorder* Frame = Cast<UBorder>(Widget))
+			{
+				State.Backgrounds.Emplace(Frame, Frame->GetBrushColor());
+				if (UBorder* Inner = Cast<UBorder>(Frame->GetContent()))
+				{
+					State.Backgrounds.Emplace(Inner, Inner->GetBrushColor());
+				}
+			}
+		}
+		PanelStates.Add(Info.Key, MoveTemp(State));
+	}
+	ChatDesignerSize = FVector2D(ChatDesignWidth, ChatOpenHeight);
+	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: %d of %d movable panels on the canvas."), PanelStates.Num(), GetMovablePanels().Num());
+}
+
+int32 UValhallaGameHUDWidget::ApplyUserLayout(const FValhallaUserUISettings& Settings)
+{
+	if (!bLayoutFromBlueprint || !RootCanvas)
+	{
+		return 0;
+	}
+	CaptureDesignerDefaults();
+	if (PanelStates.Num() == 0)
+	{
+		return 0;
+	}
+
+	AppliedUiScale = FMath::IsFinite(Settings.UiScale)
+		? FMath::Clamp(Settings.UiScale, FValhallaUserUISettings::MinUiScale, FValhallaUserUISettings::MaxUiScale) : 1.f;
+	AppliedPanelOpacity = FMath::IsFinite(Settings.PanelOpacity)
+		? FMath::Clamp(Settings.PanelOpacity, FValhallaUserUISettings::MinPanelOpacity, FValhallaUserUISettings::MaxPanelOpacity) : 1.f;
+
+	int32 Moved = 0;
+	for (const FValhallaMovablePanel& Info : GetMovablePanels())
+	{
+		FPanelState* State = PanelStates.Find(Info.Key);
+		UWidget* Widget = State ? State->Widget.Get() : nullptr;
+		UCanvasPanelSlot* CanvasSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr;
+		if (!CanvasSlot)
+		{
+			continue;
+		}
+		const FValhallaPanelLayout Resolved = ResolvePanelLayout(State->Designer, Settings.FindSetPanel(Info.Key), AppliedUiScale);
+
+		// Where.
+		CanvasSlot->SetAnchors(FAnchors(Resolved.AnchorMin.X, Resolved.AnchorMin.Y, Resolved.AnchorMax.X, Resolved.AnchorMax.Y));
+		CanvasSlot->SetAlignment(Resolved.Alignment);
+		CanvasSlot->SetPosition(Resolved.Position);
+
+		// How big: a flowing panel's Size Box.
+		if (USizeBox* Box = State->SizeBox.Get())
+		{
+			if (Info.Key == TEXT("Chat"))
+			{
+				// TickLayout and OpenChat read these; TickLayout narrows from the
+				// width unless the player placed the chat.
+				ChatDesignPosition = Resolved.Position;
+				ChatDesignWidth = Resolved.Size.X;
+				ChatOpenHeight = Resolved.Size.Y;
+				SetWidthOrClear(Box, ChatDesignWidth);
+				SetMaxHeightOrClear(Box, ChatOpenHeight);
+				if (bChatOpen && ChatOpenHeight > 0.f)
+				{
+					Box->SetHeightOverride(ChatOpenHeight);
+				}
+			}
+			else if (Info.Sizing == EValhallaPanelSizing::FlowingBox)
+			{
+				SetWidthOrClear(Box, Resolved.Size.X);
+				SetHeightOrClear(Box, Resolved.Size.Y);
+			}
+			else
+			{
+				SetWidthOrClear(Box, Resolved.Size.X);
+				SetMaxHeightOrClear(Box, Resolved.Size.Y);
+			}
+		}
+
+		// Scale: a render transform about the alignment point, so the anchored
+		// corner stays put. Nothing set and UiScale 1: the designer's transform.
+		if (!Resolved.bSet && FMath::IsNearlyEqual(Resolved.Scale, 1.f))
+		{
+			Widget->SetRenderTransformPivot(State->DesignerPivot);
+			Widget->SetRenderTransform(State->DesignerTransform);
+		}
+		else
+		{
+			FWidgetTransform Transform = State->DesignerTransform;
+			Transform.Scale = FVector2D(Resolved.Scale, Resolved.Scale);
+			Widget->SetRenderTransformPivot(Resolved.Alignment);
+			Widget->SetRenderTransform(Transform);
+		}
+		State->AppliedScale = Resolved.Scale;
+
+		// Shown: a hideable panel the player hid stays collapsed (EnforceUserHiddenPanels);
+		// one they show again gets the designer's visibility back (the Tick code
+		// then shows or hides it as the game needs).
+		const bool bHide = Info.bHideable && !Resolved.bVisible;
+		if (State->bUserHidden && !bHide)
+		{
+			Widget->SetVisibility(Info.Key == TEXT("Chat")
+				? (bChatOpen ? ESlateVisibility::Visible : ESlateVisibility::SelfHitTestInvisible)
+				: State->DesignerVisibility);
+		}
+		State->bUserHidden = bHide;
+		State->bUserSet = Resolved.bSet;
+		Moved += Resolved.bSet ? 1 : 0;
+
+		// Background opacity: the designer's brush alpha times PanelOpacity.
+		for (const TPair<TWeakObjectPtr<UBorder>, FLinearColor>& Background : State->Backgrounds)
+		{
+			if (UBorder* Border = Background.Key.Get())
+			{
+				FLinearColor Colour = Background.Value;
+				Colour.A *= AppliedPanelOpacity;
+				Border->SetBrushColor(Colour);
+			}
+		}
+	}
+	if (bChatOpen && ChatPanel)
+	{
+		ChatPanel->SetBrushColor(ChatOpenBrush());
+	}
+	LayoutForWidth = -1.f; // TickLayout measures again
+	EnforceUserHiddenPanels();
+
+	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: player layout applied (%d panel(s) placed, UI scale %.2f, panel opacity %.2f)."),
+		Moved, AppliedUiScale, AppliedPanelOpacity);
+	return Moved;
+}
+
+void UValhallaGameHUDWidget::ApplyUserStyle(const FValhallaUserUISettings& /*Settings*/)
+{
+	// B-21 step 5 (live style): Colours over the "Valhalla|HUD Style"
+	// properties, chat font / lines / timestamps, log filters, nameplates.
+}
+
+void UValhallaGameHUDWidget::EnforceUserHiddenPanels()
+{
+	for (TPair<FName, FPanelState>& Entry : PanelStates)
+	{
+		UWidget* Widget = Entry.Value.Widget.Get();
+		if (!Entry.Value.bUserHidden || !Widget)
+		{
+			continue;
+		}
+		// Typing shows the chat even when the player hid it idle.
+		if (Entry.Key == TEXT("Chat") && bChatOpen)
+		{
+			if (Widget->GetVisibility() == ESlateVisibility::Collapsed)
+			{
+				Widget->SetVisibility(ESlateVisibility::Visible);
+			}
+			continue;
+		}
+		if (Widget->GetVisibility() != ESlateVisibility::Collapsed)
+		{
+			Widget->SetVisibility(ESlateVisibility::Collapsed);
+		}
+	}
+}
+
+void UValhallaGameHUDWidget::HandleUserSettingsChanged(const FValhallaUserUISettings& Settings)
+{
+	if (!bBuilt)
+	{
+		return; // Rebuild applies them
+	}
+	ApplyUserLayout(Settings);
+	ApplyUserStyle(Settings);
+}
+
+FLinearColor UValhallaGameHUDWidget::ChatOpenBrush() const
+{
+	return WithAlpha(ChatOpenBackground, ChatOpenBackground.A * AppliedPanelOpacity);
+}
+
+void UValhallaGameHUDWidget::LogPanelGeometry() const
+{
+	const FVector2D CanvasSize = RootCanvas ? FVector2D(RootCanvas->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
+	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD panels (canvas %.0f x %.0f, UI scale %.2f):"), CanvasSize.X, CanvasSize.Y, AppliedUiScale);
+	for (const FValhallaMovablePanel& Info : GetMovablePanels())
+	{
+		const FPanelState* State = PanelStates.Find(Info.Key);
+		const UWidget* Widget = State ? State->Widget.Get() : nullptr;
+		const UCanvasPanelSlot* CanvasSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr;
+		if (!CanvasSlot)
+		{
+			UE_LOG(LogValhallaHUD, Log, TEXT("  %-11s (not on the canvas)"), *Info.Key.ToString());
+			continue;
+		}
+		const FGeometry& Geometry = Widget->GetCachedGeometry();
+		const FVector2D TopLeft = RootCanvas ? FVector2D(RootCanvas->GetCachedGeometry().AbsoluteToLocal(Geometry.GetAbsolutePosition())) : FVector2D::ZeroVector;
+		const FVector2D Drawn = FVector2D(Geometry.GetAbsoluteSize()) / FMath::Max(0.0001f, RootCanvas ? RootCanvas->GetCachedGeometry().Scale : 1.f);
+		const FAnchors Anchors = CanvasSlot->GetAnchors();
+		// The member itself when the designer framed it (ActionBarRow in ActionBarFrame, ...).
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), Info.Member);
+		const UWidget* Member = Property ? Cast<UWidget>(Property->GetObjectPropertyValue_InContainer(this)) : nullptr;
+		const FString MemberSize = Member && Member != Widget
+			? FString::Printf(TEXT(" (%s %.0fx%.0f)"), *Member->GetName(), Member->GetDesiredSize().X, Member->GetDesiredSize().Y) : FString();
+		UE_LOG(LogValhallaHUD, Log, TEXT("  %-11s %-18s anchor (%.2f,%.2f) align (%.2f,%.2f) pos (%.1f,%.1f) desired %.0fx%.0f%s drawn %.0fx%.0f at (%.0f,%.0f) scale %.2f %s%s%s"),
+			*Info.Key.ToString(), *Widget->GetName(), Anchors.Minimum.X, Anchors.Minimum.Y,
+			CanvasSlot->GetAlignment().X, CanvasSlot->GetAlignment().Y, CanvasSlot->GetPosition().X, CanvasSlot->GetPosition().Y,
+			Widget->GetDesiredSize().X, Widget->GetDesiredSize().Y, *MemberSize, Drawn.X, Drawn.Y, TopLeft.X, TopLeft.Y, State->AppliedScale,
+			*UEnum::GetValueAsString(Widget->GetVisibility()), State->bUserSet ? TEXT(" [player]") : TEXT(""), State->bUserHidden ? TEXT(" [hidden]") : TEXT(""));
+	}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1985,6 +2440,8 @@ void UValhallaGameHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 	TickDeathOverlay();
 	TickWorldLayer(InDeltaTime);
 	TickConfigWatcher(InDeltaTime);
+	// B-21: last, so a panel the player hid stays hidden whatever the Tick code set.
+	EnforceUserHiddenPanels();
 
 	if (bCombatLogDirty)
 	{
@@ -2534,15 +2991,6 @@ void UValhallaGameHUDWidget::TickTooltip()
 
 namespace
 {
-	/** `Widget`, or the ancestor of it that sits directly on `Canvas`. */
-	UWidget* CanvasChildOf(UWidget* Widget, const UCanvasPanel* Canvas)
-	{
-		while (Widget && Widget->GetParent() && Widget->GetParent() != Canvas)
-		{
-			Widget = Widget->GetParent();
-		}
-		return Widget && Widget->GetParent() == Canvas ? Widget : nullptr;
-	}
 
 	/** A canvas slot pinned to the bottom-left corner by its bottom-left point. */
 	bool IsBottomLeft(const UCanvasPanelSlot* CanvasSlot)
@@ -2562,6 +3010,17 @@ void UValhallaGameHUDWidget::TickLayout()
 	{
 		return;
 	}
+	// B-21: the player placed the chat; leave it where they put it.
+	const FPanelState* ChatState = PanelStates.Find(TEXT("Chat"));
+	if (ChatState && ChatState->bUserSet)
+	{
+		return;
+	}
+	auto AppliedScaleOf = [this](const TCHAR* Key)
+	{
+		const FPanelState* State = PanelStates.Find(Key);
+		return State ? State->AppliedScale : 1.f;
+	};
 	UCanvasPanelSlot* ChatSlot = Cast<UCanvasPanelSlot>(ChatPanel->Slot);
 	const UWidget* ActionBarPanel = CanvasChildOf(ActionBarRoot, RootCanvas);
 	UWidget* VitalsBlock = CanvasChildOf(VitalsPanel, RootCanvas);
@@ -2572,8 +3031,10 @@ void UValhallaGameHUDWidget::TickLayout()
 	}
 
 	const float Width = RootCanvas->GetCachedGeometry().GetLocalSize().X;
-	const float BarWidth = ActionBarPanel->GetDesiredSize().X;
-	const float VitalsHeight = VitalsBlock->GetDesiredSize().Y;
+	// Desired sizes are before the render scale (UiScale x the panel's) the canvas draws them at.
+	const float ChatScale = FMath::Max(0.01f, AppliedScaleOf(TEXT("Chat")));
+	const float BarWidth = ActionBarPanel->GetDesiredSize().X * AppliedScaleOf(TEXT("ActionBar"));
+	const float VitalsHeight = VitalsBlock->GetDesiredSize().Y * AppliedScaleOf(TEXT("Vitals"));
 	if (Width <= 0.f || BarWidth <= 0.f || VitalsHeight <= 0.f || FMath::IsNearlyEqual(Width, LayoutForWidth, 0.5f))
 	{
 		return;
@@ -2589,7 +3050,7 @@ void UValhallaGameHUDWidget::TickLayout()
 	const float Room = (Width - BarWidth) * 0.5f - LeftX - Gap;
 	if (Room >= MinReadableWidth)
 	{
-		ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, Room));
+		ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, Room / ChatScale));
 		ChatSlot->SetPosition(ChatDesignPosition);
 		return;
 	}
@@ -2597,7 +3058,7 @@ void UValhallaGameHUDWidget::TickLayout()
 	// Too narrow: stacked above the vitals block, as wide as half the screen.
 	const FVector2D VitalsPosition = VitalsSlot->GetPosition();
 	const float VitalsTop = VitalsHeight - VitalsPosition.Y; // px above the bottom edge
-	ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, FMath::Max(MinReadableWidth, Width * 0.5f - VitalsPosition.X - Gap)));
+	ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, FMath::Max(MinReadableWidth, Width * 0.5f - VitalsPosition.X - Gap) / ChatScale));
 	ChatSlot->SetPosition(FVector2D(VitalsPosition.X, -(VitalsTop + Gap)));
 	UE_LOG(LogValhallaHUD, Verbose, TEXT("chat stacked above the vitals (%.0f units wide, action bar %.0f)."), Width, BarWidth);
 }
@@ -3690,7 +4151,7 @@ void UValhallaGameHUDWidget::OpenChat(const FString& Prefill)
 		return;
 	}
 	bChatOpen = true;
-	ChatPanel->SetBrushColor(ChatOpenBackground);
+	ChatPanel->SetBrushColor(ChatOpenBrush());
 	ChatPanel->SetVisibility(ESlateVisibility::Visible);
 	// Typing, the box jumps to its full height (the designer Size Box's Max
 	// Desired Height) rather than growing line by line; idle, it fits its lines.

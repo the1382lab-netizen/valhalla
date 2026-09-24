@@ -23,7 +23,7 @@ different file. See `deploy/README.md` for hosting.
 | `NODE_ENV` | unset (= development) | `production` disables both dev fallback secrets. |
 | `VALHALLA_DB` | `valhalla.db` (relative to cwd) | SQLite file path. Used by the smoke test to run against a throwaway DB. |
 | `CORS_ORIGINS` | `http://localhost:5180,http://127.0.0.1:5180` (the web editor) | Comma-separated browser origins allowed to call the API (`middleware/cors.ts`). A request with any other `Origin` gets 403; requests with no `Origin` (the game client and server) are unaffected. The web editor's API server (`editor/src/server.ts`) reads the same variable. |
-| `RATE_LIMIT_WINDOW_MS` | `60000` | Window of the per-IP rate limits (`middleware/rateLimit.ts`): login and register 10 per window, `POST /api/characters` 5, then 429 with `Retry-After`. `X-Forwarded-For` is trusted only from loopback (Caddy). Only the smoke test changes the window. |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window of the per-IP rate limits (`middleware/rateLimit.ts`): login and register 10 per window, `POST /api/characters` 5, `GET`/`PUT /api/characters/:id/settings` 60 together, then 429 with `Retry-After`. `X-Forwarded-For` is trusted only from loopback (Caddy). Only the smoke test changes the window. |
 
 ## Server-to-server API (Valhalla 2.0 / Unreal dedicated server)
 
@@ -178,6 +178,29 @@ columns. The backend applies no scaling, clamping or conversion — whatever a c
 saves is what it loads back. (Note that a character last saved by the 1.0 client
 therefore carries pixel coordinates; the UE side decides how to treat those.)
 
+## Player API: per-character UI settings (B-21)
+
+The game client saves each character's HUD layout, style, chat and nameplate
+options here (`routes/characters.ts`, `services/SettingsService.ts`, table
+`character_settings`). Player JWT (`Authorization: Bearer`), like the other
+`/api/characters` routes; the character must belong to the token's user,
+otherwise 404 (so ids cannot be probed). 60 requests per window per IP, GET and
+PUT together.
+
+    GET /api/characters/:id/settings
+    200 { "ui": { ... }, "updatedAt": "2026-09-24T17:10:17.252Z" }
+    404 { "error": "No settings saved for this character.", "noSettings": true }   (client uses defaults)
+    404 { "error": "Character not found." }                                         (not yours / no such id)
+
+    PUT /api/characters/:id/settings      { "ui": { ... } }
+    200 { "ok": true, "updatedAt": "..." }
+    400 ui missing or not a JSON object;  413 ui over 64 KB of JSON (or a body over the 100 KB parser limit)
+
+`ui` is the client's `FValhallaUserUISettings` document
+(`Valhalla2/Source/ValhallaCore/Public/ValhallaUserUISettings.h` has the format),
+stored verbatim; the backend never reads inside it. `updatedAt` (ISO 8601) is
+stamped by the backend on every PUT. Deleting the character deletes the row.
+
 ## Smoke test
 
 ```bash
@@ -202,3 +225,13 @@ the login limit tripping at attempt 11 with `Retry-After` and clearing after it,
 the register and character-create limits, health and internal routes
 unlimited, the dev server secret refused (503) with `NODE_ENV=production`, and
 production refusing to start without `JWT_SECRET`.
+
+```bash
+npx tsx server/scripts/smoke-settings.ts
+```
+
+B-21, against its own throwaway server and database: 401 without a token, GET
+404 before a save, PUT then GET returning the same document and an ISO
+`updatedAt`, a second PUT replacing it, another user's character 404 for GET and
+PUT, malformed ids 404, a non-object `ui` 400, over 64 KB 413, the 61st request
+in a window 429, and a deleted character's settings row gone.

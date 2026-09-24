@@ -41,5 +41,16 @@
  * character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE
  * slot_type TEXT NOT NULL
  * item_id TEXT NOT NULL
+ *
+ * -- character_action_bar --
+ * character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE
+ * slot_index INTEGER NOT NULL
+ * skill_id TEXT NOT NULL
+ * PRIMARY KEY (character_id, slot_index)
+ *
+ * -- character_settings -- (B-21)
+ * character_id INTEGER PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE
+ * ui_json TEXT NOT NULL (the client's UI settings document, a JSON object, <= 64 KB)
+ * updated_at TEXT NOT NULL (ISO 8601, set by the backend on every write)
  */
 export {};

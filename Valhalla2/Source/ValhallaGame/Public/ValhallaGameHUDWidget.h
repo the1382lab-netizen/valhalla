@@ -26,6 +26,7 @@
 #include "ValhallaGameTypes.h"
 #include "ValhallaInventoryTypes.h"
 #include "ValhallaUIConfig.h"
+#include "ValhallaUserUISettings.h"
 #include "ValhallaGameHUDWidget.generated.h"
 
 class AValhallaCharacter;
@@ -351,6 +352,36 @@ public:
 	void HandleClicked();
 };
 
+/** B-21: how a movable panel takes a user size. */
+enum class EValhallaPanelSizing : uint8
+{
+	/** Fixed content (cells, bars): the player scales it (render scale); Size is ignored. */
+	Scaled,
+	/** A Size Box with Width and Height Overrides takes Size (the combat log). */
+	FlowingBox,
+	/** A Size Box with a Width Override and a Max Desired Height takes Size (chat, skills). */
+	FlowingMaxHeight,
+};
+
+/**
+ * B-21: one panel the player may move, size, scale and hide — an entry of
+ * UValhallaGameHUDWidget::GetMovablePanels. `Member` is the BindWidget(Optional)
+ * member naming it; what moves is that widget's root-canvas child (the member
+ * itself, or the designer's frame round it: ActionBarRow sits in
+ * ActionBarFrame, CastBar in CastBarSize).
+ */
+struct FValhallaMovablePanel
+{
+	/** The settings key (FValhallaUserUISettings::Panels). */
+	FName Key;
+	FName Member;
+	EValhallaPanelSizing Sizing = EValhallaPanelSizing::Scaled;
+	/** The Size Box a flowing panel's Size goes to (a designer widget name). */
+	FName SizeBox;
+	/** Always-on HUD parts may be hidden; windows the player opens (loot, skills, I) may not. */
+	bool bHideable = false;
+};
+
 /** One combat-log line, already worded and coloured, with its 1.0 filter key. */
 struct FValhallaCombatLogLine
 {
@@ -386,6 +417,22 @@ struct FValhallaCombatLogLine
  * `valhalla.ReloadUI` and the ui-config.json timestamp poll call it, so a UI
  * Layout editor save (inventory grid, chat lines, nameplates) shows up in a
  * running PIE session.
+ *
+ * ## Player layout (B-21)
+ *
+ * The player's UI settings (UValhallaUserSettingsSubsystem, per character,
+ * synced through the backend) go over the designer's layout. The movable
+ * panels are GetMovablePanels(): each is a root-canvas child whose designer
+ * slot (anchors, alignment, position), Size Box and background colours are
+ * recorded once (CaptureDesignerDefaults, the Reset values), and
+ * ApplyUserLayout sets them from the settings after every build and on every
+ * change (OnChanged). Flowing panels (chat, combat log, skills) take a size on
+ * their Size Box; the others scale. UiScale multiplies every panel's position
+ * and render scale (about its alignment point), which is what a DPI change
+ * does to point-anchored canvas children, without touching the engine's DPI
+ * curve or the front end; PanelOpacity scales the backgrounds' brush alpha
+ * only, so text stays readable. `valhalla.UI settings | resetlayout | panels |
+ * movepanel ...` drive it from the console.
  *
  * ## Input
  *
@@ -433,6 +480,41 @@ public:
 
 	/** Re-read the config from the data subsystem and rebuild every panel. */
 	void Rebuild();
+
+	// ── Player layout (B-21) ────────────────────────────────────────────
+
+	/** The panels the player may move: key, BindWidget member, sizing, hideable. */
+	static const TArray<FValhallaMovablePanel>& GetMovablePanels();
+	static const FValhallaMovablePanel* FindMovablePanel(FName Key);
+
+	/**
+	 * Lay the movable panels out from `Settings` over the designer's layout
+	 * (CaptureDesignerDefaults): each bSet panel takes its anchors, alignment,
+	 * position, size (flowing panels' Size Box) and visibility; every panel
+	 * takes UiScale (position x UiScale, render scale UiScale x Scale about its
+	 * alignment point: what a DPI change would do) and PanelOpacity (its
+	 * background borders' brush alpha; text and icons untouched). Settings
+	 * with nothing set put back exactly the designer's layout. Returns how many
+	 * panels a bSet entry moved; 0 (and nothing touched) before a layout exists.
+	 */
+	int32 ApplyUserLayout(const FValhallaUserUISettings& Settings);
+
+	/** B-21 step 5 placeholder: colours, chat and nameplate options. */
+	void ApplyUserStyle(const FValhallaUserUISettings& Settings);
+
+	/**
+	 * The canvas values a panel is given: the designer's (`Designer`), or the
+	 * player's (`User`, when non-null and bSet); Position is multiplied by
+	 * UiScale, Scale is UiScale x the panel's own, a zero Size axis keeps the
+	 * designer's. Pure, for ApplyUserLayout and its test.
+	 */
+	static FValhallaPanelLayout ResolvePanelLayout(const FValhallaPanelLayout& Designer, const FValhallaPanelLayout* User, float UiScale);
+
+	/** The designer's layout of a movable panel (bSet false), or null before CaptureDesignerDefaults. */
+	const FValhallaPanelLayout* GetDesignerLayout(FName Key) const;
+
+	/** `valhalla.UI panels`: each movable panel's canvas widget, slot and desired size, to the log. */
+	void LogPanelGeometry() const;
 
 	/** Re-read ui-config.json from disk, then Rebuild. `valhalla.ReloadUI`. */
 	void ReloadFromDisk();
@@ -487,6 +569,14 @@ private:
 	void BindDesignerPanels();
 	/** Fill the designer's containers (cells, rows, tokens) and build the world layer / filter menu. */
 	void PopulateDesignerPanels();
+	/** B-21: once per HUD, record each movable panel's designer canvas slot, size box and backgrounds (the Reset values). */
+	void CaptureDesignerDefaults();
+	/** B-21: collapse the panels the player hid, after the Tick code has set its own visibility. */
+	void EnforceUserHiddenPanels();
+	/** B-21: the settings subsystem's OnChanged. */
+	void HandleUserSettingsChanged(const FValhallaUserUISettings& Settings);
+	/** ChatOpenBackground at the player's PanelOpacity. */
+	FLinearColor ChatOpenBrush() const;
 	/** Layout panels, and panels with nothing clickable, stop eating clicks. Returns true when `Widget` is interactive. */
 	bool ApplyClickThrough(UWidget* Widget);
 	/** Hidden, unparented stand-in for a designer part the Blueprint lacks; warns once per name (not without a layout). */
@@ -525,7 +615,9 @@ private:
 	 * 640 px PIE client, or any window under ~1450 Slate units) runs under the
 	 * centred action bar. Narrow its Size Box to the gap, or lift it above the
 	 * vitals when the gap is too small to read. Re-run only when the width
-	 * changes; only for a bottom-left anchored chat and vitals.
+	 * changes; only for a bottom-left anchored chat and vitals. B-21: not at
+	 * all once the player has placed the chat (Panels.Chat.bSet); the sizes it
+	 * measures are taken at the panels' applied render scale.
 	 */
 	void TickLayout();
 
@@ -910,6 +1002,31 @@ private:
 	// config watcher
 	double ConfigWatchAccumulator = 0.0;
 	FDateTime ConfigTimestamp;
+
+	// player layout (B-21)
+	struct FPanelState
+	{
+		/** The root-canvas child that moves. */
+		TWeakObjectPtr<UWidget> Widget;
+		FValhallaPanelLayout Designer;
+		ESlateVisibility DesignerVisibility = ESlateVisibility::SelfHitTestInvisible;
+		FWidgetTransform DesignerTransform;
+		FVector2D DesignerPivot = FVector2D(0.5f, 0.5f);
+		TWeakObjectPtr<USizeBox> SizeBox;
+		/** The panel's background borders and their designer brush colours (PanelOpacity scales the alpha). */
+		TArray<TPair<TWeakObjectPtr<UBorder>, FLinearColor>> Backgrounds;
+		bool bUserSet = false;
+		bool bUserHidden = false;
+		/** The render scale applied (UiScale x the panel's). */
+		float AppliedScale = 1.f;
+	};
+	TMap<FName, FPanelState> PanelStates;
+	bool bDesignerDefaultsCaptured = false;
+	float AppliedUiScale = 1.f;
+	float AppliedPanelOpacity = 1.f;
+	/** The chat Size Box's designer width and max height (ChatDesignWidth / ChatOpenHeight when the player has not sized it). */
+	FVector2D ChatDesignerSize = FVector2D::ZeroVector;
+	FDelegateHandle UserSettingsHandle;
 
 	FDelegateHandle CombatEventHandle;
 	TWeakObjectPtr<class AValhallaGameState> BoundGameState;

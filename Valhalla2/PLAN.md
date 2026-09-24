@@ -1424,6 +1424,129 @@ panel keys. The code-built panel shows them in the meantime.
         they are not in this commit. Until they are committed a clean checkout
         shows the Blueprints' frames without art.
 
+## B-21 — In-game options menu and HUD customization, steps 1–2 (2026-09-24)
+
+Kevin's decisions: settings are per character and synced through the backend
+(saved when changed, loaded at login); the UI is locked by default; Escape
+opens the options menu when nothing else is open; a cog button bottom right is
+the other way in. Steps 1–2 are the foundation (settings model, sync, layout
+apply); the edit mode, the menu and live style come next.
+
+- [x] **Settings model (ValhallaCore).** `FValhallaUserUISettings`
+      (`ValhallaUserUISettings.h`, BlueprintType): `Version` 1, `UpdatedAt`
+      (ISO 8601 UTC, stamped on every change), `bLocked` (true), `UiScale`
+      (1, 0.5–2), `PanelOpacity` (1, 0.2–1), `Panels` (key ->
+      `FValhallaPanelLayout`: AnchorMin/Max, Alignment, Position, Size (0 =
+      designer's), Scale, bVisible, bSet), `Colours` (HUD Style property name
+      -> colour), `ChatFontSize` / `ChatVisibleLines` (0 = default),
+      `bChatTimestamps`, `LogFilters` (filter key -> shown; the HUD's own
+      `TMap<FName, bool>` shape), `bShowNpcNameplates`,
+      `bShowPlayerNameplates`, `bFloatingCombatText`, `NameplateFontSize`.
+      Hand-written JSON (format in the header): flat object, vectors `[x, y]`,
+      colours sRGB `"#rrggbbaa"`, sorted keys (stable bytes). Missing fields
+      keep defaults, wrong types are skipped with a warning, values clamp, text
+      that is not an object loads the defaults, unknown fields are kept and
+      written back, a newer `Version` loads what it knows and keeps its number.
+      `ResetSection` (All / Layout / Style / Chat / Nameplates).
+- [x] **Backend.** Table `character_settings (character_id PK -> characters.id
+      ON DELETE CASCADE, ui_json TEXT, updated_at TEXT)`, created with the
+      other tables (`CREATE TABLE IF NOT EXISTS` is the migration).
+      `GET /api/characters/:id/settings` -> `{ui, updatedAt}` (404 when nothing
+      is saved, `noSettings: true`; 404 for another user's or no character),
+      `PUT` `{ui}` -> `{ok, updatedAt}` (400 not an object, 413 over 64 KB),
+      player JWT (charactersRouter), 60 per minute per IP for GET + PUT
+      together (`settingsLimiter`). `services/SettingsService.ts`.
+      `deleteCharacter` deletes the row explicitly: found while testing that
+      sql.js's `export()` (every `saveToDisk`) resets `PRAGMA foreign_keys`,
+      so no `ON DELETE CASCADE` in this backend fires (`character_action_bar`
+      rows are left behind too; not fixed here). CORS needed nothing (PUT was
+      already allowed). README section and `scripts/smoke-settings.ts`.
+- [x] **Client HTTP and the session.** The JWT lived only on
+      `AValhallaFrontEndController::Session`, which the ClientTravel into the
+      world destroys, so the in-world client had no token. `EnterWorld` now
+      hands token, user id and character id to
+      `UValhallaBackendSubsystem::SetPlayerSession` (per game instance, survives
+      the travel, memory only, logged redacted); the front end's BeginPlay and
+      LogOut clear it. New `GetCharacterSettings` / `PutCharacterSettings`.
+      Chosen over relaying through the game server (server RPC -> internal
+      route with X-Server-Secret): the routes are the player's own, the backend
+      checks ownership against the token, no RPC payload limits or server
+      plumbing, and a token that expires (24 h) only means that session's
+      changes stay in the disk cache until the next login pushes them.
+- [x] **`UValhallaUserSettingsSubsystem`** (GameInstance, not on a dedicated
+      server): `Get()`, `Mutate(lambda)` / `Set` (sanitize, stamp, dirty,
+      broadcast `OnChanged`), debounced `Save()` 2 s after the last change
+      (FTSTicker), immediate on `ResetToDefaults`, `FlushPendingSave` (HUD
+      destruct), `FlushAndForget` (front end opens), `Deinitialize`.
+      `LoadForCharacter(id)`: disk cache `Saved/UI/settings_<id>.json`
+      (`settings_offline.json` for id 0: offline PIE) applies at once, then
+      GET; newer `UpdatedAt` wins (backend on a tie), a newer or never-sent
+      local copy is PUT back, unreachable / 401 keeps the cache. Cache written
+      beside + moved over on every save. Character id: the backend session's
+      (0 without one).
+- [x] **Movable panels.** `UValhallaGameHUDWidget::GetMovablePanels()`: Vitals
+      (VitalsPanel), ActionBar (ActionBarRow, moves ActionBarFrame), CastBar
+      (CastBar, moves CastBarSize), TargetFrame, Party, CombatLog (flowing:
+      CombatLogSize width + height), Chat (flowing: ChatSize width + max /
+      open height), Loot, Skills (flowing: SkillsSize width + max height),
+      Character, Inventory; scaled otherwise. Hideable: the always-on parts
+      (not loot, skills, character, inventory; chat shows while typing).
+- [x] **WBP_GameHUD split.** `hud_blueprints.py`: CharacterPanel and
+      InventoryPanel are their own root-canvas children ((0.5,0.5) /
+      (1,0.5) / (-102,-30) and (0.5,0.5) / (0,0.5) / (-94,-30), from the fixed
+      widths 256 and 452 and the 8 px gap; both min height 504, the tallest
+      class's character column, as the Horizontal Box made them one height).
+      Re-laid out with `layout_hud_from_config(replace=True)` (98 widgets,
+      compiled, saved; the cell / bar classes survived, no re-wire needed),
+      re-saved with AssetTools. PIE: the character panel's left edge is at
+      x 360 as the pair's was; screenshots 00 (before) and 02 (after) match.
+- [x] **Layout apply.** `CaptureDesignerDefaults` (once, after
+      PopulateDesignerPanels so click-through has settled visibility): each
+      panel's canvas slot, render transform, Size Box values and background
+      brush colours. `ApplyUserLayout` (every build and `OnChanged`): bSet
+      entries' anchors, alignment, position, Size (flowing), Scale and
+      visibility (`EnforceUserHiddenPanels` after the Tick code); nothing set
+      puts back exactly the designer's. Chat: `ChatDesignPosition` / width /
+      open height follow the applied values, and `TickLayout`'s narrow-screen
+      fix-up is skipped once the player has placed the chat (it measures at
+      the applied render scale otherwise). `ApplyUserStyle` is a placeholder.
+      `Size` means a flowing panel's content box (not the canvas slot with
+      auto-size off): the chat's idle-grows / open-jumps behaviour lives on
+      that box.
+- [x] **UiScale / PanelOpacity.** UiScale multiplies each movable panel's
+      position and its render scale (about its alignment point): for
+      point-anchored canvas children that is exactly what a DPI change does,
+      without touching the project DPI curve, the front end or the editor;
+      text stays sharp (Slate rasterizes at the scale), hit-testing follows
+      the transform. PanelOpacity scales the background borders' brush alpha
+      (the panel frame and the combat log's well; the open chat's
+      background), so text and icons stay opaque.
+- [x] **Console.** `valhalla.UI settings` (the JSON), `resetlayout`, `panels`
+      (each movable panel's slot and drawn geometry), and dev verbs until edit
+      mode: `movepanel <Key> <x> <y>`, `hidepanel` / `showpanel <Key>`,
+      `uiscale <s>`, `opacity <a>`.
+- [x] **Tests.** `Valhalla.Core.UISettings.RoundTrip` / `.Defaults` /
+      `.ForwardVersion`; `Valhalla.Game.UI.MovablePanels` (the list against
+      the BindWidget members, the Size Boxes, `ResolvePanelLayout` with empty
+      and set entries and UiScale, `ApplyUserLayout` on a HUD without a layout
+      a no-op, WBP_GameHUD's tree: every panel its own canvas child, no
+      InventoryPair). Full `Valhalla.` run: 36 tests, all pass but the known
+      `Valhalla.Core.Data.MeshIdFallback`. Backend: `smoke-settings.ts` 37
+      assertions (401, GET 404 -> PUT -> GET, replace, ownership 404, bad ids,
+      400s, 413 at 70 and 200 KB, 429 at 61, delete removes the row);
+      `smoke-security` and `smoke-internal` still pass; `tsc --noEmit` clean.
+- [x] **PIE (L_World, offline, 2 clients).** HUD unchanged
+      (`Saved/ClaudeOps/b21/01_layout_baseline`), `valhalla.UI settings`
+      prints the JSON, `movepanel Chat 300 -8` wrote
+      `Saved/UI/settings_offline.json` 2 s later, a new PIE put the chat at
+      (300, -8) (`03`, `04` open), `uiscale 1.3` + `opacity 0.4` (`05`),
+      `resetlayout` put everything back (chat at 232, narrowed again). The
+      backend path was not exercised in PIE (no backend running there).
+- [ ] Step 3 — edit mode (unlock, drag / resize / hide handles writing Panels).
+- [ ] Step 4 — options menu (Escape when nothing is open, cog button bottom right).
+- [ ] Step 5 — live style (Colours, chat font / lines / timestamps, log filters, nameplates: `ApplyUserStyle`).
+- [ ] Step 6 — verification (front end -> world with the backend: load at login, save on change, two characters).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

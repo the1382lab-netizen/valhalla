@@ -24,6 +24,7 @@
 #include "ValhallaConstants.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
+#include "ValhallaUserSettingsSubsystem.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaFrontEnd);
 
@@ -711,6 +712,18 @@ void AValhallaFrontEndController::BeginPlay()
 
 	AutoLoginSlot = FrontEndClientCounter++;
 
+	// B-21: the in-world player session (the token the UI settings sync uses)
+	// ends when the front end opens again; a new Enter World sets it anew. The
+	// settings subsystem flushed its last change when the HUD went away.
+	if (UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this))
+	{
+		Backend->ClearPlayerSession();
+	}
+	if (UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		UserSettings->FlushAndForget();
+	}
+
 	LoginScreen = CreateWidget<UValhallaLoginWidget>(this, UValhallaLoginWidget::StaticClass());
 	if (!LoginScreen)
 	{
@@ -1134,12 +1147,25 @@ void AValhallaFrontEndController::EnterWorld(int32 CharacterId)
 	UE_LOG(LogValhallaFrontEnd, Log, TEXT("entering world: %s?token=%s?characterId=%d"),
 		*Address, *UValhallaBackendSubsystem::RedactToken(Session.Token), CharacterId);
 
+	// B-21: the travel destroys this controller and its Session; the backend
+	// subsystem (per game instance, survives the travel) keeps the token and
+	// the character id in memory so the in-world client can sync its own UI
+	// settings (GET/PUT /api/characters/:id/settings) with its own token.
+	if (UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this))
+	{
+		Backend->SetPlayerSession(Session.Token, Session.UserId, CharacterId);
+	}
+
 	ClientTravel(Url, TRAVEL_Absolute);
 }
 
 void AValhallaFrontEndController::LogOut()
 {
 	Session = FValhallaAuthSession();
+	if (UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this))
+	{
+		Backend->ClearPlayerSession();
+	}
 	bAutoLoginActive = false;
 
 	if (SelectScreen)

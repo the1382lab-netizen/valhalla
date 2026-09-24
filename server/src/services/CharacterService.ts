@@ -359,6 +359,9 @@ export function deleteCharacter(characterId: number, userId: number): void {
   // Delete inventory and equipment first, then character
   db.run('DELETE FROM inventory_items WHERE character_id = ?', [characterId]);
   db.run('DELETE FROM character_equipment WHERE character_id = ?', [characterId]);
+  // B-21: explicit, like the two above. ON DELETE CASCADE cannot be relied on:
+  // sql.js's export() (saveToDisk) resets PRAGMA foreign_keys to OFF.
+  db.run('DELETE FROM character_settings WHERE character_id = ?', [characterId]);
   db.run('DELETE FROM characters WHERE id = ?', [characterId]);
 
   saveToDisk();

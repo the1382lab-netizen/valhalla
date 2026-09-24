@@ -39,6 +39,12 @@ equipment 26: WBP_GameHUD's "Valhalla|HUD Style" Class Defaults) and
 ``BarWidth`` (party 160x8, nameplates 60x4), so one designer tree serves every
 size.
 
+B-21: every panel the player may move (UValhallaGameHUDWidget::GetMovablePanels)
+is its own child of the root canvas: the character sheet and the inventory are
+two (they used to share an ``InventoryPair`` Horizontal Box), placed so the
+default look is unchanged. C++ records each canvas slot as the designer's
+layout and lays the player's over it.
+
 B-07 step 4 also trimmed ``ui-config.json`` to chat / inventory (cols x rows) /
 nameplates: the layout now lives in the Blueprints themselves. The layout
 functions below still read the file, and every field they read that is gone
@@ -982,20 +988,35 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     b.add(W.VerticalBox.static_class(), "SkillsList", scroll, True)
 
     # ── character + inventory (BuildInventoryPanel, I): centre ──
-    pair, s = b.add(W.HorizontalBox.static_class(), "InventoryPair", root)
-    _canvas(s, (0.5, 0.5), (0.5, 0.5), (0, -30), 10)
+    # B-21: two root-canvas children (each is a movable panel the player can
+    # place on its own), no longer one InventoryPair Horizontal Box. The
+    # default look is the pair's: side by side, panel_gap apart, the two
+    # together centred at (0, -30), one height. Their widths are fixed (the
+    # character sheet's char_w, the inventory grid's cols x (slot + gap)) plus
+    # the framed panel's padding on each side, so the split point is known: the
+    # character panel's right edge sits at (cw - gap - iw) / 2 from the centre.
+    frame_pad = 8.0 + (10.0 if panel_art is not None else 0.0)  # _framed_panel(.., 8, art)
+    inv_slot = _inventory_slot_size()
+    inv_cols = int(_get(cfg, "inventory.cols", 8))
+    char_outer_w = char_w + 2.0 * frame_pad
+    inv_outer_w = inv_cols * (inv_slot + slot_gap) + 2.0 * frame_pad
+    char_right_x = (char_outer_w - panel_gap - inv_outer_w) * 0.5
+    # One height for both, as the Horizontal Box made them: the character
+    # column of the tallest class (503 px measured in PIE, 2026-09-24; the
+    # stats text is class-dependent), rounded up.
+    pair_min_h = max(panel_h, 504.0)
 
     # Character sheet (B-07 step 3): title, the nine equipment rows C++ adds,
     # "Level n   XP x / y (z%)", a 200 x 10 XP bar, then the resolved stats
     # (C++ writes them as one multi-line text), with room for 16 lines.
     stat_font = 7
     stat_line = int(round(stat_font * 96.0 / 72.0 * 1.25))
-    char_panel, s = b.add(W.Border.static_class(), "CharacterPanel", pair, True)
-    _pad(s, 0, 0, panel_gap, 0)
+    char_panel, s = b.add(W.Border.static_class(), "CharacterPanel", root, True)
+    _canvas(s, (0.5, 0.5), (1.0, 0.5), (char_right_x, -30), 10)
     _framed_panel(char_panel, inv_bg, 8, panel_art)
     box, _ = b.add(W.SizeBox.static_class(), "CharacterSize", char_panel)
     box.set_width_override(char_w)
-    box.set_min_desired_height(panel_h)
+    box.set_min_desired_height(pair_min_h)
     column, _ = b.add(W.VerticalBox.static_class(), "CharacterColumn", box)
     w, s = b.add(W.TextBlock.static_class(), "CharacterTitle", column)
     _text(w, "Character  (I)", 10, title_c, bold=True)
@@ -1013,10 +1034,11 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     w, _ = b.add(W.TextBlock.static_class(), "CharacterStats", box, True)
     _text(w, "", stat_font, value_c, wrap=True, justify="LEFT")
 
-    inv_panel, s = b.add(W.Border.static_class(), "InventoryPanel", pair, True)
+    inv_panel, s = b.add(W.Border.static_class(), "InventoryPanel", root, True)
+    _canvas(s, (0.5, 0.5), (0.0, 0.5), (char_right_x + panel_gap, -30), 10)
     _framed_panel(inv_panel, inv_bg, 8, panel_art)
     box, _ = b.add(W.SizeBox.static_class(), "InventorySize", inv_panel)
-    box.set_min_desired_height(panel_h)
+    box.set_min_desired_height(pair_min_h)
     column, _ = b.add(W.VerticalBox.static_class(), "InventoryColumn", box)
     header, s = b.add(W.HorizontalBox.static_class(), "InventoryHeader", column)
     _pad(s, 0, 0, 0, 4)
@@ -1075,6 +1097,17 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
         "panelsMissing": missing,
         "buttonsWithoutAction": unset_actions,
     })
+
+
+def _inventory_slot_size():
+    """WBP_GameHUD's InventorySlotSize Class Default (UValhallaGameHUDWidget "Valhalla|HUD Style"), else 48."""
+    try:
+        generated = _blueprint_class(GAME_HUD_BP)
+        if generated is not None:
+            return float(unreal.get_default_object(generated).get_editor_property("inventory_slot_size"))
+    except Exception:  # noqa: BLE001 - the C++ default
+        pass
+    return 48.0
 
 
 def _chat_input_style(builder, box, font_size, input_height, background, foreground):

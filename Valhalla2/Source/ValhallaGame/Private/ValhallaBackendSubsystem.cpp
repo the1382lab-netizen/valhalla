@@ -370,6 +370,72 @@ void UValhallaBackendSubsystem::DeleteCharacter(const FString& Token, int32 Char
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Client routes: UI settings (B-21)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void UValhallaBackendSubsystem::GetCharacterSettings(const FString& Token, int32 CharacterId, FValhallaSettingsGetCallback OnDone)
+{
+	Send(TEXT("GET"), FString::Printf(TEXT("/api/characters/%d/settings"), CharacterId), nullptr, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone), CharacterId](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			TSharedPtr<FJsonObject> Ui;
+			FString UpdatedAt;
+			if (bSuccess && Json.IsValid())
+			{
+				const TSharedPtr<FJsonObject>* UiObject = nullptr;
+				if (Json->TryGetObjectField(TEXT("ui"), UiObject) && UiObject)
+				{
+					Ui = *UiObject;
+				}
+				UpdatedAt = GetStringField(Json, TEXT("updatedAt"));
+			}
+			UE_LOG(LogValhallaBackend, Log, TEXT("settings get char=%d : %d%s"), CharacterId, Status,
+				bSuccess ? (Ui.IsValid() ? TEXT(" ok") : TEXT(" (no ui object)")) : *FString::Printf(TEXT(" %s"), *Error));
+			if (OnDone)
+			{
+				OnDone(bSuccess && Ui.IsValid(), Status, Ui, UpdatedAt, Error);
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::PutCharacterSettings(const FString& Token, int32 CharacterId, const TSharedRef<FJsonObject>& Ui, FValhallaSettingsPutCallback OnDone)
+{
+	const TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetObjectField(TEXT("ui"), Ui);
+	Send(TEXT("PUT"), FString::Printf(TEXT("/api/characters/%d/settings"), CharacterId), Body, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone), CharacterId](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			const FString UpdatedAt = bSuccess ? GetStringField(Json, TEXT("updatedAt")) : FString();
+			UE_LOG(LogValhallaBackend, Log, TEXT("settings put char=%d : %d%s"), CharacterId, Status,
+				bSuccess ? TEXT(" ok") : *FString::Printf(TEXT(" %s"), *Error));
+			if (OnDone)
+			{
+				OnDone(bSuccess, Status, UpdatedAt, Error);
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::SetPlayerSession(const FString& Token, int32 UserId, int32 CharacterId)
+{
+	PlayerToken = Token;
+	PlayerUserId = UserId;
+	PlayerCharacterId = CharacterId;
+	UE_LOG(LogValhallaBackend, Log, TEXT("player session: userId %d, character %d, token %s (memory only)"),
+		UserId, CharacterId, *RedactToken(Token));
+}
+
+void UValhallaBackendSubsystem::ClearPlayerSession()
+{
+	if (!PlayerToken.IsEmpty() || PlayerCharacterId != 0)
+	{
+		UE_LOG(LogValhallaBackend, Log, TEXT("player session cleared (character %d)."), PlayerCharacterId);
+	}
+	PlayerToken.Reset();
+	PlayerUserId = 0;
+	PlayerCharacterId = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Server routes
 // ─────────────────────────────────────────────────────────────────────────────
 

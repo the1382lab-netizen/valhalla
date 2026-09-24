@@ -4,6 +4,8 @@
  *   POST /api/auth/login      10 per minute per IP
  *   POST /api/auth/register   10 per minute per IP
  *   POST /api/characters       5 per minute per IP
+ *   GET|PUT /api/characters/:id/settings   60 per minute per IP (B-21; the
+ *                              client saves at most once per ~2 s of editing)
  *
  * In memory: one list of attempt timestamps per (bucket, IP), pruned on every
  * hit and swept once a window. Every attempt counts, successful or not. Over
@@ -75,3 +77,4 @@ export function rateLimit(bucket: string, maxPerWindow: number): RequestHandler 
 export const loginLimiter = rateLimit('login', 10);
 export const registerLimiter = rateLimit('register', 10);
 export const createCharacterLimiter = rateLimit('create-character', 5);
+export const settingsLimiter = rateLimit('character-settings', 60);

@@ -64,6 +64,10 @@ public class ValhallaGame : ModuleRules
 				// UI, the game HUD class) is a UDeveloperSettings.
 				"DeveloperSettings",
 
+				// B-06: AValhallaFogRenderer draws the firelight glow mask with an
+				// additive FCanvasTriangleItem, which needs GWhiteTexture.
+				"RenderCore",
+
 				// Phase 7b: UValhallaBackendSubsystem's client for the 1.0
 				// Express server. Private, so nothing that depends on
 				// ValhallaGame inherits an HTTP client it did not ask for —

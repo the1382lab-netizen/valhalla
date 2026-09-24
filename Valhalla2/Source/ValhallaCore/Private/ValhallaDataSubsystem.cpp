@@ -24,6 +24,7 @@
 #include "JsonUtilities.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/SecureHash.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "ValhallaConstants.h"
@@ -758,6 +759,22 @@ bool UValhallaDataSubsystem::LoadAll()
 	Tables.Reset();
 	const bool bSuccess = LoadTablesFromRoot(LoadedDataRoot, Tables);
 	bLoaded = true;	// partial data is still usable; IsLoaded means "we tried".
+
+	// B-13: remember exactly which bytes were loaded, for the editor's
+	// live-vs-disk check. Hashed right after parsing; a save landing between
+	// the two is caught by the hot-reload watcher two seconds later anyway.
+	LoadedFileHashes.Reset();
+	LoadedAtUtc = FDateTime::UtcNow();
+	for (const FString& Name : GetDataFilenames())
+	{
+		TArray<uint8> Bytes;
+		if (FFileHelper::LoadFileToArray(Bytes, *FPaths::Combine(LoadedDataRoot, Name)))
+		{
+			uint8 Digest[20];
+			FSHA1::HashBuffer(Bytes.GetData(), static_cast<uint64>(Bytes.Num()), Digest);
+			LoadedFileHashes.Add(Name, BytesToHex(Digest, 20).ToLower());
+		}
+	}
 
 	UE_LOG(LogValhallaCore, Log,
 		TEXT("[ValhallaData] Loaded %d classes, %d skills, %d items, %d NPC templates, %d loot tables, %d zones.%s"),

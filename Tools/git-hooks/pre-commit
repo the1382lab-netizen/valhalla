@@ -1,0 +1,15 @@
+#!/bin/sh
+# Valhalla pre-commit hook (B-13): when the commit touches game data or zone
+# overlays, run the cross-reference check and refuse the commit on errors.
+# Installed by `npm run hooks:install`. Skip once with `git commit --no-verify`.
+
+changed=$(git diff --cached --name-only --diff-filter=ACMR -- shared/data maps/overlays-2.0 maps/unreal-refs.json)
+[ -z "$changed" ] && exit 0
+
+echo "[pre-commit] game data changed; running npm run validate..."
+if ! npx --no-install tsx shared/scripts/validate-data.ts --errors-only; then
+  echo ""
+  echo "[pre-commit] Fix the errors above (or commit with --no-verify to skip this check once)."
+  exit 1
+fi
+exit 0

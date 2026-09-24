@@ -188,96 +188,7 @@ export const BAN_DURATIONS: { value: string; label: string }[] = [
   { value: '0', label: 'Permanent' },
 ];
 
-// ── Bans dialog ─────────────────────────────────────────────
-
-interface BanEntry {
-  userId: number;
-  username: string;
-  until: number | null;
-  permanent: boolean;
-  reason: string;
-  bannedBy: string;
-}
-
-/** Every ban in force, with Unban buttons, plus a form to ban any account by name (online or not). */
-export const BansDialog: React.FC<{ onClose: () => void }> = ({ onClose }) => {
-  const [bans, setBans] = useState<BanEntry[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [username, setUsername] = useState('');
-  const [minutes, setMinutes] = useState(BAN_DURATIONS[1].value);
-  const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const res = await postAdmin('account-action', { action: 'list-bans' }, { quiet: true, label: 'list bans' });
-    if (res.ok) { setBans(res.bans ?? []); setError(null); } else { setError(res.error); }
-  }, []);
-  useEffect(() => { refresh(); }, [refresh]);
-
-  const ban = async () => {
-    if (!username.trim()) return;
-    setBusy(true);
-    const res = await postAdmin('account-action', { action: 'ban', username: username.trim(), minutes: Number(minutes), reason },
-      { label: `ban ${username.trim()}` });
-    setBusy(false);
-    if (res.ok) { setUsername(''); setReason(''); }
-    refresh();
-  };
-  const unban = async (b: BanEntry) => {
-    await postAdmin('account-action', { action: 'unban', userId: b.userId }, { label: `unban ${b.username}` });
-    refresh();
-  };
-
-  return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div style={{ ...panelStyle, width: 540, maxHeight: '80vh', overflow: 'auto' }} onClick={e => e.stopPropagation()}
-        onKeyDown={e => { if (e.key === 'Escape') onClose(); }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 style={titleStyle}>Account bans</h3>
-          <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={refresh}>⟳</button>
-        </div>
-        {error && <div style={{ color: '#e66', fontSize: 12 }}>{error}</div>}
-        {bans === null && !error && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading…</div>}
-        {bans !== null && bans.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>No accounts are banned.</div>}
-        {bans !== null && bans.length > 0 && (
-          <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-                <th style={{ padding: 4 }}>Account</th><th style={{ padding: 4 }}>Until</th><th style={{ padding: 4 }}>Reason</th><th />
-              </tr>
-            </thead>
-            <tbody>
-              {bans.map(b => (
-                <tr key={b.userId} style={{ borderTop: '1px solid var(--border-color)' }}>
-                  <td style={{ padding: 4, color: 'var(--text-primary)' }}>{b.username}</td>
-                  <td style={{ padding: 4 }}>{b.permanent || !b.until ? 'Permanent' : new Date(b.until).toLocaleString()}</td>
-                  <td style={{ padding: 4, color: 'var(--text-secondary)' }}>{b.reason || '—'}</td>
-                  <td style={{ padding: 4, textAlign: 'right' }}>
-                    <button className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }} onClick={() => unban(b)}>Unban</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>Ban an account by name (works when they are offline)</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input className="form-input" placeholder="account name" value={username} onChange={e => setUsername(e.target.value)} style={{ flex: 1 }} />
-            <select className="form-input" value={minutes} onChange={e => setMinutes(e.target.value)}>
-              {BAN_DURATIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
-            </select>
-          </div>
-          <input className="form-input" placeholder="reason (shown to the player)" value={reason} maxLength={200} onChange={e => setReason(e.target.value)} />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button className="btn btn-ghost" onClick={onClose}>Close</button>
-            <button className="btn btn-danger" disabled={busy || !username.trim()} onClick={ban}>Ban</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+// The account bans dialog became the Accounts dialog (B-12): AccountsDialog.tsx.
 
 // ── Action dialog ───────────────────────────────────────────
 
@@ -471,15 +382,15 @@ const Empty: React.FC = () => <div style={{ fontSize: 11, color: 'var(--text-mut
 
 // ── Styles ──────────────────────────────────────────────────
 
-const overlayStyle: React.CSSProperties = {
+export const overlayStyle: React.CSSProperties = {
   position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
   display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
 };
-const panelStyle: React.CSSProperties = {
+export const panelStyle: React.CSSProperties = {
   background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
   borderRadius: 8, padding: 20, display: 'flex', flexDirection: 'column', gap: 12,
 };
-const titleStyle: React.CSSProperties = { margin: 0, fontSize: 14, color: 'var(--text-primary)' };
-const badgeStyle = (color: string): React.CSSProperties => ({
+export const titleStyle: React.CSSProperties = { margin: 0, fontSize: 14, color: 'var(--text-primary)' };
+export const badgeStyle = (color: string): React.CSSProperties => ({
   fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 3, color: '#000', background: color,
 });

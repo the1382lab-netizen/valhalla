@@ -8,8 +8,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
 import { ADMIN_RESULT_EVENT, AdminResult, postAdmin } from './adminApi';
+import { AccountsDialog } from './AccountsDialog';
+import { DataSyncBadge } from './DataSyncBadge';
 import {
-  ActionDialog, ActionDialogSpec, AdminPlayer, BansDialog, InspectDialog, PlayersPanel, buildPlayerMenu,
+  ActionDialog, ActionDialogSpec, AdminPlayer, InspectDialog, PlayersPanel, buildPlayerMenu,
 } from './AdminPlayerTools';
 
 // ── Types ───────────────────────────────────────────────────
@@ -1080,6 +1082,7 @@ export const AdminDashboard: React.FC = () => {
         >
           ⟳ Reload data
         </button>
+        <DataSyncBadge refreshKey={reloadStatus} />
         <button
           className="btn btn-ghost"
           style={{ padding: '3px 10px', fontSize: 12 }}
@@ -1103,11 +1106,10 @@ export const AdminDashboard: React.FC = () => {
         <button
           className="btn btn-ghost"
           style={{ padding: '3px 10px', fontSize: 12 }}
-          title="List, add and lift account bans"
-          disabled={!state?.online}
+          title="Look up accounts: reset passwords, ban, rename characters, delete accounts (works with the game server offline)"
           onClick={() => setBansOpen(true)}
         >
-          Bans…
+          Accounts…
         </button>
 
         {/* Zone tabs */}
@@ -1282,8 +1284,8 @@ export const AdminDashboard: React.FC = () => {
       {/* Player inspect window */}
       {inspectPlayer && <InspectDialog player={inspectPlayer} onClose={() => setInspectPlayer(null)} />}
 
-      {/* Account bans */}
-      {bansOpen && <BansDialog onClose={() => setBansOpen(false)} />}
+      {/* Accounts (B-12): lookup, bans, password reset, rename, delete */}
+      {bansOpen && <AccountsDialog onClose={() => setBansOpen(false)} />}
 
       {/* Spawn NPC / Drop Item dialog */}
       {spawnDialog && (

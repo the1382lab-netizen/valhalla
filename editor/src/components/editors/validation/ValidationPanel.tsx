@@ -1,585 +1,197 @@
-import React, { useState, useEffect, useMemo } from 'react';
+/**
+ * B-13: the Validation page. Runs the shared cross-reference check
+ * (shared/src/validation.ts — the same rules as `npm run validate` and the git
+ * pre-commit hook) over the editor's in-memory data, so unsaved edits are
+ * checked too, with the on-disk context (mesh files, icons, zone overlays and
+ * the exported Unreal references) fetched from the editor server.
+ */
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  summarizeIssues,
+  validateGameData,
+  type UnrealRefs,
+  type ValidationCategory,
+  type ValidationIssue,
+  type ValidationSeverity,
+} from '@valhalla/shared';
 import { useEditorStore } from '../../../store/editorStore';
 
-interface ValidationIssue {
-  severity: 'error' | 'warning';
-  category: 'items' | 'skills' | 'classes' | 'npcs' | 'loot' | 'zones';
-  id: string;
-  message: string;
+interface ValidationContext {
+  overlays: Record<string, any> | null;
+  meshFiles: string[] | null;
+  iconFiles: string[] | null;
+  unrealRefs: UnrealRefs | null;
+  problems: { file: string; message: string }[];
 }
 
+const CATEGORY_LABELS: Record<ValidationCategory, string> = {
+  items: 'Items', skills: 'Skills', classes: 'Classes', npcs: 'NPCs',
+  loot: 'Loot tables', zones: 'Zones', maps: 'Zone overlays', unreal: 'Unreal (NPC Types, spawn points)',
+};
+
+const SEVERITY_STYLE: Record<ValidationSeverity, { color: string; bg: string; label: string }> = {
+  error: { color: '#ff4444', bg: 'rgba(255, 68, 68, 0.1)', label: 'error' },
+  warning: { color: '#ffdd88', bg: 'rgba(255, 221, 136, 0.1)', label: 'warning' },
+  info: { color: '#88aaff', bg: 'rgba(136, 170, 255, 0.08)', label: 'note' },
+};
+
+/** Where to jump for an issue's record, when the editor has a page for it. */
+const SECTION_FOR: Partial<Record<ValidationCategory, 'items' | 'skills' | 'classes' | 'npcs' | 'loot' | 'maps'>> = {
+  items: 'items', skills: 'skills', classes: 'classes', npcs: 'npcs', loot: 'loot', maps: 'maps',
+};
+
 export const ValidationPanel: React.FC = () => {
-  const items = useEditorStore(s => s.items.data);
-  const skillsData = useEditorStore(s => s.skills.data);
-  const classesData = useEditorStore(s => s.classes.data);
-  const npcTemplates = useEditorStore(s => s.npcTemplates.data);
-  const lootTables = useEditorStore(s => s.lootTables.data);
-  const zones = useEditorStore(s => s.zones.data);
+  const items = useEditorStore(s => s.items);
+  const skills = useEditorStore(s => s.skills);
+  const classes = useEditorStore(s => s.classes);
+  const npcTemplates = useEditorStore(s => s.npcTemplates);
+  const lootTables = useEditorStore(s => s.lootTables);
+  const zones = useEditorStore(s => s.zones);
+  const setActiveSection = useEditorStore(s => s.setActiveSection);
+  const setSelectedItemId = useEditorStore(s => s.setSelectedItemId);
+  const setSelectedSkillId = useEditorStore(s => s.setSelectedSkillId);
+  const setSelectedClassId = useEditorStore(s => s.setSelectedClassId);
+  const setSelectedNpcId = useEditorStore(s => s.setSelectedNpcId);
+  const setSelectedLootTableId = useEditorStore(s => s.setSelectedLootTableId);
 
-  const [issues, setIssues] = useState<ValidationIssue[]>([]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  /** Valid Valhalla 2.0 art ids (UE equipment meshes). Empty = list unavailable → rule skipped. */
-  const [meshIds, setMeshIds] = useState<string[]>([]);
+  const [context, setContext] = useState<ValidationContext | null>(null);
+  const [contextError, setContextError] = useState<string | null>(null);
+  const [category, setCategory] = useState<ValidationCategory | null>(null);
+  const [showNotes, setShowNotes] = useState(false);
 
-  useEffect(() => {
-    fetch('/api/assets/mesh-ids')
-      .then(r => r.json())
-      .then(data => setMeshIds(data.ids || []))
-      .catch(() => setMeshIds([]));
+  const loadContext = useCallback(async () => {
+    try {
+      const res = await fetch('/api/validate/context');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      setContext(json);
+      setContextError(null);
+    } catch (err: any) {
+      setContext(null);
+      setContextError(err?.message || 'request failed');
+    }
   }, []);
+  useEffect(() => { loadContext(); }, [loadContext]);
 
-  const validate = () => {
-    setIsRunning(true);
-    const foundIssues: ValidationIssue[] = [];
-
-    // ─── Validate Items ───
-    Object.entries(items || {}).forEach(([itemId, item]: [string, any]) => {
-      if (!itemId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'items',
-          id: itemId,
-          message: 'Item has empty ID',
-        });
-      }
-      if (!item.name) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'items',
-          id: itemId,
-          message: `Item "${itemId}" missing name`,
-        });
-      }
-      if (!item.category) {
-        foundIssues.push({
-          severity: 'warning',
-          category: 'items',
-          id: itemId,
-          message: `Item "${item.name || itemId}" missing category`,
-        });
-      }
-
-      // ── Valhalla 2.0 art: UE resolves meshId ?? spriteId against the
-      // equipment import folder. Skipped when the art id list is unavailable.
-      if (meshIds.length > 0 && item.category === 'equipment') {
-        const artId: string | undefined = item.meshId || item.spriteId;
-        if (!artId) {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'items',
-            id: itemId,
-            message: `Equipment "${item.name || itemId}" has no meshId or spriteId — Unreal has no mesh to show`,
-          });
-        } else if (!meshIds.includes(artId)) {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'items',
-            id: itemId,
-            message: `Equipment "${item.name || itemId}" art id "${artId}" (${item.meshId ? 'meshId' : 'spriteId'}) is not one of the ${meshIds.length} meshes in Import/Characters/Equipment`,
-          });
-        }
-      }
+  const issues: ValidationIssue[] = useMemo(() => {
+    const found = validateGameData({
+      items: items.data,
+      skills: skills.data,
+      classes: classes.data,
+      npcTemplates: npcTemplates.data,
+      lootTables: lootTables.data,
+      zones: zones.data,
+      overlays: context?.overlays ?? undefined,
+      meshFiles: context?.meshFiles ?? undefined,
+      iconFiles: context?.iconFiles ?? undefined,
+      unrealRefs: context?.unrealRefs ?? null,
     });
+    const fileProblems: ValidationIssue[] = (context?.problems ?? []).map(p => ({
+      severity: 'error', category: p.file.startsWith('maps/') ? 'maps' : 'items', id: p.file, message: p.message,
+    }));
+    return [...fileProblems, ...found];
+  }, [items.data, skills.data, classes.data, npcTemplates.data, lootTables.data, zones.data, context]);
 
-    // ─── Validate Skills ───
-    const skillsObj = skillsData?.skills || {};
-    const classSkillsObj = skillsData?.classSkills || {};
-    const classesObj = classesData?.classes || {};
+  const summary = summarizeIssues(issues);
+  const unsaved = [items, skills, classes, npcTemplates, lootTables, zones].some(s => s.isDirty);
+  const visible = issues.filter(i => (showNotes || i.severity !== 'info') && (!category || i.category === category));
+  const counts = useMemo(() => {
+    const c: Partial<Record<ValidationCategory, number>> = {};
+    for (const i of issues) if (showNotes || i.severity !== 'info') c[i.category] = (c[i.category] ?? 0) + 1;
+    return c;
+  }, [issues, showNotes]);
 
-    Object.entries(skillsObj).forEach(([skillId, skill]: [string, any]) => {
-      if (!skillId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: 'Skill has empty ID',
-        });
-      }
-      if (!skill.name) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: `Skill "${skillId}" missing name`,
-        });
-      }
-      if (!skill.classId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: `Skill "${skill.name || skillId}" missing classId`,
-        });
-      } else if (!classesObj[skill.classId]) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: `Skill "${skill.name || skillId}" references invalid class "${skill.classId}"`,
-        });
-      }
-      if (skill.resourceCost < 0) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: `Skill "${skill.name || skillId}" has negative resource cost`,
-        });
-      }
-      if (skill.cooldownMs < 0) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: skillId,
-          message: `Skill "${skill.name || skillId}" has negative cooldown`,
-        });
-      }
-    });
-
-    // Validate classSkills references
-    Object.entries(classSkillsObj).forEach(([className, skillIds]: [string, any]) => {
-      if (!classesObj[className]) {
-        foundIssues.push({
-          severity: 'warning',
-          category: 'skills',
-          id: className,
-          message: `classSkills references invalid class "${className}"`,
-        });
-      }
-
-      if (!Array.isArray(skillIds)) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'skills',
-          id: className,
-          message: `classSkills[${className}] is not an array`,
-        });
-        return;
-      }
-
-      skillIds.forEach((skillId: string) => {
-        if (!skillsObj[skillId]) {
-          foundIssues.push({
-            severity: 'error',
-            category: 'skills',
-            id: className,
-            message: `classSkills[${className}] references invalid skill "${skillId}"`,
-          });
-        }
-      });
-    });
-
-    // ─── Validate Classes ───
-    Object.entries(classesObj).forEach(([classId, cls]: [string, any]) => {
-      if (!classId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'classes',
-          id: classId,
-          message: 'Class has empty ID',
-        });
-      }
-      if (!cls.name) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'classes',
-          id: classId,
-          message: `Class "${classId}" missing name`,
-        });
-      }
-
-      // Validate base stats
-      if (cls.baseStats) {
-        if ((cls.baseStats.hp || 0) <= 0) {
-          foundIssues.push({
-            severity: 'error',
-            category: 'classes',
-            id: classId,
-            message: `Class "${cls.name || classId}" has invalid base HP (${cls.baseStats.hp})`,
-          });
-        }
-        if ((cls.baseStats.critChance || 0) < 0 || (cls.baseStats.critChance || 0) > 1) {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'classes',
-            id: classId,
-            message: `Class "${cls.name || classId}" critChance not in [0,1]: ${cls.baseStats.critChance}`,
-          });
-        }
-        if ((cls.baseStats.blockRating || 0) < 0 || (cls.baseStats.blockRating || 0) > 1) {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'classes',
-            id: classId,
-            message: `Class "${cls.name || classId}" blockRating not in [0,1]: ${cls.baseStats.blockRating}`,
-          });
-        }
-      }
-
-      // Validate vision range (line-of-sight distance in UE units / cm)
-      if (cls.visionRange === undefined || cls.visionRange === null || cls.visionRange <= 0) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'classes',
-          id: classId,
-          message: `Class "${cls.name || classId}" has missing or non-positive visionRange (${cls.visionRange})`,
-        });
-      } else if (cls.visionRange > 3000) {
-        foundIssues.push({
-          severity: 'warning',
-          category: 'classes',
-          id: classId,
-          message: `Class "${cls.name || classId}" visionRange is unusually large: ${cls.visionRange} cm`,
-        });
-      }
-
-      // Validate per-level stats
-      if (cls.statsPerLevel) {
-        if ((cls.statsPerLevel.hp || 0) < 0) {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'classes',
-            id: classId,
-            message: `Class "${cls.name || classId}" has negative HP growth`,
-          });
-        }
-      }
-    });
-
-    // ─── Validate NPCs ───
-    Object.entries(npcTemplates || {}).forEach(([npcId, npc]: [string, any]) => {
-      if (!npcId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'npcs',
-          id: npcId,
-          message: 'NPC has empty ID',
-        });
-      }
-      if (!npc.name) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'npcs',
-          id: npcId,
-          message: `NPC "${npcId}" missing name`,
-        });
-      }
-
-      // Validate loot table reference
-      if (npc.lootTableId && !lootTables?.[npc.lootTableId]) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'npcs',
-          id: npcId,
-          message: `NPC "${npc.name || npcId}" references invalid loot table "${npc.lootTableId}"`,
-        });
-      }
-
-      // Validate weapon reference: must be an item that goes in the weapon slot
-      if (npc.weaponId) {
-        const weapon = items?.[npc.weaponId];
-        if (!weapon) {
-          foundIssues.push({
-            severity: 'error',
-            category: 'npcs',
-            id: npcId,
-            message: `NPC "${npc.name || npcId}" references invalid weapon "${npc.weaponId}"`,
-          });
-        } else if (weapon.equipSlot !== 'weapon') {
-          foundIssues.push({
-            severity: 'warning',
-            category: 'npcs',
-            id: npcId,
-            message: `NPC "${npc.name || npcId}" weapon "${npc.weaponId}" is not a weapon-slot item`,
-          });
-        }
-      }
-
-      // Validate skill references
-      if (Array.isArray(npc.skills)) {
-        npc.skills.forEach((skillId: string) => {
-          if (!skillsObj[skillId]) {
-            foundIssues.push({
-              severity: 'error',
-              category: 'npcs',
-              id: npcId,
-              message: `NPC "${npc.name || npcId}" references invalid skill "${skillId}"`,
-            });
-          }
-        });
-      }
-
-      // Validate stats
-      if (npc.stats) {
-        if ((npc.stats.hp || 0) <= 0) {
-          foundIssues.push({
-            severity: 'error',
-            category: 'npcs',
-            id: npcId,
-            message: `NPC "${npc.name || npcId}" has invalid HP (${npc.stats.hp})`,
-          });
-        }
-      }
-    });
-
-    // ─── Validate Loot Tables ───
-    Object.entries(lootTables || {}).forEach(([tableId, table]: [string, any]) => {
-      if (!tableId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'loot',
-          id: tableId,
-          message: 'Loot table has empty ID',
-        });
-      }
-      if (!table.name) {
-        foundIssues.push({
-          severity: 'warning',
-          category: 'loot',
-          id: tableId,
-          message: `Loot table "${tableId}" missing name`,
-        });
-      }
-
-      // Validate item references
-      if (Array.isArray(table.items)) {
-        table.items.forEach((entry: any, idx: number) => {
-          if (!entry.itemId) {
-            foundIssues.push({
-              severity: 'error',
-              category: 'loot',
-              id: tableId,
-              message: `Loot table "${table.name || tableId}" item #${idx} missing itemId`,
-            });
-          } else if (!items?.[entry.itemId]) {
-            foundIssues.push({
-              severity: 'error',
-              category: 'loot',
-              id: tableId,
-              message: `Loot table "${table.name || tableId}" references invalid item "${entry.itemId}"`,
-            });
-          }
-
-          if ((entry.weight || 0) <= 0) {
-            foundIssues.push({
-              severity: 'warning',
-              category: 'loot',
-              id: tableId,
-              message: `Loot table "${table.name || tableId}" item "${entry.itemId}" has invalid weight (${entry.weight})`,
-            });
-          }
-        });
-      }
-    });
-
-    // ─── Validate Zones ───
-    Object.entries(zones || {}).forEach(([zoneId, zone]: [string, any]) => {
-      if (!zoneId) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'zones',
-          id: zoneId,
-          message: 'Zone has empty ID',
-        });
-      }
-      if (!zone.name) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'zones',
-          id: zoneId,
-          message: `Zone "${zoneId}" missing name`,
-        });
-      }
-      if (!zone.mapFile) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'zones',
-          id: zoneId,
-          message: `Zone "${zone.name || zoneId}" missing mapFile`,
-        });
-      }
-      if (!zone.defaultSpawn) {
-        foundIssues.push({
-          severity: 'error',
-          category: 'zones',
-          id: zoneId,
-          message: `Zone "${zone.name || zoneId}" missing defaultSpawn`,
-        });
-      } else {
-        if (typeof zone.defaultSpawn.x !== 'number' || typeof zone.defaultSpawn.y !== 'number') {
-          foundIssues.push({
-            severity: 'error',
-            category: 'zones',
-            id: zoneId,
-            message: `Zone "${zone.name || zoneId}" defaultSpawn has invalid coordinates`,
-          });
-        }
-      }
-    });
-
-    setIssues(foundIssues);
-    setIsRunning(false);
+  const open = (issue: ValidationIssue) => {
+    const section = SECTION_FOR[issue.category];
+    if (!section) return;
+    if (section === 'items' && items.data[issue.id]) setSelectedItemId(issue.id);
+    if (section === 'skills' && skills.data.skills[issue.id]) setSelectedSkillId(issue.id);
+    if (section === 'classes' && classes.data.classes[issue.id]) setSelectedClassId(issue.id);
+    if (section === 'npcs' && npcTemplates.data[issue.id]) setSelectedNpcId(issue.id);
+    if (section === 'loot' && lootTables.data[issue.id]) setSelectedLootTableId(issue.id);
+    setActiveSection(section);
   };
-
-  useEffect(() => {
-    validate();
-  }, [items, skillsData, classesData, npcTemplates, lootTables, zones, meshIds]);
-
-  const issuesByCategory = useMemo(() => {
-    const grouped: Record<string, ValidationIssue[]> = {
-      items: [],
-      skills: [],
-      classes: [],
-      npcs: [],
-      loot: [],
-      zones: [],
-    };
-
-    issues.forEach(issue => {
-      grouped[issue.category].push(issue);
-    });
-
-    return grouped;
-  }, [issues]);
-
-  const errorCount = issues.filter(i => i.severity === 'error').length;
-  const warningCount = issues.filter(i => i.severity === 'warning').length;
-
-  const filteredIssues = selectedCategory
-    ? issuesByCategory[selectedCategory as keyof typeof issuesByCategory]
-    : issues;
 
   return (
     <div className="panel">
       <div className="panel-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <span>Validation Panel</span>
-          <button
-            className="btn btn-primary"
-            onClick={validate}
-            disabled={isRunning}
-          >
-            {isRunning ? '⏳ Running...' : '▶ Run Validation'}
+          <span>Validation</span>
+          <button className="btn btn-ghost" onClick={loadContext} title="Re-read meshes, icons, overlays and Unreal references from disk">
+            ⟳ Refresh files
           </button>
         </div>
-
-        <div style={{
-          display: 'flex',
-          gap: 16,
-          padding: 12,
-          background: 'rgba(0,0,0,0.2)',
-          borderRadius: 4,
-          marginBottom: 12,
-        }}>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
+          The same checks as <code>npm run validate</code> and the git pre-commit hook, run on what's in the editor
+          {unsaved ? ', including unsaved changes' : ''}. Errors mean the game will misbehave; warnings mean it works but
+          probably not as intended. Click an issue to open it.
+        </div>
+        {contextError && (
+          <div style={{ color: '#e66', fontSize: 12, marginBottom: 8 }}>
+            Could not read the files on disk ({contextError}); meshes, icons, overlays and Unreal references are not checked.
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 16, padding: 12, background: 'rgba(0,0,0,0.2)', borderRadius: 4, marginBottom: 12 }}>
           <div>
-            <div className="form-label" style={{ marginBottom: 4 }}>Total Issues</div>
-            <div style={{ fontSize: 20, fontWeight: 'bold' }}>{issues.length}</div>
+            <div className="form-label" style={{ marginBottom: 4, color: SEVERITY_STYLE.error.color }}>Errors</div>
+            <div style={{ fontSize: 20, fontWeight: 'bold', color: SEVERITY_STYLE.error.color }}>{summary.errors}</div>
           </div>
           <div>
-            <div className="form-label" style={{ marginBottom: 4, color: '#ff8888' }}>Errors</div>
-            <div style={{ fontSize: 20, fontWeight: 'bold', color: '#ff8888' }}>{errorCount}</div>
+            <div className="form-label" style={{ marginBottom: 4, color: SEVERITY_STYLE.warning.color }}>Warnings</div>
+            <div style={{ fontSize: 20, fontWeight: 'bold', color: SEVERITY_STYLE.warning.color }}>{summary.warnings}</div>
           </div>
-          <div>
-            <div className="form-label" style={{ marginBottom: 4, color: '#ffdd88' }}>Warnings</div>
-            <div style={{ fontSize: 20, fontWeight: 'bold', color: '#ffdd88' }}>{warningCount}</div>
-          </div>
+          <label style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 12, color: 'var(--text-secondary)', display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={showNotes} onChange={e => setShowNotes(e.target.checked)} />
+            show notes ({summary.infos})
+          </label>
         </div>
       </div>
 
       <div className="panel-body">
-        {issues.length === 0 ? (
+        {summary.errors === 0 && summary.warnings === 0 && !showNotes ? (
           <div className="empty-state">
             <div className="empty-state-icon">✅</div>
-            <p>All validations passed!</p>
-            <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
-              Your game data is consistent and ready to use.
-            </p>
+            <p>No problems found.</p>
           </div>
         ) : (
           <>
-            <div style={{ marginBottom: 16 }}>
-              <div className="form-label">Filter by Category</div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  className={`btn ${!selectedCategory ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => setSelectedCategory(null)}
-                  style={{ fontSize: 12 }}
-                >
-                  All ({issues.length})
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
+              <button className={`btn ${!category ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: 12 }} onClick={() => setCategory(null)}>
+                All ({Object.values(counts).reduce((a, b) => a + (b ?? 0), 0)})
+              </button>
+              {(Object.keys(CATEGORY_LABELS) as ValidationCategory[]).filter(c => counts[c]).map(c => (
+                <button key={c} className={`btn ${category === c ? 'btn-primary' : 'btn-ghost'}`} style={{ fontSize: 12 }} onClick={() => setCategory(c)}>
+                  {CATEGORY_LABELS[c]} ({counts[c]})
                 </button>
-                {(Object.keys(issuesByCategory) as Array<keyof typeof issuesByCategory>).map(cat => {
-                  const count = issuesByCategory[cat].length;
-                  return count > 0 ? (
-                    <button
-                      key={cat}
-                      className={`btn ${selectedCategory === cat ? 'btn-primary' : 'btn-ghost'}`}
-                      onClick={() => setSelectedCategory(cat)}
-                      style={{ fontSize: 12 }}
-                    >
-                      {cat} ({count})
-                    </button>
-                  ) : null;
-                })}
-              </div>
+              ))}
             </div>
 
-            <div style={{ overflowY: 'auto', maxHeight: 600 }}>
-              {filteredIssues.length === 0 ? (
-                <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>
-                  No issues in this category
-                </div>
-              ) : (
-                filteredIssues.map((issue, idx) => (
-                  <div
-                    key={idx}
+            <div style={{ overflowY: 'auto', maxHeight: 640 }}>
+              {visible.length === 0 ? (
+                <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-muted)' }}>No issues in this category</div>
+              ) : visible.map((issue, idx) => {
+                const style = SEVERITY_STYLE[issue.severity];
+                const clickable = !!SECTION_FOR[issue.category];
+                return (
+                  <div key={idx} onClick={() => clickable && open(issue)}
                     style={{
-                      padding: 12,
-                      marginBottom: 8,
-                      background: issue.severity === 'error' ? 'rgba(255, 68, 68, 0.1)' : 'rgba(255, 221, 136, 0.1)',
-                      border: `1px solid ${issue.severity === 'error' ? '#ff4444' : '#ffdd88'}`,
-                      borderRadius: 4,
-                      borderLeft: `4px solid ${issue.severity === 'error' ? '#ff4444' : '#ffdd88'}`,
-                    }}
-                  >
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 4 }}>
-                      <span
-                        className="badge"
-                        style={{
-                          background: issue.severity === 'error' ? '#ff4444' : '#ffdd88',
-                          color: '#000',
-                          fontSize: 11,
-                          padding: '2px 6px',
-                          borderRadius: 3,
-                          textTransform: 'uppercase',
-                          fontWeight: 'bold',
-                          flexShrink: 0,
-                        }}
-                      >
-                        {issue.severity}
+                      padding: 10, marginBottom: 6, background: style.bg, borderRadius: 4,
+                      border: `1px solid ${style.color}`, borderLeft: `4px solid ${style.color}`,
+                      cursor: clickable ? 'pointer' : 'default',
+                    }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ background: style.color, color: '#000', fontSize: 10, padding: '1px 6px', borderRadius: 3, textTransform: 'uppercase', fontWeight: 'bold' }}>
+                        {style.label}
                       </span>
-                      <span
-                        className="badge"
-                        style={{
-                          background: 'rgba(255,255,255,0.1)',
-                          fontSize: 11,
-                          padding: '2px 6px',
-                          borderRadius: 3,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {issue.category}
+                      <span style={{ background: 'rgba(255,255,255,0.1)', fontSize: 10, padding: '1px 6px', borderRadius: 3 }}>
+                        {CATEGORY_LABELS[issue.category]}
                       </span>
+                      <code style={{ fontSize: 11, color: '#aaa' }}>{issue.id}</code>
                     </div>
-                    <div style={{ fontSize: 14, lineHeight: 1.5 }}>{issue.message}</div>
-                    {issue.id && (
-                      <div style={{ fontSize: 11, color: '#aaa', marginTop: 6 }}>
-                        ID: <code style={{ background: '#000', padding: '2px 4px', borderRadius: 2 }}>{issue.id}</code>
-                      </div>
-                    )}
+                    <div style={{ fontSize: 13, lineHeight: 1.5 }}>{issue.message}</div>
                   </div>
-                ))
-              )}
+                );
+              })}
             </div>
           </>
         )}

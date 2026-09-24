@@ -57,6 +57,16 @@ requests are **zone-local cm**.
 The 1.0 routes (`/api/data/*`, `/api/maps/*`, `/api/overlays/*`, `/api/assets/sprites/*`) are
 unchanged.
 
+### Accounts and validation (B-12, B-13)
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /api/accounts/search`, `GET /api/accounts/detail`, `GET /api/accounts/bans` | Account lookup for the Live Dashboard's **Accounts…** dialog, straight to the backend (`VALHALLA_BACKEND_URL`, default `http://127.0.0.1:2567`) with the server secret, so it works with the game server down. |
+| `POST /api/accounts/{ban,unban,reset-password,delete,rename-character}` | The dialog's actions. After a ban, reset, delete or rename the game server (when up) is asked to kick that account's sessions (`account-action` `kick`). |
+| `GET /api/validate` | The saved files checked by `shared/src/validation.ts` (same rules as `npm run validate`). The status bar shows the result after every Save. |
+| `GET /api/validate/context` | Mesh files, icons, zone overlays and `maps/unreal-refs.json`, for the Validation page, which checks the in-memory (unsaved) data with the same rules. |
+| `GET /api/data-sync` | SHA-1 of each data file the running game server loaded (admin `state.data`) against the file on disk: the dashboard's "live data = files" badge next to **Reload data**. |
+
 ## Coordinates
 
 `maps/thumbs/<zone>.json`:

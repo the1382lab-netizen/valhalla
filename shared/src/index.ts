@@ -12,3 +12,4 @@ export * from './loot-tables.js';
 export * from './loaders.js';
 export * from './iso.js';
 export * from './paperdoll.js';
+export * from './validation.js';

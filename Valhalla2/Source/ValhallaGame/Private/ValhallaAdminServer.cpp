@@ -980,7 +980,28 @@ bool UValhallaAdminServer::HandleState(const FHttpServerRequest& /*Request*/, co
 {
 	FValhallaAdminSnapshot Snapshot;
 	BuildSnapshot(Snapshot);
-	OnComplete(MakeJsonResponse(BuildStateJson(Snapshot), EHttpServerResponseCodes::Ok));
+	const TSharedRef<FJsonObject> Json = BuildStateJson(Snapshot);
+
+	// B-13: which data this server has loaded, so the dashboard can compare it
+	// with the files on disk. Added here rather than to the snapshot, which is
+	// about the world and is built by tests without a data subsystem.
+	const UWorld* World = GetWorld();
+	const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
+	if (const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr)
+	{
+		const TSharedRef<FJsonObject> Files = MakeShared<FJsonObject>();
+		for (const TPair<FString, FString>& Pair : Data->GetLoadedFileHashes())
+		{
+			Files->SetStringField(Pair.Key, Pair.Value);
+		}
+		const TSharedRef<FJsonObject> DataJson = MakeShared<FJsonObject>();
+		DataJson->SetStringField(TEXT("loadedAt"), Data->GetLoadedAtUtc().ToIso8601());
+		DataJson->SetBoolField(TEXT("downloadedCopy"), Data->IsUsingDownloadedData());
+		DataJson->SetObjectField(TEXT("files"), Files);
+		Json->SetObjectField(TEXT("data"), DataJson);
+	}
+
+	OnComplete(MakeJsonResponse(Json, EHttpServerResponseCodes::Ok));
 	return true;
 }
 
@@ -2160,8 +2181,6 @@ bool UValhallaAdminServer::HandleSpawnPointAction(const FHttpServerRequest& Requ
 	return true;
 }
 
-#endif // WITH_VALHALLA_ADMIN_API
-
 bool UValhallaAdminServer::HandleAccountAction(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
 	const TSharedPtr<FJsonObject> Body = ParseBody(Request);
@@ -2169,7 +2188,7 @@ bool UValhallaAdminServer::HandleAccountAction(const FHttpServerRequest& Request
 	FString Action;
 	if (!GetRequiredString(Body, TEXT("action"), Action))
 	{
-		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("action required (ban, unban, list-bans)")));
+		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("action required (ban, unban, list-bans, kick)")));
 		return true;
 	}
 
@@ -2222,6 +2241,32 @@ bool UValhallaAdminServer::HandleAccountAction(const FHttpServerRequest& Request
 		return true;
 	}
 
+	// B-12: the web editor changes accounts straight through the backend (reset
+	// password, delete, rename) and then asks the live server to drop that
+	// account's sessions, so a reset password or a deleted account can't keep
+	// playing on a connection that was verified before the change.
+	if (Action == TEXT("kick"))
+	{
+		if (UserId <= 0)
+		{
+			OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, TEXT("kick needs a userId")));
+			return true;
+		}
+		FString Message;
+		Body->TryGetStringField(TEXT("message"), Message);
+		Message = Message.TrimStartAndEnd().Left(200);
+		if (Message.IsEmpty())
+		{
+			Message = TEXT("Your account was changed by an administrator. Please log in again.");
+		}
+		const int32 Kicked = KickAccount(Context.GameMode, UserId, Message);
+		UE_LOG(LogValhallaAdmin, Log, TEXT("account kick: user #%d, %d session(s)"), UserId, Kicked);
+		OnComplete(MakeJsonResponse(MakeOkMessage(Kicked > 0
+			? FString::Printf(TEXT("kicked %d session(s)"), Kicked)
+			: FString(TEXT("not online"))), EHttpServerResponseCodes::Ok));
+		return true;
+	}
+
 	if (Action == TEXT("unban"))
 	{
 		Backend->UnbanAccount(UserId, Username, [OnComplete](bool bOk, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
@@ -2245,3 +2290,8 @@ bool UValhallaAdminServer::HandleAccountAction(const FHttpServerRequest& Request
 	OnComplete(MakeErrorResponse(EHttpServerResponseCodes::BadRequest, FString::Printf(TEXT("Unknown action: %s"), *Action)));
 	return true;
 }
+
+// HandleAccountAction used to be defined after the #endif, while its
+// declaration and every helper it calls are guarded, so a target built without
+// the admin API (the packaged Game client) could not compile. It is inside now.
+#endif // WITH_VALHALLA_ADMIN_API

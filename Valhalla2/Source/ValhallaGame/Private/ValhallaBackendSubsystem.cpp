@@ -369,6 +369,48 @@ void UValhallaBackendSubsystem::DeleteCharacter(const FString& Token, int32 Char
 		});
 }
 
+void UValhallaBackendSubsystem::ChangePassword(const FString& Token, const FString& CurrentPassword, const FString& NewPassword,
+	TFunction<void(bool, const FString&, const FString&)> OnDone)
+{
+	const TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("currentPassword"), CurrentPassword);
+	Body->SetStringField(TEXT("newPassword"), NewPassword);
+
+	// Passwords are never logged; the Verbose request line logs the path only.
+	Send(TEXT("POST"), TEXT("/api/auth/password"), Body, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 /*Status*/, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			const FString NewToken = bSuccess ? GetStringField(Json, TEXT("token")) : FString();
+			const bool bOk = bSuccess && !NewToken.IsEmpty();
+			UE_LOG(LogValhallaBackend, Log, TEXT("change password : %s"), bOk ? TEXT("ok") : *Error);
+
+			if (OnDone)
+			{
+				OnDone(bOk, NewToken, bOk ? FString() : (Error.IsEmpty() ? FString(TEXT("Password change failed.")) : Error));
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::DeleteAccount(const FString& Token, const FString& Password, const FString& Confirm, FValhallaSimpleCallback OnDone)
+{
+	const TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetStringField(TEXT("password"), Password);
+	Body->SetStringField(TEXT("confirm"), Confirm);
+
+	// POST rather than DELETE-with-a-body: the backend accepts both, and not
+	// every HTTP stack sends a body on a DELETE.
+	Send(TEXT("POST"), TEXT("/api/auth/account/delete"), Body, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 /*Status*/, const TSharedPtr<FJsonObject>& /*Json*/, const FString& Error)
+		{
+			UE_LOG(LogValhallaBackend, Log, TEXT("delete account : %s"), bSuccess ? TEXT("ok") : *Error);
+
+			if (OnDone)
+			{
+				OnDone(bSuccess, Error);
+			}
+		});
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Server routes
 // ─────────────────────────────────────────────────────────────────────────────

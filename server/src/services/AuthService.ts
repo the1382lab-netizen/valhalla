@@ -242,6 +242,9 @@ export async function login(username: string, password: string): Promise<AuthRes
     throw new AccountBannedError(ban);
   }
 
+  db.run('UPDATE users SET last_login_at = ? WHERE id = ?', [Date.now(), userId]);
+  saveToDisk();
+
   const token = generateToken({ userId, username: storedUsername });
 
   return { token, userId, username: storedUsername };
@@ -253,21 +256,38 @@ export async function login(username: string, password: string): Promise<AuthRes
  * @throws Error if token is invalid or expired.
  */
 export function verifyToken(token: string): JwtPayload {
+  let decoded: JwtPayload & { exp?: number; tv?: number };
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload & { exp?: number };
-    return {
-      userId: decoded.userId,
-      username: decoded.username,
-      expiresAt: typeof decoded.exp === 'number' ? decoded.exp * 1000 : undefined,
-    };
+    decoded = jwt.verify(token, JWT_SECRET) as JwtPayload & { exp?: number; tv?: number };
   } catch {
     throw new Error('Invalid or expired token.');
   }
+
+  // B-12: the account must still exist, and the token must carry its current
+  // token_version. A password change or reset bumps the version, which ends
+  // every session issued before it. Tokens from before B-12 carry no "tv" and
+  // count as version 0.
+  const result = getDb().exec('SELECT token_version FROM users WHERE id = ?', [decoded.userId]);
+  if (result.length === 0 || result[0].values.length === 0) {
+    throw new Error('Invalid or expired token.');
+  }
+  const current = Number(result[0].values[0][0] ?? 0);
+  if ((typeof decoded.tv === 'number' ? decoded.tv : 0) !== current) {
+    throw new Error('Invalid or expired token.');
+  }
+
+  return {
+    userId: decoded.userId,
+    username: decoded.username,
+    expiresAt: typeof decoded.exp === 'number' ? decoded.exp * 1000 : undefined,
+  };
 }
 
 /**
  * Generate a JWT token for a user.
  */
-function generateToken(payload: JwtPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+export function generateToken(payload: JwtPayload): string {
+  const result = getDb().exec('SELECT token_version FROM users WHERE id = ?', [payload.userId]);
+  const tv = result.length && result[0].values.length ? Number(result[0].values[0][0] ?? 0) : 0;
+  return jwt.sign({ userId: payload.userId, username: payload.username, tv }, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 }

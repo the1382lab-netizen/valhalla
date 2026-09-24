@@ -365,6 +365,9 @@ canvas HUD is behind `valhalla.DebugHud 1`.
       it; take one, Loot All, Close; closes out of reach or when emptied.
 - [x] Live layout: `valhalla.ReloadUI`, and a 2 s poll of the file's
       timestamp, rebuild the HUD from the UI Layout editor's saves.
+- B-07 (2026-09-24): the layout now lives in the WBP_GameHUD Widget Blueprint
+  (Project Settings > Valhalla > UI > Game HUD Class); the code-built panels and
+  most of `ui-config.json` are gone (see `## B-07`).
       `valhalla.UI [@class] <verb>` drives a client's HUD for scripted gates.
 - [x] **Instant casts lost their events.** Every combat event was its own
       unreliable `NetMulticast`; the engine sends at most
@@ -1207,8 +1210,82 @@ panel keys. The code-built panel shows them in the meantime.
         raised). `ui_tools.py` reloads `hud_blueprints` on every call (takes
         effect at the next editor start). Console commands in PIE:
         `ValhallaLevelTools.run_console_command` already existed.
-- [ ] **Step 4 — switch-over and cleanup:** the HUD creates the Blueprints,
-      the code-built panels and their `ui-config.json` knobs go.
+- [x] **Step 4 — switch-over and cleanup (2026-09-24):** the game HUD is
+      WBP_GameHUD by project setting, the code-built layout and its
+      `ui-config.json` knobs are gone.
+      - Setting: `DefaultGame.ini` `[/Script/ValhallaGame.ValhallaUISettings]`
+        `GameHUDClass=/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C`, plus
+        `+DirectoriesToAlwaysCook=(Path="/Game/Valhalla/UI/HUD")` (the setting
+        is a soft reference the cooker does not follow). `valhalla.HudClass`
+        still overrides it. Empty or unloadable: an error naming the setting,
+        and the bare C++ class, which has no layout (hidden stand-ins for every
+        panel; only nameplates and floating text show; chat cannot open).
+      - Deleted: `BuildAll`'s code branch and `BuildVitals` `BuildActionBar`
+        `BuildCastBar` `BuildTargetFrame` `BuildPartyFrame` `BuildCombatLog`
+        `BuildChat` `BuildLootPanel` `BuildSkillsPane` `BuildInventoryPanel`
+        `BuildTooltip` `BuildDropConfirm` `BuildDeathOverlay` and the code
+        branch of `Rebuild`; `ValhallaGameHUDWidget.cpp` 482 lines out, 223 in
+        (4,130 -> 3,814), the header 50 out. Kept: `BuildWorldLayer`
+        (nameplates, floaters), the combat-log filter menu (`MakePanel`,
+        `MakeButton`, `Place`, `MakeText` serve it), the `Add*` cell / row
+        helpers, and the slot / bar widgets' code-built fallback trees.
+      - Setup sizes a designer tree: `UValhallaHUDSlotWidget::Setup` sets the
+        designer `Sizer` (action 44, inventory / loot 48, skills 36, equipment
+        26), new `UValhallaHUDBarWidget::SetBarSize` the `Sizer` and
+        `BarWidth` of the bars C++ makes (party 160x8, nameplates 60x4; the
+        bars placed in WBP_GameHUD keep the designer's size).
+        `hud_blueprints.wire_cell_classes(True, True)` then set WBP_GameHUD's
+        `SlotWidgetClass` / `BarWidgetClass` to WBP_HUDSlot / WBP_HUDBar
+        (compiled, saved).
+      - Chat on the designer path: `TickLayout` narrows ChatPanel's Size Box
+        to the gap beside the centred action bar, or stacks the chat above
+        VitalsPanel when the gap is under 220 units (only for bottom-left
+        anchored chat and vitals); the designer's position and width are read
+        once. Opening the chat jumps the Size Box to its Max Desired Height
+        (170), closing clears it.
+      - ui-config.json trimmed to `chat.maxMessages` / `chat.visibleLines`,
+        `inventory.cols` / `rows` and `nameplates` (version 1.1.0), in all four
+        places (the file, `shared/src/ui-config.ts`, `FValhallaUIConfig`, the
+        editor's UI Layout page). Removed: `hud` (hp / mana / energy bars,
+        classText), `actionBar`, `castBar`, `deathOverlay`, chat sizes /
+        paddings / colours / font, inventory slot sizes / gaps / panel dims /
+        colours. What C++ still needed from them at runtime (cell sizes, HP
+        high / mid / low, mana, energy, cast bar, cooldown, key label,
+        highlight, label / value text, chat font and channel colours, the open
+        chat's background) is now `UValhallaGameHUDWidget` "Valhalla|HUD Style"
+        properties with the old values as defaults, i.e. WBP_GameHUD's Class
+        Defaults. `chat.visibleLines` is now read (idle lines, was a fixed 8).
+        A pre-B-07 file still parses; the old sections are ignored.
+      - Editor: the UI Layout page (which wrote its own, never-read schema:
+        `hpMana`, `deathScreen`, ...) is rewritten on the real schema: three
+        tabs (inventory grid, chat lines, nameplates with a preview) and a note
+        that the layout lives in WBP_GameHUD. `tsc --noEmit` clean in
+        `shared/` and `editor/`.
+      - Tests: `Valhalla.Game.UI.ConfigParse` (three sections, the old
+        sections absent from the file, a partial and a pre-B-07 file),
+        `HudBlueprintGroundwork` (the setting names WBP_GameHUD and resolves
+        to `WBP_GameHUD_C`), `Valhalla.Core.Data.Loads` (the raw file has the
+        three sections and no `hud`). Full `Valhalla.` run: all pass but the
+        known `Valhalla.Core.Data.MeshIdFallback`.
+      - PIE (L_World, 2 standalone clients, no console override): `game HUD
+        class /Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C (Project
+        Settings > Valhalla > UI)`, `game HUD: layout from the Widget Blueprint
+        WBP_GameHUD_C.`, `HUD built (WBP_GameHUD_C) ... cells WBP_HUDSlot_C,
+        bars WBP_HUDBar_C` for both clients. I (character + inventory, stats,
+        XP bar, 48 px inventory and 26 px equipment slots), K (skills, 36 px),
+        Enter + a typed line (`chat send [general] ...`), the chat jumping to
+        full height and narrowed beside the action bar, `valhalla.ReloadUI`
+        rebuilding both HUDs. Shots `Saved/ClaudeOps/b07/10_`..`14_`.
+      - Not exercised: target frame, party, loot, tooltip, drop confirm and
+        death overlay (the standalone clients have no server; no `valhalla.UI`
+        verb reaches them there), and the chat's stack-above-the-vitals
+        branch (the 646 px client still had room beside the bar). Known: the
+        class line is wider than the HP bar and runs under the open chat's
+        left edge (the code HUD had the same geometry).
+      - Depends on another session's uncommitted B-15 Wave 4 frame textures
+        (`/Game/Valhalla/UI/Frames/T_UI_*`), which the Blueprints reference;
+        they are not in this commit. Until they are committed a clean checkout
+        shows the Blueprints' frames without art.
 
 ## Backlog
 

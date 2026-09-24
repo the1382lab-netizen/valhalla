@@ -571,7 +571,15 @@ void UValhallaHUDSlotWidget::Setup(float Size, const FLinearColor& Background, c
 
 	if (bDesignerTree)
 	{
-		// The designer's sizes and colours stand; only the sweep starts empty.
+		// The designer's look stands, at the size C++ asks for (B-07 step 4:
+		// one WBP_HUDSlot serves the 44 px action cells, the 48 px inventory and
+		// loot cells, the 36 px skills and the 26 px equipment slots). Its Sizer
+		// is the whole cell, as the code-built one is. The sweep starts empty.
+		if (Size > 0.f)
+		{
+			Sizer->SetWidthOverride(Size);
+			Sizer->SetHeightOverride(Size);
+		}
 		CooldownSizer->SetHeightOverride(0.f);
 		return;
 	}
@@ -922,6 +930,26 @@ void UValhallaHUDBarWidget::Setup(float InWidth, float InHeight, const FLinearCo
 	SetOverlayFraction(OverlayFraction);
 }
 
+void UValhallaHUDBarWidget::SetBarSize(float InWidth, float InHeight)
+{
+	EnsureTree();
+	Width = FMath::Max(0.f, InWidth);
+	if (bDesignerTree)
+	{
+		// B-07 step 4: the designer's Sizer is the inside of the frame, as the
+		// code-built bar's is, so a WBP_HUDBar made by C++ (party, nameplates)
+		// comes out at the size C++ asks for; the fill spans the same width.
+		BarWidth = FMath::Max(1.f, Width);
+	}
+	if (Sizer)
+	{
+		Sizer->SetWidthOverride(Width);
+		Sizer->SetHeightOverride(FMath::Max(0.f, InHeight));
+	}
+	SetFraction(Fraction);
+	SetOverlayFraction(OverlayFraction);
+}
+
 float UValhallaHUDBarWidget::FillWidth() const
 {
 	return bDesignerTree ? BarWidth : Width;
@@ -1002,6 +1030,8 @@ UValhallaHUDBarWidget* UValhallaGameHUDWidget::MakeBar(float Width, float Height
 	UClass* BarClass = BarWidgetClass.Get() ? BarWidgetClass.Get() : UValhallaHUDBarWidget::StaticClass();
 	UValhallaHUDBarWidget* Bar = WidgetTree->ConstructWidget<UValhallaHUDBarWidget>(BarClass);
 	Bar->Setup(Width, Height, FillColour, Background, BackgroundAlpha, bWithOverlay, FontSize);
+	// A bar C++ makes (party, nameplates) is C++'s size, designer tree or not.
+	Bar->SetBarSize(Width, Height);
 	return Bar;
 }
 
@@ -1039,20 +1069,20 @@ UValhallaHUDButton* UValhallaGameHUDWidget::MakeButton(const FString& Caption, E
 
 UValhallaHUDSlotWidget* UValhallaGameHUDWidget::MakeCell(EValhallaHUDSlotKind Kind, int32 Index, float Size)
 {
-	// B-07 step 2: SlotWidgetClass (a WBP_HUDSlot child restyles every cell).
-	// The combat log's frame is always the code-built cell: it is a panel.
-	UClass* CellClass = (Kind != EValhallaHUDSlotKind::CombatLog && SlotWidgetClass.Get())
-		? SlotWidgetClass.Get() : UValhallaHUDSlotWidget::StaticClass();
+	// B-07: SlotWidgetClass (WBP_HUDSlot restyles every cell); Setup sizes it.
+	UClass* CellClass = SlotWidgetClass.Get() ? SlotWidgetClass.Get() : UValhallaHUDSlotWidget::StaticClass();
 	UValhallaHUDSlotWidget* Cell = WidgetTree->ConstructWidget<UValhallaHUDSlotWidget>(CellClass);
 	Cell->Kind = Kind;
 	Cell->Index = Index;
 	Cell->Hud = this;
 
+	// The flat colours only show on a code-built cell without the T_UI_Slot art
+	// (1.0's action bar #1a1a1a / #666666, inventory #2a2a3e / #333355).
 	const bool bActionBar = Kind == EValhallaHUDSlotKind::Action;
 	Cell->Setup(Size,
-		bActionBar ? WithAlpha(Config.ActionBar.Bg, 1.f) : Config.Inventory.SlotBg,
-		bActionBar ? Config.ActionBar.Border : Config.Inventory.Border,
-		Config.Inventory.Highlight);
+		bActionBar ? Srgb(0x1a, 0x1a, 0x1a) : Srgb(0x2a, 0x2a, 0x3e),
+		bActionBar ? Srgb(0x66, 0x66, 0x66) : Srgb(0x33, 0x33, 0x55),
+		HighlightColour);
 	Cell->Clear();
 	return Cell;
 }
@@ -1077,6 +1107,27 @@ UValhallaGameHUDWidget::UValhallaGameHUDWidget(const FObjectInitializer& ObjectI
 {
 	SlotWidgetClass = UValhallaHUDSlotWidget::StaticClass();
 	BarWidgetClass = UValhallaHUDBarWidget::StaticClass();
+
+	// B-07 step 4: the values ui-config.json used to carry for these (1.0's
+	// DEFAULT_UI_CONFIG), now WBP_GameHUD's Class Defaults.
+	HpHighColour = Srgb(0x44, 0xff, 0x44);
+	HpMidColour = Srgb(0xff, 0xaa, 0x00);
+	HpLowColour = Srgb(0xff, 0x44, 0x44);
+	ManaColour = Srgb(0x44, 0x88, 0xff);
+	EnergyColour = Srgb(0xdd, 0xaa, 0x00);
+	CastBarColour = Srgb(0xff, 0xaa, 0x00);
+	CastBarTextColour = Srgb(0xff, 0xff, 0xff);
+	CooldownColour = Srgb(0x88, 0x00, 0x00, 0.6f);
+	KeyLabelColour = Srgb(0x88, 0x88, 0x88);
+	HighlightColour = Srgb(0xff, 0xaa, 0x00);
+	LabelColour = Srgb(0xaa, 0xaa, 0xcc);
+	ValueColour = Srgb(0xff, 0xff, 0xff);
+	ChatGeneralColour = Srgb(0xff, 0xff, 0xff);
+	ChatWorldColour = Srgb(0xff, 0xdd, 0x00);
+	ChatWhisperColour = Srgb(0xff, 0x88, 0xcc);
+	ChatPartyColour = Srgb(0x5a, 0xd8, 0xff);
+	ChatSystemColour = Srgb(0xff, 0xaa, 0x44);
+	ChatOpenBackground = Srgb(0x0a, 0x0a, 0x1a, 0.72f);
 }
 
 const TArray<FName>& UValhallaGameHUDWidget::GetRequiredPanelNames()
@@ -1150,8 +1201,10 @@ void UValhallaGameHUDWidget::NativeOnInitialized()
 		WidgetTree = NewObject<UWidgetTree>(this, TEXT("ValhallaHUDTree"));
 	}
 
-	// B-07 step 2: a Widget Blueprint child with a complete designer tree lays
-	// the HUD out; anything else builds it in code, as it always has.
+	// B-07: a Widget Blueprint child with a complete designer tree lays the HUD
+	// out (WBP_GameHUD, Project Settings > Valhalla > UI > Game HUD Class). The
+	// code-built layout is gone (step 4): anything else gets a blank HUD, only
+	// the nameplates and floating text, and an error saying how to fix it.
 	bLayoutFromBlueprint = WantsLayoutFromBlueprint();
 	if (bLayoutFromBlueprint)
 	{
@@ -1161,7 +1214,7 @@ void UValhallaGameHUDWidget::NativeOnInitialized()
 	else if (WidgetTree->RootWidget)
 	{
 		// A designer tree that is not usable: say what is missing, then drop it
-		// (nothing has been handed to Slate yet) and build the code HUD.
+		// (nothing has been handed to Slate yet) and run without a layout.
 		TArray<FString> Missing;
 		for (const FName Name : GetRequiredPanelNames())
 		{
@@ -1171,12 +1224,19 @@ void UValhallaGameHUDWidget::NativeOnInitialized()
 				Missing.Add(Name.ToString());
 			}
 		}
-		UE_LOG(LogValhallaHUD, Error, TEXT("game HUD: %s's designer tree %s%s; building the code HUD instead."),
+		UE_LOG(LogValhallaHUD, Error, TEXT("game HUD: %s's designer tree %s%s; the HUD is blank except nameplates. Fix the Widget Blueprint, or set Project Settings > Valhalla > UI > Game HUD Class to /Game/Valhalla/UI/HUD/WBP_GameHUD."),
 			*GetClass()->GetName(),
 			Cast<UCanvasPanel>(WidgetTree->RootWidget) ? TEXT("") : TEXT("has no Canvas Panel root"),
 			Missing.Num() > 0 ? *FString::Printf(TEXT(" lacks %s"), *FString::Join(Missing, TEXT(", "))) : TEXT(""));
 		ResetPanelPointers();
 		WidgetTree->RootWidget = nullptr;
+	}
+	else if (!HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+	{
+		UE_LOG(LogValhallaHUD, Error,
+			TEXT("game HUD: %s has no Widget Blueprint layout (the code-built HUD was removed in B-07), so the HUD is blank except nameplates. ")
+			TEXT("Set Project Settings > Valhalla > UI > Game HUD Class to /Game/Valhalla/UI/HUD/WBP_GameHUD (or valhalla.HudClass for one session)."),
+			*GetClass()->GetName());
 	}
 
 	if (!WidgetTree->RootWidget)
@@ -1275,29 +1335,22 @@ void UValhallaGameHUDWidget::Rebuild()
 		CloseChat();
 	}
 
-	if (bLayoutFromBlueprint)
+	// The designer's tree stays; only what C++ put into it goes.
+	if (WorldLayer)
 	{
-		// The designer's tree stays; only what C++ put into it goes.
-		if (WorldLayer)
-		{
-			WorldLayer->RemoveFromParent();
-		}
-		if (FilterMenu)
-		{
-			FilterMenu->RemoveFromParent();
-		}
-		UPanelWidget* const Filled[] = { ActionBarRow.Get(), TargetBuffs.Get(), PartyList.Get(), LootGrid.Get(), EquipmentPanel.Get(), InventoryGrid.Get() };
-		for (UPanelWidget* Container : Filled)
-		{
-			if (Container)
-			{
-				Container->ClearChildren();
-			}
-		}
+		WorldLayer->RemoveFromParent();
 	}
-	else
+	if (FilterMenu)
 	{
-		RootCanvas->ClearChildren();
+		FilterMenu->RemoveFromParent();
+	}
+	UPanelWidget* const Filled[] = { ActionBarRow.Get(), TargetBuffs.Get(), PartyList.Get(), LootGrid.Get(), EquipmentPanel.Get(), InventoryGrid.Get() };
+	for (UPanelWidget* Container : Filled)
+	{
+		if (Container)
+		{
+			Container->ClearChildren();
+		}
 	}
 	ActionCells.Reset();
 	PartyRows.Reset();
@@ -1328,36 +1381,19 @@ void UValhallaGameHUDWidget::Rebuild()
 		OpenChat();
 	}
 
-	UE_LOG(LogValhallaHUD, Log, TEXT("HUD built (%s) from ui-config %s (sections %s): action bar %.0f px slots, chat %.0fx%.0f, inventory %dx%d @ %.0f px."),
-		bLayoutFromBlueprint ? *GetClass()->GetName() : TEXT("code layout"), *Config.Version, Config.HasAllSections() ? TEXT("all 7") : TEXT("partial, defaults used"),
-		Config.ActionBar.SlotSize, Config.Chat.MaxWidth, Config.Chat.Height,
-		Config.Inventory.Cols, Config.Inventory.Rows, Config.Inventory.SlotSize);
+	UE_LOG(LogValhallaHUD, Log, TEXT("HUD built (%s) with ui-config %s (sections %s): action cells %.0f px, inventory %dx%d @ %.0f px, chat %d open / %d idle lines, cells %s, bars %s."),
+		bLayoutFromBlueprint ? *GetClass()->GetName() : TEXT("no layout"), *Config.Version, Config.HasAllSections() ? TEXT("all 3") : TEXT("partial, defaults used"),
+		ActionSlotSize, Config.Inventory.Cols, Config.Inventory.Rows, InventorySlotSize,
+		Config.Chat.MaxMessages, Config.Chat.VisibleLines, *GetNameSafe(SlotWidgetClass.Get()), *GetNameSafe(BarWidgetClass.Get()));
 }
 
 void UValhallaGameHUDWidget::BuildAll()
 {
-	if (bLayoutFromBlueprint)
-	{
-		BindDesignerPanels();
-		PopulateDesignerPanels();
-	}
-	else
-	{
-		BuildWorldLayer();
-		BuildVitals();
-		BuildActionBar();
-		BuildCastBar();
-		BuildTargetFrame();
-		BuildPartyFrame();
-		BuildCombatLog();
-		BuildChat();
-		BuildLootPanel();
-		BuildSkillsPane();
-		BuildInventoryPanel();
-		BuildDropConfirm();
-		BuildTooltip();
-		BuildDeathOverlay();
-	}
+	// B-07 step 4: the designer's tree is the only layout. Without one (the bare
+	// C++ class, or an incomplete Blueprint) every panel is a hidden stand-in,
+	// so the HUD runs, blank but for the nameplates and floating text.
+	BindDesignerPanels();
+	PopulateDesignerPanels();
 
 	SetInventoryShown(bInventoryOpen);
 	SkillsRoot->SetVisibility(bSkillsOpen ? ESlateVisibility::Visible : ESlateVisibility::Collapsed);
@@ -1371,8 +1407,8 @@ void UValhallaGameHUDWidget::SetInventoryShown(bool bShown)
 	{
 		InventoryRoot->SetVisibility(Shown);
 	}
-	// The code path's InventoryRoot holds both panels; a designer's may not.
-	if (bLayoutFromBlueprint && CharacterPanel && CharacterPanel != InventoryRoot)
+	// The character panel opens and closes with the inventory (I).
+	if (CharacterPanel && CharacterPanel != InventoryRoot)
 	{
 		CharacterPanel->SetVisibility(Shown);
 	}
@@ -1394,7 +1430,8 @@ void UValhallaGameHUDWidget::EnsureDesignerPart(TObjectPtr<T>& Member, const TCH
 	Member = WidgetTree->ConstructWidget<T>(PartClass);
 	Member->SetVisibility(ESlateVisibility::Collapsed);
 	const FName Key(Name);
-	if (!WarnedMissingParts.Contains(Key))
+	// Without a layout at all, NativeOnInitialized's one error says it all.
+	if (bLayoutFromBlueprint && !WarnedMissingParts.Contains(Key))
 	{
 		WarnedMissingParts.Add(Key);
 		UE_LOG(LogValhallaHUD, Warning, TEXT("game HUD: %s has no '%s' widget; that part of the HUD is hidden."), *GetClass()->GetName(), Name);
@@ -1406,7 +1443,15 @@ void UValhallaGameHUDWidget::BindDesignerPanels()
 	// The optional parts the designer left out: hidden stand-ins, so the Tick
 	// functions need no null checks. Containers (TargetBuffs, PartyList,
 	// LootGrid, SkillsList, EquipmentPanel, InventoryGrid, CombatLogScroll) get
-	// none: no container, no cells.
+	// none: no container, no cells. The required parts only need stand-ins
+	// when there is no layout at all (the bare C++ class).
+	EnsureDesignerPart(VitalsPanel, TEXT("VitalsPanel"), UVerticalBox::StaticClass());
+	EnsureDesignerPart(HpBar, TEXT("HpBar"));
+	EnsureDesignerPart(ManaBar, TEXT("ManaBar"));
+	EnsureDesignerPart(ActionBarRow, TEXT("ActionBarRow"), UHorizontalBox::StaticClass());
+	EnsureDesignerPart(ChatPanel, TEXT("ChatPanel"));
+	EnsureDesignerPart(ChatScroll, TEXT("ChatScroll"));
+	EnsureDesignerPart(ChatInput, TEXT("ChatInput"));
 	EnsureDesignerPart(ClassText, TEXT("ClassText"));
 	EnsureDesignerPart(CastBar, TEXT("CastBar"));
 	EnsureDesignerPart(TargetFramePanel, TEXT("TargetFramePanel"), UBorder::StaticClass());
@@ -1447,7 +1492,22 @@ void UValhallaGameHUDWidget::BindDesignerPanels()
 	TooltipRoot = TooltipPanel;
 	DropRoot = DropConfirmPanel;
 	DeathRoot = DeathOverlay;
-	ChatSizer = nullptr;
+
+	// The chat's Size Box (ChatPanel > Size Box > ...): TickLayout narrows it on
+	// a narrow viewport and OpenChat jumps it to its max height. What the
+	// designer set is read once, before TickLayout first moves anything.
+	ChatSizer = Cast<USizeBox>(ChatPanel->GetContent());
+	if (!bChatDesignKnown && ChatSizer)
+	{
+		if (const UCanvasPanelSlot* ChatSlot = Cast<UCanvasPanelSlot>(ChatPanel->Slot))
+		{
+			bChatDesignKnown = true;
+			ChatDesignPosition = ChatSlot->GetPosition();
+			ChatDesignWidth = ChatSizer->GetWidthOverride();
+			ChatOpenHeight = ChatSizer->GetMaxDesiredHeight();
+		}
+	}
+	LayoutForWidth = -1.f;
 
 	// Designer buttons (UValhallaHUDButton, Action set in the designer) and any
 	// designer-placed cells report to this HUD.
@@ -1469,26 +1529,25 @@ void UValhallaGameHUDWidget::BindDesignerPanels()
 		LogCell->Index = 0;
 	}
 
-	// The chat box: the same commit handler as BuildChat's.
+	// The chat box's commit handler.
 	ChatInput->OnTextCommitted.AddUniqueDynamic(this, &UValhallaGameHUDWidget::HandleChatCommitted);
 }
 
 void UValhallaGameHUDWidget::PopulateDesignerPanels()
 {
-	const FValhallaUIConfig::FHud& H = Config.Hud;
-	const FValhallaUIConfig::FCastBar& C = Config.CastBar;
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-
 	// Nameplates and floaters are C++'s own layer, under every designer panel.
 	BuildWorldLayer();
 
-	// Bars: a designer bar keeps its look, a code-built one takes ui-config's.
-	HpBar->Setup(H.HpWidth, H.HpHeight, H.HpHigh, H.HpBg, H.HpBgAlpha, /*bWithOverlay=*/true, 7);
-	ManaBar->Setup(H.Mana.Width, H.Mana.Height, H.Mana.Color, H.Mana.BgColor, H.Mana.BgAlpha, false, 7);
-	CastBar->Setup(C.Width, C.Height, C.Color, C.BgColor, C.BgAlpha, false, PxToSlate(C.FontSize));
-	CastBar->SetLabelColour(C.TextColor);
-	TargetHpBar->Setup(240.f, 14.f, H.HpHigh, H.HpBg, H.HpBgAlpha, false, 8);
-	XpBar->Setup(FMath::Max(40.f, I.CharPanelWidth - 8.f), 5.f, Srgb(0xff, 0xaa, 0x00), FLinearColor::Black, 0.8f, false, 6);
+	// Bars: a designer bar keeps its look and size (WBP_HUDBar in a Size Box);
+	// C++ gives it its fill colour. The numbers only size a code-built bar
+	// (a bare UValhallaHUDBarWidget placed in the designer).
+	const FLinearColor BarBackground = FLinearColor::Black;
+	HpBar->Setup(200.f, 12.f, HpHighColour, BarBackground, 0.7f, /*bWithOverlay=*/true, 7);
+	ManaBar->Setup(200.f, 12.f, ManaColour, BarBackground, 0.7f, false, 7);
+	CastBar->Setup(260.f, 16.f, CastBarColour, BarBackground, 0.6f, false, 8);
+	CastBar->SetLabelColour(CastBarTextColour);
+	TargetHpBar->Setup(240.f, 14.f, HpHighColour, BarBackground, 0.7f, false, 8);
+	XpBar->Setup(194.f, 4.f, Srgb(0xff, 0xaa, 0x00), BarBackground, 0.8f, false, 6);
 	XpBar->SetToolTipText(AsText(TEXT("Experience to the next level")));
 
 	// The containers C++ fills.
@@ -1498,13 +1557,13 @@ void UValhallaGameHUDWidget::PopulateDesignerPanels()
 	if (LootGrid)       { AddLootCells(LootGrid); }
 	if (EquipmentPanel) { AddEquipRows(EquipmentPanel); }
 	if (InventoryGrid)  { AddInventoryCells(InventoryGrid); }
-	// The filter menu is C++'s: top right under where the code-built log sits.
+	// The filter menu is C++'s: top right, under WBP_GameHUD's combat log.
 	BuildLogFilterMenu(FVector2D(-12.f, 12.f + 200.f + 4.f));
 
 	// Clicks on empty space reach the world whatever the designer left set.
 	ApplyClickThrough(RootCanvas);
 
-	// Start states, as the code-built panels start.
+	// Start states.
 	CastBarRoot->SetVisibility(ESlateVisibility::Collapsed);
 	TargetRoot->SetVisibility(ESlateVisibility::Collapsed);
 	PartyRoot->SetVisibility(ESlateVisibility::Collapsed);
@@ -1553,8 +1612,8 @@ bool UValhallaGameHUDWidget::ApplyClickThrough(UWidget* Widget)
 	}
 
 	// Layout panels never need to eat clicks. A border (a panel background)
-	// with something clickable in it keeps eating them, as the code-built
-	// panels do, so a click on the inventory does not also walk the character.
+	// with something clickable in it keeps eating them (as MakePanel's do), so
+	// a click on the inventory does not also walk the character.
 	if (Widget->GetVisibility() == ESlateVisibility::Visible && !(bHoldsClickable && Widget->IsA<UBorder>()))
 	{
 		Widget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
@@ -1563,19 +1622,18 @@ bool UValhallaGameHUDWidget::ApplyClickThrough(UWidget* Widget)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Runtime children — shared by the code-built and designer paths
+//  Runtime children — what C++ adds to the designer's containers
 // ═════════════════════════════════════════════════════════════════════════════
 
 void UValhallaGameHUDWidget::AddActionCells(UPanelWidget* Row)
 {
-	const FValhallaUIConfig::FActionBar& A = Config.ActionBar;
 	for (int32 SlotNumber = 1; SlotNumber <= ValhallaActionBarSlots; ++SlotNumber)
 	{
-		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Action, SlotNumber, A.SlotSize);
-		Cell->SetKeyLabel(FString::FromInt(SlotNumber), A.KeyLabelColor);
+		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Action, SlotNumber, ActionSlotSize);
+		Cell->SetKeyLabel(FString::FromInt(SlotNumber), KeyLabelColour);
 		if (UHorizontalBoxSlot* CellSlot = Cast<UHorizontalBoxSlot>(Row->AddChild(Cell)))
 		{
-			CellSlot->SetPadding(FMargin(SlotNumber == 1 ? 0.f : A.SlotGap, 0.f, 0.f, 0.f));
+			CellSlot->SetPadding(FMargin(SlotNumber == 1 ? 0.f : ActionSlotGap, 0.f, 0.f, 0.f));
 		}
 		ActionCells.Add(Cell);
 	}
@@ -1601,13 +1659,12 @@ void UValhallaGameHUDWidget::AddTargetBuffTokens(UPanelWidget* Row)
 
 void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 {
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
 	for (int32 Index = 0; Index < ValhallaPartyMaxMembers; ++Index)
 	{
 		UVerticalBox* Row = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		UTextBlock* Name = MakeText(FString(), 8, I.ValueColor, false);
+		UTextBlock* Name = MakeText(FString(), 8, ValueColour, false);
 		Row->AddChildToVerticalBox(Name);
-		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, Config.Hud.HpHigh, Config.Hud.HpBg, Config.Hud.HpBgAlpha, false, 6);
+		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, HpHighColour, FLinearColor::Black, 0.7f, false, 6);
 		Row->AddChildToVerticalBox(Bar);
 		if (UVerticalBoxSlot* RowSlot = Cast<UVerticalBoxSlot>(Column->AddChild(Row)))
 		{
@@ -1621,13 +1678,12 @@ void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 
 void UValhallaGameHUDWidget::AddLootCells(UPanelWidget* Grid)
 {
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
 	constexpr int32 LootColumns = 4;
 	constexpr int32 LootPool = 12;
 	UUniformGridPanel* Uniform = Cast<UUniformGridPanel>(Grid);
 	for (int32 Index = 0; Index < LootPool; ++Index)
 	{
-		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Loot, Index, I.SlotSize);
+		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Loot, Index, InventorySlotSize);
 		if (Uniform)
 		{
 			Uniform->AddChildToUniformGrid(Cell, Index / LootColumns, Index % LootColumns);
@@ -1642,13 +1698,12 @@ void UValhallaGameHUDWidget::AddLootCells(UPanelWidget* Grid)
 
 void UValhallaGameHUDWidget::AddEquipRows(UPanelWidget* Column)
 {
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
 	for (int32 Index = 0; Index < ValhallaEquipSlotCount; ++Index)
 	{
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Equip, Index, 26.f);
+		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Equip, Index, EquipSlotSize);
 		Row->AddChildToHorizontalBox(Cell);
-		UTextBlock* Label = MakeText(FString(), 7, I.LabelColor);
+		UTextBlock* Label = MakeText(FString(), 7, LabelColour);
 		UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(Label);
 		LabelSlot->SetVerticalAlignment(VAlign_Center);
 		LabelSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
@@ -1667,7 +1722,7 @@ void UValhallaGameHUDWidget::AddInventoryCells(UUniformGridPanel* Grid)
 	const int32 Cells = FMath::Clamp(I.Cols * I.Rows, 1, 64);
 	for (int32 Index = 0; Index < Cells; ++Index)
 	{
-		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Inventory, Index, I.SlotSize);
+		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Inventory, Index, InventorySlotSize);
 		Grid->AddChildToUniformGrid(Cell, Index / FMath::Max(1, I.Cols), Index % FMath::Max(1, I.Cols));
 		InventoryCells.Add(Cell);
 	}
@@ -1723,7 +1778,7 @@ FReply UValhallaGameHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  Build — one function per ui-config section
+//  World layer — nameplates and floating text, still built in C++ (ui-config `nameplates`)
 // ═════════════════════════════════════════════════════════════════════════════
 
 void UValhallaGameHUDWidget::BuildWorldLayer()
@@ -1750,7 +1805,7 @@ void UValhallaGameHUDWidget::BuildWorldLayer()
 			NP.FontWeight.Equals(TEXT("bold"), ESearchCase::IgnoreCase), NP.StrokeThickness * 0.5f);
 		Plate.Name->SetJustification(ETextJustify::Center);
 		Column->AddChildToVerticalBox(Plate.Name)->SetHorizontalAlignment(HAlign_Center);
-		Plate.Bar = MakeBar(60.f, 4.f, Config.Hud.HpLow, FLinearColor::Black, 0.8f, false, 6);
+		Plate.Bar = MakeBar(60.f, 4.f, HpLowColour, FLinearColor::Black, 0.8f, false, 6);
 		Plate.Bar->SetLabelVisible(false);
 		Column->AddChildToVerticalBox(Plate.Bar)->SetHorizontalAlignment(HAlign_Center);
 		Plate.Root = Back;
@@ -1775,399 +1830,6 @@ void UValhallaGameHUDWidget::BuildWorldLayer()
 		PooledWidgets.Add(Floater.Text);
 		Floaters.Add(Floater);
 	}
-}
-
-void UValhallaGameHUDWidget::BuildVitals()
-{
-	// hud.hpBar / manaBar / energyBar / classText, in GameScene.ts:2143's
-	// geometry: the HP bar's top edge is `yOffsetFromBottom` px above the
-	// bottom of the screen at x = hpBar.x; the resource bar sits
-	// `height + gapAboveHp` above it; the class line 18 px above that.
-	const FValhallaUIConfig::FHud& H = Config.Hud;
-
-	HpBar = MakeBar(H.HpWidth, H.HpHeight, H.HpHigh, H.HpBg, H.HpBgAlpha, /*bWithOverlay=*/true, 7);
-	Place(HpBar, FVector2D(0.f, 1.f), FVector2D(0.f, 0.f), FVector2D(H.HpX - 2.f, -H.HpYOffsetFromBottom - 2.f));
-
-	// Mana and energy share a row, as in 1.0: a class has one or the other.
-	ManaBar = MakeBar(H.Mana.Width, H.Mana.Height, H.Mana.Color, H.Mana.BgColor, H.Mana.BgAlpha, false, 7);
-	const float ResourceY = -H.HpYOffsetFromBottom - H.Mana.Height - H.ManaGapAboveHp - 2.f;
-	Place(ManaBar, FVector2D(0.f, 1.f), FVector2D(0.f, 0.f), FVector2D(H.HpX - 2.f, ResourceY));
-
-	ClassText = MakeText(FString(), PxToSlate(H.ClassFontSize), H.ClassColor, false, H.ClassStrokeThickness * 0.5f);
-	Place(ClassText, FVector2D(0.f, 1.f), FVector2D(0.f, 1.f), FVector2D(H.HpX, ResourceY - 4.f));
-
-	// The code layout places the three straight on the canvas: there is no
-	// vitals container, so VitalsPanel (the designer's) stays null here.
-	VitalsPanel = nullptr;
-}
-
-void UValhallaGameHUDWidget::BuildActionBar()
-{
-	// actionBar.* — bottom centre, `bottomMargin` off the edge, a `padding`
-	// box around eight `slotSize` cells `slotGap` apart.
-	const FValhallaUIConfig::FActionBar& A = Config.ActionBar;
-
-	UBorder* Panel = MakePanel(A.Bg, A.BgAlpha, A.Padding);
-	UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Panel->SetContent(Row);
-	AddActionCells(Row);
-	ActionBarRow = Row;
-
-	Place(Panel, FVector2D(0.5f, 1.f), FVector2D(0.5f, 1.f), FVector2D(0.f, -A.BottomMargin), 5);
-	ActionBarRoot = Panel;
-}
-
-void UValhallaGameHUDWidget::BuildCastBar()
-{
-	// castBar.* — `yAboveActionBar` px above the action bar's top edge.
-	const FValhallaUIConfig::FCastBar& C = Config.CastBar;
-	const FValhallaUIConfig::FActionBar& A = Config.ActionBar;
-
-	CastBar = MakeBar(C.Width, C.Height, C.Color, C.BgColor, C.BgAlpha, false, PxToSlate(C.FontSize));
-	CastBar->SetLabelColour(C.TextColor);
-	CastBarRoot = CastBar;
-
-	const float ActionBarHeight = A.SlotSize + A.Padding * 2.f;
-	Place(CastBarRoot, FVector2D(0.5f, 1.f), FVector2D(0.5f, 1.f),
-		FVector2D(0.f, -(A.BottomMargin + ActionBarHeight + C.YAboveActionBar)), 6);
-	CastBarRoot->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-void UValhallaGameHUDWidget::BuildTargetFrame()
-{
-	// The target frame takes its type and panel colours from `nameplates`
-	// (1.0 drew the selected target's plate larger, not a separate frame) and
-	// its HP colours from `hud.hpBar`.
-	const FValhallaUIConfig::FNameplates& NP = Config.Nameplates;
-
-	UBorder* Panel = MakePanel(Config.Inventory.Bg, 0.85f, 6.f);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Panel->SetContent(Column);
-
-	TargetName = MakeText(FString(), PxToSlate(NP.FontSize) + 2, NP.Color, true, NP.StrokeThickness * 0.5f);
-	Column->AddChildToVerticalBox(TargetName);
-
-	TargetHpBar = MakeBar(240.f, 14.f, Config.Hud.HpHigh, Config.Hud.HpBg, Config.Hud.HpBgAlpha, false, 8);
-	Column->AddChildToVerticalBox(TargetHpBar)->SetPadding(FMargin(0.f, 3.f, 0.f, 0.f));
-
-	UHorizontalBox* Buffs = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Column->AddChildToVerticalBox(Buffs)->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
-	AddTargetBuffTokens(Buffs);
-	TargetBuffs = Buffs;
-
-	TargetFramePanel = Panel;
-	TargetRoot = TargetFramePanel;
-	Place(TargetRoot, FVector2D(0.5f, 0.f), FVector2D(0.5f, 0.f), FVector2D(0.f, 12.f), 5);
-	TargetRoot->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-void UValhallaGameHUDWidget::BuildPartyFrame()
-{
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-
-	UBorder* Panel = MakePanel(Srgb(0x12, 0x12, 0x2a), 0.92f, 6.f);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Panel->SetContent(Column);
-
-	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Column->AddChildToVerticalBox(Header);
-	PartyTitle = MakeText(TEXT("Party"), 9, I.TitleColor, true);
-	UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(PartyTitle);
-	TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	TitleSlot->SetVerticalAlignment(VAlign_Center);
-	Header->AddChildToHorizontalBox(MakeButton(TEXT("Leave"), EValhallaHUDButton::PartyLeave, 0, Srgb(0x88, 0x88, 0xaa)));
-
-	AddPartyRows(Column);
-	PartyList = Column;
-
-	PartyPanel = Panel;
-	PartyRoot = PartyPanel;
-	Place(PartyRoot, FVector2D(0.f, 0.f), FVector2D(0.f, 0.f), FVector2D(12.f, 12.f), 5);
-	PartyRoot->SetVisibility(ESlateVisibility::Collapsed);
-
-	// The invite prompt — 1.0 only printed "Type /accept"; a button pair is the
-	// 2.0 addition, wired to the same two RPCs.
-	UBorder* Prompt = MakePanel(I.Bg, I.BgAlpha, 10.f);
-	UVerticalBox* PromptColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Prompt->SetContent(PromptColumn);
-	InviteText = MakeText(FString(), 10, I.TitleColor, true);
-	PromptColumn->AddChildToVerticalBox(InviteText)->SetHorizontalAlignment(HAlign_Center);
-	UHorizontalBox* Buttons = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	PromptColumn->AddChildToVerticalBox(Buttons)->SetPadding(FMargin(0.f, 8.f, 0.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Accept"), EValhallaHUDButton::PartyAccept, 0, Srgb(0x44, 0xcc, 0x66)))->SetPadding(FMargin(4.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Decline"), EValhallaHUDButton::PartyDecline, 0, Srgb(0xcc, 0x55, 0x55)))->SetPadding(FMargin(4.f, 0.f));
-	InvitePanel = Prompt;
-	InviteRoot = InvitePanel;
-	Place(InviteRoot, FVector2D(0.5f, 0.f), FVector2D(0.5f, 0.f), FVector2D(0.f, 110.f), 20);
-	InviteRoot->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-void UValhallaGameHUDWidget::BuildCombatLog()
-{
-	// GameScene.ts:4788 — top right, CL_W x CL_H, right-click for filters.
-	constexpr float Width = 320.f;
-	constexpr float Height = 200.f;
-	const FValhallaUIConfig::FChat& C = Config.Chat;
-
-	UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::CombatLog, 0, 0.f);
-	Cell->Setup(0.f, WithAlpha(C.BgColor, C.BgAlpha), WithAlpha(C.BorderColor, C.BorderAlpha), Config.Inventory.Highlight);
-
-	USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	Box->SetWidthOverride(Width);
-	Box->SetHeightOverride(Height);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Box->SetContent(Column);
-
-	CombatLogTitle = MakeText(TEXT("Combat Log"), 8, Srgb(0xcc, 0xaa, 0x66), true);
-	Column->AddChildToVerticalBox(CombatLogTitle)->SetPadding(FMargin(6.f, 3.f));
-
-	CombatLogScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
-	UVerticalBoxSlot* ScrollSlot = Column->AddChildToVerticalBox(CombatLogScroll);
-	ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	ScrollSlot->SetPadding(FMargin(6.f, 0.f, 4.f, 4.f));
-	Cell->SetContent(Box);
-
-	Place(Cell, FVector2D(1.f, 0.f), FVector2D(1.f, 0.f), FVector2D(-12.f, 12.f), 5);
-	CombatLogPanel = Cell;
-
-	BuildLogFilterMenu(FVector2D(-12.f, 12.f + Height + 4.f));
-}
-
-void UValhallaGameHUDWidget::BuildChat()
-{
-	// chat.* — bottom left at 1.0's CHAT_LEFT_X, which is the right edge of
-	// the vitals plus 16 px, so the two never overlap whatever hpBar says.
-	const FValhallaUIConfig::FChat& C = Config.Chat;
-	const float LeftX = Config.Hud.HpX + Config.Hud.HpWidth + 16.f;
-
-	ChatPanel = MakePanel(C.BgColor, 0.f, C.Padding);
-	ChatPanel->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-
-	USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	Box->SetWidthOverride(C.MaxWidth);
-	ChatPanel->SetContent(Box);
-	ChatSizer = Box;
-	LayoutForWidth = -1.f;
-
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Box->SetContent(Column);
-
-	ChatChannelText = MakeText(ValhallaChat::ChannelLabel(ChatChannel), PxToSlate(C.FontSize), C.System, true);
-	ChatChannelText->SetVisibility(ESlateVisibility::Collapsed);
-	Column->AddChildToVerticalBox(ChatChannelText);
-
-	ChatScroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
-	ChatScroll->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	UVerticalBoxSlot* ScrollSlot = Column->AddChildToVerticalBox(ChatScroll);
-	ScrollSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-
-	ChatInput = WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass(), TEXT("ChatInput"));
-	ChatInput->SetHintText(AsText(TEXT("Say something — /g /world /p /w <name> /invite /accept /decline /leave")));
-	{
-		// The engine default is a 24 pt font on a white field — a banner, not a
-		// chat line. chat.fontSize / inputHeight, on the panel's own colours.
-		FEditableTextBoxStyle InputStyle = ChatInput->GetWidgetStyle();
-		FSlateFontInfo InputFont = InputStyle.TextStyle.Font;
-		InputFont.Size = PxToSlate(C.FontSize);
-		InputStyle.SetFont(InputFont);
-		InputStyle.SetPadding(FMargin(4.f, FMath::Max(1.f, (C.InputHeight - InputFont.Size * 1.35f) * 0.5f)));
-		InputStyle.SetBackgroundColor(FSlateColor(FLinearColor(C.BgColor.R, C.BgColor.G, C.BgColor.B, 0.95f)));
-		InputStyle.SetForegroundColor(FSlateColor(C.General));
-		InputStyle.SetFocusedForegroundColor(FSlateColor(C.General));
-		ChatInput->SetWidgetStyle(InputStyle);
-	}
-	ChatInput->OnTextCommitted.AddDynamic(this, &UValhallaGameHUDWidget::HandleChatCommitted);
-	ChatInput->SetVisibility(ESlateVisibility::Collapsed);
-	Column->AddChildToVerticalBox(ChatInput)->SetPadding(FMargin(0.f, 3.f, 0.f, 0.f));
-
-	Place(ChatPanel, FVector2D(0.f, 1.f), FVector2D(0.f, 1.f), FVector2D(LeftX, -C.BottomMargin), 8);
-}
-
-void UValhallaGameHUDWidget::BuildLootPanel()
-{
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-
-	UBorder* Panel = MakePanel(I.Bg, I.BgAlpha, 8.f);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Panel->SetContent(Column);
-	LootTitle = MakeText(TEXT("Loot"), 10, I.TitleColor, true);
-	Column->AddChildToVerticalBox(LootTitle);
-	Column->AddChildToVerticalBox(MakeText(TEXT("click an item to take it"), 7, I.LabelColor))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
-
-	UUniformGridPanel* Grid = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
-	Grid->SetSlotPadding(FMargin(I.SlotGap * 0.5f));
-	Column->AddChildToVerticalBox(Grid);
-	AddLootCells(Grid);
-	LootGrid = Grid;
-
-	UHorizontalBox* Buttons = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Column->AddChildToVerticalBox(Buttons)->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Loot All"), EValhallaHUDButton::LootAll, 0, I.Highlight))->SetPadding(FMargin(0.f, 0.f, 6.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Close"), EValhallaHUDButton::LootClose, 0, Srgb(0x88, 0x88, 0xaa)));
-
-	LootPanel = Panel;
-	LootRoot = LootPanel;
-	Place(LootRoot, FVector2D(0.5f, 0.5f), FVector2D(0.5f, 1.f), FVector2D(220.f, -40.f), 15);
-}
-
-void UValhallaGameHUDWidget::BuildSkillsPane()
-{
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-
-	UBorder* Panel = MakePanel(I.Bg, I.BgAlpha, 8.f);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Panel->SetContent(Column);
-
-	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Column->AddChildToVerticalBox(Header);
-	UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(MakeText(TEXT("Skills  (K)"), 10, I.TitleColor, true));
-	TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	Header->AddChildToHorizontalBox(MakeButton(TEXT("X"), EValhallaHUDButton::SkillsClose, 0, Srgb(0x88, 0x88, 0xaa)));
-
-	SkillsHint = MakeText(TEXT("Drag a skill to the action bar, or click it and then click a slot."), 7, I.LabelColor);
-	SkillsHint->SetAutoWrapText(true);
-	Column->AddChildToVerticalBox(SkillsHint)->SetPadding(FMargin(0.f, 2.f, 0.f, 6.f));
-
-	USizeBox* ListBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	ListBox->SetWidthOverride(300.f);
-	ListBox->SetMaxDesiredHeight(I.PanelHeight + 40.f);
-	UScrollBox* Scroll = WidgetTree->ConstructWidget<UScrollBox>(UScrollBox::StaticClass());
-	ListBox->SetContent(Scroll);
-	SkillsList = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Scroll->AddChild(SkillsList);
-	Column->AddChildToVerticalBox(ListBox);
-
-	SkillsPanel = Panel;
-	SkillsRoot = SkillsPanel;
-	Place(SkillsRoot, FVector2D(0.f, 0.5f), FVector2D(0.f, 0.5f), FVector2D(16.f, -40.f), 12);
-}
-
-void UValhallaGameHUDWidget::BuildInventoryPanel()
-{
-	// inventory.* — GameScene.ts:2216's layout: the character panel
-	// (charPanelWidth) and the cols x rows grid of slotSize cells slotGap
-	// apart, panelGap between them, panelHeight tall, centred.
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-
-	UHorizontalBox* Pair = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-
-	// ── character / equipment ───────────────────────────────────────────
-	UBorder* CharPanel = MakePanel(I.Bg, I.BgAlpha, 8.f);
-	USizeBox* CharBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	CharBox->SetWidthOverride(I.CharPanelWidth);
-	CharBox->SetMinDesiredHeight(I.PanelHeight);
-	CharPanel->SetContent(CharBox);
-	UVerticalBox* CharColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	CharBox->SetContent(CharColumn);
-	CharColumn->AddChildToVerticalBox(MakeText(TEXT("Character  (I)"), 10, I.TitleColor, true))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
-
-	AddEquipRows(CharColumn);
-	EquipmentPanel = CharColumn;
-	// B-07: level + XP, a thin XP bar, then the owner's resolved stats
-	// (AValhallaPlayerState::GetClientStats). Interim — step 3 rebuilds this
-	// panel as a Widget Blueprint.
-	CharacterLevel = MakeText(FString(), 7, I.ValueColor);
-	CharColumn->AddChildToVerticalBox(CharacterLevel)->SetPadding(FMargin(0.f, 6.f, 0.f, 2.f));
-	XpBar = MakeBar(FMath::Max(40.f, I.CharPanelWidth - 8.f), 5.f, Srgb(0xff, 0xaa, 0x00), FLinearColor::Black, 0.8f, false, 6);
-	XpBar->SetToolTipText(AsText(TEXT("Experience to the next level")));
-	CharColumn->AddChildToVerticalBox(XpBar)->SetPadding(FMargin(0.f, 0.f, 0.f, 2.f));
-	CharacterStats = MakeText(FString(), 7, I.ValueColor);
-	CharacterStats->SetAutoWrapText(true);
-	CharColumn->AddChildToVerticalBox(CharacterStats)->SetPadding(FMargin(0.f, 2.f, 0.f, 0.f));
-	Pair->AddChildToHorizontalBox(CharPanel)->SetPadding(FMargin(0.f, 0.f, I.PanelGap, 0.f));
-	CharacterPanel = CharPanel;
-
-	// ── inventory grid ──────────────────────────────────────────────────
-	UBorder* InvPanel = MakePanel(I.Bg, I.BgAlpha, 8.f);
-	USizeBox* InvBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	InvBox->SetMinDesiredHeight(I.PanelHeight);
-	InvPanel->SetContent(InvBox);
-	UVerticalBox* InvColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	InvBox->SetContent(InvColumn);
-
-	UHorizontalBox* Header = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	InvColumn->AddChildToVerticalBox(Header)->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
-	InventoryTitle = MakeText(TEXT("Inventory  (I)"), 10, I.TitleColor, true);
-	UHorizontalBoxSlot* TitleSlot = Header->AddChildToHorizontalBox(InventoryTitle);
-	TitleSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
-	Header->AddChildToHorizontalBox(MakeButton(TEXT("X"), EValhallaHUDButton::InventoryClose, 0, Srgb(0x88, 0x88, 0xaa)));
-
-	UUniformGridPanel* Grid = WidgetTree->ConstructWidget<UUniformGridPanel>(UUniformGridPanel::StaticClass());
-	Grid->SetSlotPadding(FMargin(I.SlotGap * 0.5f));
-	InvColumn->AddChildToVerticalBox(Grid);
-	AddInventoryCells(Grid);
-	InventoryGrid = Grid;
-	InvColumn->AddChildToVerticalBox(MakeText(
-		TEXT("click: equip / unequip    right-click: drop    drag: move or swap"), 7, I.LabelColor))->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
-	Pair->AddChildToHorizontalBox(InvPanel);
-	InventoryPanel = InvPanel;
-
-	InventoryRoot = Pair;
-	Place(InventoryRoot, FVector2D(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D(0.f, -30.f), 10);
-}
-
-void UValhallaGameHUDWidget::BuildTooltip()
-{
-	// GameScene.ts:6214's item tooltip: name in the rarity colour, then the
-	// slot, the stats and the flavour text.
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-	UBorder* Panel = MakePanel(Srgb(0x0c, 0x0c, 0x18), 0.97f, 8.f);
-	Panel->SetVisibility(ESlateVisibility::HitTestInvisible);
-	USizeBox* Box = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
-	Box->SetMaxDesiredWidth(240.f);
-	Panel->SetContent(Box);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Box->SetContent(Column);
-	TooltipName = MakeText(FString(), 10, FLinearColor::White, true);
-	Column->AddChildToVerticalBox(TooltipName);
-	TooltipBody = MakeText(FString(), 8, I.ValueColor);
-	TooltipBody->SetAutoWrapText(true);
-	Column->AddChildToVerticalBox(TooltipBody)->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
-	TooltipPanel = Panel;
-	TooltipRoot = TooltipPanel;
-	UCanvasPanelSlot* TipSlot = Place(TooltipRoot, FVector2D(0.f, 0.f), FVector2D(0.f, 0.f), FVector2D::ZeroVector, 50);
-	TipSlot->SetAutoSize(true);
-	TooltipRoot->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-void UValhallaGameHUDWidget::BuildDropConfirm()
-{
-	const FValhallaUIConfig::FInventory& I = Config.Inventory;
-	UBorder* Panel = MakePanel(I.Bg, 0.98f, 12.f);
-	UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-	Panel->SetContent(Column);
-	DropText = MakeText(FString(), 10, I.TitleColor, true);
-	Column->AddChildToVerticalBox(DropText)->SetHorizontalAlignment(HAlign_Center);
-	UHorizontalBox* Buttons = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-	Column->AddChildToVerticalBox(Buttons)->SetPadding(FMargin(0.f, 8.f, 0.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Drop"), EValhallaHUDButton::DropConfirm, 0, Srgb(0xcc, 0x55, 0x55)))->SetPadding(FMargin(4.f, 0.f));
-	Buttons->AddChildToHorizontalBox(MakeButton(TEXT("Cancel"), EValhallaHUDButton::DropCancel, 0, Srgb(0x88, 0x88, 0xaa)))->SetPadding(FMargin(4.f, 0.f));
-	DropConfirmPanel = Panel;
-	DropRoot = DropConfirmPanel;
-	Place(DropRoot, FVector2D(0.5f, 0.5f), FVector2D(0.5f, 0.5f), FVector2D::ZeroVector, 40);
-	DropRoot->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-void UValhallaGameHUDWidget::BuildDeathOverlay()
-{
-	// deathOverlay.* — the whole screen dimmed to bgAlpha, the text centred.
-	const FValhallaUIConfig::FDeathOverlay& D = Config.DeathOverlay;
-	UBorder* Dim = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
-	Dim->SetBrushColor(FLinearColor(0.f, 0.f, 0.f, D.BgAlpha));
-	Dim->SetHorizontalAlignment(HAlign_Center);
-	Dim->SetVerticalAlignment(VAlign_Center);
-	Dim->SetVisibility(ESlateVisibility::HitTestInvisible);
-	DeathText = MakeText(FString(), PxToSlate(D.FontSize), D.TextColor, true, 2.f);
-	DeathText->SetJustification(ETextJustify::Center);
-	Dim->SetContent(DeathText);
-
-	UCanvasPanelSlot* DimSlot = RootCanvas->AddChildToCanvas(Dim);
-	DimSlot->SetAnchors(FAnchors(0.f, 0.f, 1.f, 1.f));
-	DimSlot->SetOffsets(FMargin(0.f));
-	DimSlot->SetZOrder(100);
-	DeathOverlay = Dim;
-	DeathRoot = DeathOverlay;
-	DeathRoot->SetVisibility(ESlateVisibility::Collapsed);
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2252,11 +1914,10 @@ void UValhallaGameHUDWidget::TickVitals()
 		return;
 	}
 
-	const FValhallaUIConfig::FHud& H = Config.Hud;
 	const float HpFrac = PS->MaxHp > 0.f ? PS->Hp / PS->MaxHp : 0.f;
 	HpBar->SetFraction(HpFrac);
 	// GameScene.ts:2156 — green over half, orange over a quarter, red below.
-	HpBar->SetFillColour(HpFrac > 0.5f ? H.HpHigh : (HpFrac > 0.25f ? H.HpMid : H.HpLow));
+	HpBar->SetFillColour(HpFrac > 0.5f ? HpHighColour : (HpFrac > 0.25f ? HpMidColour : HpLowColour));
 	HpBar->SetOverlayFraction(PS->MaxHp > 0.f ? PS->ShieldHp / PS->MaxHp : 0.f);
 	HpBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Hp, PS->MaxHp));
 
@@ -2266,13 +1927,13 @@ void UValhallaGameHUDWidget::TickVitals()
 	if (bMana)
 	{
 		ManaBar->SetFraction(PS->Mana / PS->MaxMana);
-		ManaBar->SetFillColour(H.Mana.Color);
+		ManaBar->SetFillColour(ManaColour);
 		ManaBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Mana, PS->MaxMana));
 	}
 	else if (bEnergy)
 	{
 		ManaBar->SetFraction(PS->Energy / PS->MaxEnergy);
-		ManaBar->SetFillColour(H.Energy.Color);
+		ManaBar->SetFillColour(EnergyColour);
 		ManaBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Energy, PS->MaxEnergy));
 	}
 
@@ -2300,7 +1961,6 @@ void UValhallaGameHUDWidget::TickActionBar()
 	const UValhallaSkillComponent* Skills = Pawn ? Pawn->GetSkillComponent() : nullptr;
 	const AValhallaPlayerState* PS = GetValhallaPlayerState();
 	const UValhallaDataSubsystem* Data = GetData();
-	const FValhallaUIConfig::FActionBar& A = Config.ActionBar;
 
 	for (UValhallaHUDSlotWidget* Cell : ActionCells)
 	{
@@ -2325,7 +1985,7 @@ void UValhallaGameHUDWidget::TickActionBar()
 		const float Total = FMath::Max(Skill->CooldownMs / 1000.f, Remaining);
 		Cell->SetCooldown(Total > 0.f ? Remaining / Total : 0.f,
 			FString::Printf(TEXT("%.0f"), FMath::CeilToFloat(Remaining)),
-			WithAlpha(A.CooldownOverlay, A.CooldownOverlayAlpha));
+			CooldownColour);
 
 		bool bAffordable = PS && PS->IsAlive() && PS->Level >= Skill->LevelRequired;
 		if (PS && Skill->ResourceType == EValhallaResourceType::Mana) { bAffordable &= PS->Mana >= Skill->ResourceCost; }
@@ -2378,7 +2038,7 @@ void UValhallaGameHUDWidget::TickTargetFrame()
 
 	const float Frac = Info.MaxHp > 0.0 ? static_cast<float>(Info.Hp / Info.MaxHp) : 0.f;
 	TargetHpBar->SetFraction(Frac);
-	TargetHpBar->SetFillColour(Frac > 0.5f ? Config.Hud.HpHigh : (Frac > 0.25f ? Config.Hud.HpMid : Config.Hud.HpLow));
+	TargetHpBar->SetFillColour(Frac > 0.5f ? HpHighColour : (Frac > 0.25f ? HpMidColour : HpLowColour));
 	TargetHpBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), Info.Hp, Info.MaxHp));
 
 	// Buffs: an NPC replicates its own censored view (SyncedBuffs); a player's
@@ -2478,7 +2138,7 @@ void UValhallaGameHUDWidget::TickPartyFrame()
 			Member ? *FString::Printf(TEXT("  Lv %d"), Member->Level) : TEXT(""))));
 		const float Frac = Member && Member->MaxHp > 0.f ? Member->Hp / Member->MaxHp : 0.f;
 		PartyBars[Index]->SetFraction(Frac);
-		PartyBars[Index]->SetFillColour(Frac > 0.5f ? Config.Hud.HpHigh : (Frac > 0.25f ? Config.Hud.HpMid : Config.Hud.HpLow));
+		PartyBars[Index]->SetFillColour(Frac > 0.5f ? HpHighColour : (Frac > 0.25f ? HpMidColour : HpLowColour));
 		PartyBars[Index]->SetLabel(Member ? FString::Printf(TEXT("%.0f/%.0f"), Member->Hp, Member->MaxHp) : FString());
 	}
 }
@@ -2535,13 +2195,14 @@ void UValhallaGameHUDWidget::RefreshChatLines()
 	}
 
 	const TArray<FValhallaChatMessage>& Log = PC->GetChatLog();
-	const int32 Show = bChatOpen ? FMath::Min(Log.Num(), Config.Chat.MaxMessages) : FMath::Min(Log.Num(), 8);
+	// ui-config chat.maxMessages while typing, chat.visibleLines while idle.
+	const int32 Show = FMath::Min(Log.Num(), FMath::Max(0, bChatOpen ? Config.Chat.MaxMessages : Config.Chat.VisibleLines));
 
 	ChatScroll->ClearChildren();
 	ChatLineWidgets.Reset();
 	for (int32 Index = Log.Num() - Show; Index < Log.Num(); ++Index)
 	{
-		UTextBlock* Line = MakeText(FormatChatLine(Log[Index]), PxToSlate(Config.Chat.FontSize), ChatColour(Log[Index].Channel), false, 1.f);
+		UTextBlock* Line = MakeText(FormatChatLine(Log[Index]), ChatFontSize, ChatColour(Log[Index].Channel), false, 1.f);
 		Line->SetAutoWrapText(true);
 		ChatScroll->AddChild(Line);
 		ChatLineWidgets.Add(Line);
@@ -2553,12 +2214,11 @@ FLinearColor UValhallaGameHUDWidget::ChatColour(EValhallaChatChannel Channel) co
 {
 	switch (Channel)
 	{
-	case EValhallaChatChannel::General: return Config.Chat.General;
-	case EValhallaChatChannel::World:   return Config.Chat.World;
-	case EValhallaChatChannel::Whisper: return Config.Chat.Whisper;
-	// ui-config has no party colour; 1.0 had no party channel. The debug HUD's cyan.
-	case EValhallaChatChannel::Party:   return Srgb(0x5a, 0xd8, 0xff);
-	default:                            return Config.Chat.System;
+	case EValhallaChatChannel::General: return ChatGeneralColour;
+	case EValhallaChatChannel::World:   return ChatWorldColour;
+	case EValhallaChatChannel::Whisper: return ChatWhisperColour;
+	case EValhallaChatChannel::Party:   return ChatPartyColour;
+	default:                            return ChatSystemColour;
 	}
 }
 
@@ -2662,7 +2322,7 @@ void UValhallaGameHUDWidget::TickInventoryPanel()
 		{
 			Cell->Clear();
 			EquipLabels[Cell->Index]->SetText(AsText(FString::Printf(TEXT("%s  —"), *SlotName)));
-			EquipLabels[Cell->Index]->SetColorAndOpacity(FSlateColor(Config.Inventory.LabelColor));
+			EquipLabels[Cell->Index]->SetColorAndOpacity(FSlateColor(LabelColour));
 			continue;
 		}
 		Cell->bFilled = true;
@@ -2747,46 +2407,74 @@ void UValhallaGameHUDWidget::TickTooltip()
 	}
 }
 
+namespace
+{
+	/** `Widget`, or the ancestor of it that sits directly on `Canvas`. */
+	UWidget* CanvasChildOf(UWidget* Widget, const UCanvasPanel* Canvas)
+	{
+		while (Widget && Widget->GetParent() && Widget->GetParent() != Canvas)
+		{
+			Widget = Widget->GetParent();
+		}
+		return Widget && Widget->GetParent() == Canvas ? Widget : nullptr;
+	}
+
+	/** A canvas slot pinned to the bottom-left corner by its bottom-left point. */
+	bool IsBottomLeft(const UCanvasPanelSlot* CanvasSlot)
+	{
+		const FAnchors Anchors = CanvasSlot->GetAnchors();
+		return Anchors.Minimum.Equals(FVector2D(0.f, 1.f)) && Anchors.Maximum.Equals(FVector2D(0.f, 1.f))
+			&& FMath::IsNearlyEqual(CanvasSlot->GetAlignment().Y, 1.f);
+	}
+}
+
 void UValhallaGameHUDWidget::TickLayout()
 {
-	// A designer tree places the chat itself; this is the code layout's fix-up.
-	if (bLayoutFromBlueprint || !RootCanvas || !ChatPanel || !ChatSizer || !ActionBarRoot)
+	// B-07 step 4: the code layout's chat fix-up, on WBP_GameHUD's chat. Only a
+	// chat laid out the way WBP_GameHUD has it (bottom-left anchored, a Size Box
+	// inside ChatPanel) is moved; anything else is left as the designer put it.
+	if (!bLayoutFromBlueprint || !bChatDesignKnown || !RootCanvas || !ChatPanel || !ChatSizer || !ActionBarRoot)
 	{
 		return;
 	}
+	UCanvasPanelSlot* ChatSlot = Cast<UCanvasPanelSlot>(ChatPanel->Slot);
+	const UWidget* ActionBarPanel = CanvasChildOf(ActionBarRoot, RootCanvas);
+	UWidget* VitalsBlock = CanvasChildOf(VitalsPanel, RootCanvas);
+	const UCanvasPanelSlot* VitalsSlot = VitalsBlock ? Cast<UCanvasPanelSlot>(VitalsBlock->Slot) : nullptr;
+	if (!ChatSlot || !ActionBarPanel || !VitalsSlot || !IsBottomLeft(ChatSlot) || !IsBottomLeft(VitalsSlot) || ChatDesignWidth <= 0.f)
+	{
+		return;
+	}
+
 	const float Width = RootCanvas->GetCachedGeometry().GetLocalSize().X;
-	const float BarWidth = ActionBarRoot->GetDesiredSize().X;
-	if (Width <= 0.f || BarWidth <= 0.f || FMath::IsNearlyEqual(Width, LayoutForWidth, 0.5f))
+	const float BarWidth = ActionBarPanel->GetDesiredSize().X;
+	const float VitalsHeight = VitalsBlock->GetDesiredSize().Y;
+	if (Width <= 0.f || BarWidth <= 0.f || VitalsHeight <= 0.f || FMath::IsNearlyEqual(Width, LayoutForWidth, 0.5f))
 	{
 		return;
 	}
 	LayoutForWidth = Width;
 
-	UCanvasPanelSlot* ChatSlot = Cast<UCanvasPanelSlot>(ChatPanel->Slot);
-	if (!ChatSlot)
-	{
-		return;
-	}
-
-	const FValhallaUIConfig::FChat& C = Config.Chat;
-	const FValhallaUIConfig::FHud& H = Config.Hud;
 	constexpr float Gap = 8.f;
 	constexpr float MinReadableWidth = 220.f;
 
-	// Beside the vitals (ui-config's own place), as wide as the gap to the bar allows.
-	const float LeftX = H.HpX + H.HpWidth + 16.f;
+	// Where the designer put it (beside the vitals), as wide as the gap to the
+	// centred action bar allows.
+	const float LeftX = ChatDesignPosition.X;
 	const float Room = (Width - BarWidth) * 0.5f - LeftX - Gap;
 	if (Room >= MinReadableWidth)
 	{
-		ChatSizer->SetWidthOverride(FMath::Min(C.MaxWidth, Room));
-		ChatSlot->SetPosition(FVector2D(LeftX, -C.BottomMargin));
+		ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, Room));
+		ChatSlot->SetPosition(ChatDesignPosition);
 		return;
 	}
 
-	// Too narrow: full width, stacked above the vitals block (class line top).
-	const float VitalsTop = H.HpYOffsetFromBottom + H.Mana.Height + H.ManaGapAboveHp + 2.f + 4.f + 18.f;
-	ChatSizer->SetWidthOverride(FMath::Min(C.MaxWidth, FMath::Max(MinReadableWidth, Width * 0.5f - H.HpX - Gap)));
-	ChatSlot->SetPosition(FVector2D(H.HpX, -(VitalsTop + Gap)));
+	// Too narrow: stacked above the vitals block, as wide as half the screen.
+	const FVector2D VitalsPosition = VitalsSlot->GetPosition();
+	const float VitalsTop = VitalsHeight - VitalsPosition.Y; // px above the bottom edge
+	ChatSizer->SetWidthOverride(FMath::Min(ChatDesignWidth, FMath::Max(MinReadableWidth, Width * 0.5f - VitalsPosition.X - Gap)));
+	ChatSlot->SetPosition(FVector2D(VitalsPosition.X, -(VitalsTop + Gap)));
+	UE_LOG(LogValhallaHUD, Verbose, TEXT("chat stacked above the vitals (%.0f units wide, action bar %.0f)."), Width, BarWidth);
 }
 
 void UValhallaGameHUDWidget::TickDeathOverlay()
@@ -2846,7 +2534,7 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 		Plate.Name->SetText(AsText(Name));
 		const float Frac = MaxHp > 0.f ? Hp / MaxHp : 0.f;
 		Plate.Bar->SetFraction(Frac);
-		Plate.Bar->SetFillColour(bHostile ? Config.Hud.HpLow : Config.Hud.HpHigh);
+		Plate.Bar->SetFillColour(bHostile ? HpLowColour : HpHighColour);
 		if (UCanvasPanelSlot* PlateSlot = Cast<UCanvasPanelSlot>(Plate.Root->Slot))
 		{
 			PlateSlot->SetPosition(Screen + FVector2D(0.f, ScreenOffset));
@@ -3221,7 +2909,6 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 		SkillsBuiltForLevel = PS->Level;
 		SkillsList->ClearChildren();
 
-		const FValhallaUIConfig::FInventory& I = Config.Inventory;
 		for (const FName SkillId : Data->GetClassSkills(PS->ClassId))
 		{
 			const FValhallaSkillTemplate* Skill = Data->FindSkill(SkillId);
@@ -3230,7 +2917,7 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 				continue;
 			}
 			UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
-			UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Skill, INDEX_NONE, 36.f);
+			UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Skill, INDEX_NONE, SkillSlotSize);
 			Cell->bFilled = true;
 			Cell->Id = SkillId;
 			Cell->SetSkillIcon(SkillCode(*Skill), CategoryColour(Skill->Category), Packed(Skill->IconColor));
@@ -3241,12 +2928,12 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 			UVerticalBox* Text = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 			Text->AddChildToVerticalBox(MakeText(FString::Printf(TEXT("%s%s"), *Skill->Name,
 				bLocked ? *FString::Printf(TEXT("   (Lv %d)"), Skill->LevelRequired) : TEXT("")), 8,
-				bLocked ? I.LabelColor : I.ValueColor, true));
+				bLocked ? LabelColour : ValueColour, true));
 			const TCHAR* Resource = Skill->ResourceType == EValhallaResourceType::Mana ? TEXT("mana")
 				: (Skill->ResourceType == EValhallaResourceType::Energy ? TEXT("energy") : TEXT(""));
 			Text->AddChildToVerticalBox(MakeText(FString::Printf(TEXT("%s%s  cast %.1fs  cd %.0fs"),
 				Skill->ResourceCost > 0.f ? *FString::Printf(TEXT("%.0f %s"), Skill->ResourceCost, Resource) : TEXT("free"), TEXT(""),
-				Skill->CastTimeMs / 1000.f, Skill->CooldownMs / 1000.f), 7, I.LabelColor));
+				Skill->CastTimeMs / 1000.f, Skill->CooldownMs / 1000.f), 7, LabelColour));
 			UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(Text);
 			TextSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
 			TextSlot->SetVerticalAlignment(VAlign_Center);
@@ -3819,19 +3506,20 @@ void UValhallaGameHUDWidget::SetInputForTyping(bool bTyping)
 
 void UValhallaGameHUDWidget::OpenChat(const FString& Prefill)
 {
-	if (!ChatInput)
+	// No layout (the bare C++ class): the box is a hidden stand-in, and UI-only
+	// input focused on it would leave the player typing into nothing.
+	if (!ChatInput || !bLayoutFromBlueprint)
 	{
 		return;
 	}
 	bChatOpen = true;
-	const FValhallaUIConfig::FChat& C = Config.Chat;
-	ChatPanel->SetBrushColor(WithAlpha(C.BgColor, C.BgAlpha));
+	ChatPanel->SetBrushColor(ChatOpenBackground);
 	ChatPanel->SetVisibility(ESlateVisibility::Visible);
-	// The code layout grows the box to chat.height while typing; a designer's
-	// chat keeps the size it was given.
-	if (USizeBox* Box = bLayoutFromBlueprint ? nullptr : Cast<USizeBox>(ChatPanel->GetContent()))
+	// Typing, the box jumps to its full height (the designer Size Box's Max
+	// Desired Height) rather than growing line by line; idle, it fits its lines.
+	if (ChatSizer && ChatOpenHeight > 0.f)
 	{
-		Box->SetHeightOverride(C.Height);
+		ChatSizer->SetHeightOverride(ChatOpenHeight);
 	}
 	ChatChannelText->SetText(AsText(ValhallaChat::ChannelLabel(ChatChannel)));
 	ChatChannelText->SetColorAndOpacity(FSlateColor(ChatColour(ChatChannel)));
@@ -3855,11 +3543,11 @@ void UValhallaGameHUDWidget::CloseChat()
 		return;
 	}
 	bChatOpen = false;
-	ChatPanel->SetBrushColor(WithAlpha(Config.Chat.BgColor, 0.f));
+	ChatPanel->SetBrushColor(WithAlpha(ChatOpenBackground, 0.f));
 	ChatPanel->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	if (USizeBox* Box = bLayoutFromBlueprint ? nullptr : Cast<USizeBox>(ChatPanel->GetContent()))
+	if (ChatSizer && ChatOpenHeight > 0.f)
 	{
-		Box->ClearHeightOverride();
+		ChatSizer->ClearHeightOverride();
 	}
 	ChatChannelText->SetVisibility(ESlateVisibility::Collapsed);
 	ChatScroll->SetVisibility(ESlateVisibility::SelfHitTestInvisible);

@@ -1,8 +1,11 @@
 // Copyright Valhalla 2.0. All Rights Reserved.
 //
-// Phase 8b: the game HUD. One UUserWidget, built in C++ from WidgetTree like
-// Phase 7b's front end and for the same reason — every binding is reviewable
-// source — laid out from `ui-config.json` through FValhallaUIConfig.
+// Phase 8b: the game HUD. B-07: laid out by the WBP_GameHUD Widget Blueprint
+// (Content/Valhalla/UI/HUD, a child of UValhallaGameHUDWidget, chosen in
+// Project Settings > Valhalla > UI > Game HUD Class); C++ binds its widgets by
+// name, fills them and runs them. The code-built layout was removed in B-07
+// step 4; `ui-config.json` keeps only the inventory grid, the chat line counts
+// and the nameplates (the nameplate / floating-text layer is still C++'s).
 //
 // The HUD reads replicated state every tick and never decides anything. Every
 // button ends in the same Server RPC a key press or a console command does.
@@ -99,8 +102,9 @@ enum class EValhallaHUDButton : uint8
  * optional). With no designer tree the cell builds itself in code exactly as
  * before. Either way the HUD drives it through the same Set* calls. A part the
  * designer left out is a hidden stand-in, so the setters never need a null
- * check; the designer tree's own sizes and colours are left alone (Setup only
- * styles the code-built cell).
+ * check; the designer tree's own colours are left alone (Setup only styles
+ * the code-built cell), but Setup sizes its Sizer, so one WBP_HUDSlot serves
+ * every cell size (B-07 step 4).
  */
 UCLASS(Blueprintable, BlueprintType)
 class VALHALLAGAME_API UValhallaHUDSlotWidget : public UUserWidget
@@ -113,7 +117,11 @@ public:
 	FName Id;
 	TWeakObjectPtr<UValhallaGameHUDWidget> Hud;
 
-	/** Build the cell. Size in px, colours from ui-config. Call once, before AddChild. */
+	/**
+	 * Size the cell (px, both ways; 0 leaves the size alone) and, for the
+	 * code-built cell, colour it. A designer tree keeps its look but is sized
+	 * too: its Sizer takes the size. Call once, before AddChild.
+	 */
 	void Setup(float Size, const FLinearColor& Background, const FLinearColor& Border, const FLinearColor& Highlight);
 
 	/** Put an arbitrary widget over the cell (the combat log uses this to be one big cell). */
@@ -239,6 +247,14 @@ public:
 	void Setup(float InWidth, float InHeight, const FLinearColor& FillColour, const FLinearColor& BackgroundColour, float BackgroundAlpha,
 		bool bWithOverlay = false, int32 FontSize = 9);
 
+	/**
+	 * B-07 step 4: the bar's size inside its frame, designer tree or not: the
+	 * Sizer takes Width x Height and a designer bar's BarWidth becomes Width.
+	 * MakeBar calls it for the bars C++ makes (party 160x8, nameplates 60x4);
+	 * the bars placed in WBP_GameHUD keep the designer's size.
+	 */
+	void SetBarSize(float InWidth, float InHeight);
+
 	/** 0..1, clamped (NaN is 0). Hides the fill at 0. Safe before the tree exists. */
 	void SetFraction(float InFraction);
 	float GetFraction() const { return Fraction; }
@@ -332,18 +348,10 @@ struct FValhallaCombatLogLine
 /**
  * The Phase 8b HUD.
  *
- * ## Layout
- *
- * Everything is placed on one canvas from FValhallaUIConfig — see
- * BuildVitals / BuildActionBar / … for which fields feed which panel. The
- * whole tree is thrown away and rebuilt by Rebuild(), which is what
- * `valhalla.ReloadUI` and the ui-config.json timestamp poll call, so a UI
- * Layout editor save shows up in a running PIE session.
- *
- * ## Layout from a Widget Blueprint (B-07 step 2)
+ * ## Layout: a Widget Blueprint (B-07)
  *
  * A Widget Blueprint child (WBP_GameHUD, set as Project Settings > Valhalla >
- * UI > Game HUD Class) may own the layout instead: its root must be a Canvas
+ * UI > Game HUD Class) owns the layout: its root must be a Canvas
  * Panel, and its widgets bind by name to the `meta = (BindWidget)` /
  * `(BindWidgetOptional)` members below (VitalsPanel, HpBar, ActionBarRow, ...;
  * the list is in the header, grouped by panel). C++ still fills and runs every
@@ -353,9 +361,17 @@ struct FValhallaCombatLogLine
  * the nameplate / floater layer and the combat-log filter menu itself.
  * Buttons are UValhallaHUDButton widgets with their Action set in the
  * designer. A missing optional part is a hidden stand-in (a warning, once) so
- * that feature just does not show. With no Blueprint, an empty one, or one
- * missing a required widget, the HUD builds itself in code exactly as before
- * (the last with an error in the log).
+ * that feature just does not show. The sizes of the cells C++ makes and the
+ * colours C++ applies at runtime (HP thresholds, mana / energy, cooldowns,
+ * chat channels, ...) are the "Valhalla|HUD Style" properties below: the
+ * Blueprint's Class Defaults. The code-built layout is gone (B-07 step 4): with
+ * no Blueprint, an empty one, or one missing a required widget, the HUD logs an
+ * error saying to set the project setting and runs blank but for nameplates.
+ *
+ * Rebuild() empties what C++ added and fills the designer's containers again;
+ * `valhalla.ReloadUI` and the ui-config.json timestamp poll call it, so a UI
+ * Layout editor save (inventory grid, chat lines, nameplates) shows up in a
+ * running PIE session.
  *
  * ## Input
  *
@@ -453,18 +469,18 @@ private:
 
 	// ── Build ───────────────────────────────────────────────────────────
 	void BuildAll();
-	/** Designer path: stand-ins for missing optional parts, hook up designer buttons, cells and the chat box. */
+	/** Stand-ins for missing parts, hook up designer buttons, cells and the chat box. */
 	void BindDesignerPanels();
-	/** Designer path: fill the designer's containers (cells, rows, tokens) and build the world layer / filter menu. */
+	/** Fill the designer's containers (cells, rows, tokens) and build the world layer / filter menu. */
 	void PopulateDesignerPanels();
-	/** Designer path: layout panels, and panels with nothing clickable, stop eating clicks. Returns true when `Widget` is interactive. */
+	/** Layout panels, and panels with nothing clickable, stop eating clicks. Returns true when `Widget` is interactive. */
 	bool ApplyClickThrough(UWidget* Widget);
-	/** Hidden, unparented stand-in for an optional designer part the Blueprint lacks; warns once per name. */
+	/** Hidden, unparented stand-in for a designer part the Blueprint lacks; warns once per name (not without a layout). */
 	template <typename T>
 	void EnsureDesignerPart(TObjectPtr<T>& Member, const TCHAR* Name, UClass* ConcreteClass = nullptr);
-	/** Null every designer-bound member (the code path's fallback when a Blueprint is incomplete). */
+	/** Null every designer-bound member (an incomplete Blueprint's tree is dropped). */
 	void ResetPanelPointers();
-	// Shared by both paths: the runtime-made children of a panel.
+	// The runtime-made children of a designer panel.
 	void AddActionCells(UPanelWidget* Row);
 	void AddTargetBuffTokens(UPanelWidget* Row);
 	void AddPartyRows(UPanelWidget* Column);
@@ -473,19 +489,7 @@ private:
 	void AddInventoryCells(UUniformGridPanel* Grid);
 	void BuildLogFilterMenu(const FVector2D& Position);
 	void SetInventoryShown(bool bShown);
-	void BuildVitals();
-	void BuildActionBar();
-	void BuildCastBar();
-	void BuildTargetFrame();
-	void BuildPartyFrame();
-	void BuildCombatLog();
-	void BuildChat();
-	void BuildLootPanel();
-	void BuildSkillsPane();
-	void BuildInventoryPanel();
-	void BuildTooltip();
-	void BuildDropConfirm();
-	void BuildDeathOverlay();
+	/** Nameplates and floating text: C++'s own layer under the designer's panels, styled from ui-config `nameplates`. */
 	void BuildWorldLayer();
 
 	// ── Tick ────────────────────────────────────────────────────────────
@@ -502,11 +506,12 @@ private:
 	void TickWorldLayer(float DeltaTime);
 	void TickConfigWatcher(float DeltaTime);
 	/**
-	 * Keep the chat box clear of the action bar. ui-config places the chat at
+	 * Keep the chat box clear of the action bar. WBP_GameHUD places the chat at
 	 * the vitals' right edge with a fixed width, which on a narrow viewport (a
 	 * 640 px PIE client, or any window under ~1450 Slate units) runs under the
-	 * centred action bar. Narrow it to the gap, or lift it above the vitals
-	 * when the gap is too small to read. Re-run only when the width changes.
+	 * centred action bar. Narrow its Size Box to the gap, or lift it above the
+	 * vitals when the gap is too small to read. Re-run only when the width
+	 * changes; only for a bottom-left anchored chat and vitals.
 	 */
 	void TickLayout();
 
@@ -531,7 +536,7 @@ private:
 	FString FormatChatLine(const FValhallaChatMessage& Line) const;
 	void SetInputForTyping(bool bTyping);
 
-	/** A resource bar (B-07 step 2: a BarWidgetClass instance, Setup with these numbers). */
+	/** A resource bar: a BarWidgetClass instance, Setup and SetBarSize with these numbers. */
 	UValhallaHUDBarWidget* MakeBar(float Width, float Height, const FLinearColor& Fill, const FLinearColor& Background, float BackgroundAlpha, bool bWithOverlay = false, int32 FontSize = 9);
 
 	UTextBlock* MakeText(const FString& Content, int32 Size, const FLinearColor& Colour, bool bBold = false, float Outline = 1.f);
@@ -545,15 +550,83 @@ protected:
 	/** The action / inventory / equipment / loot / skill cell. A WBP_HUDSlot child restyles every cell. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD")
 	TSubclassOf<UValhallaHUDSlotWidget> SlotWidgetClass;
-	/** Every bar C++ makes (party, nameplates, and the whole code-built HUD's). A WBP_HUDBar child restyles them. */
+	/** Every bar C++ makes (party, nameplates). A WBP_HUDBar child restyles them; SetBarSize sizes them. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD")
 	TSubclassOf<UValhallaHUDBarWidget> BarWidgetClass;
 
-	// ── Designer panels (B-07 step 2) ──────────────────────────────────
+	// ── Style (B-07 step 4: these were ui-config.json fields) ──────────
+	// The Blueprint's Class Defaults: sizes of the cells C++ makes and the
+	// colours C++ applies while the game runs. Defaults are 1.0's values.
+
+	/** Action bar cells, px square (was actionBar.slotSize). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "8"))
+	float ActionSlotSize = 44.f;
+	/** Space between action bar cells, px (was actionBar.slotGap). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "0"))
+	float ActionSlotGap = 4.f;
+	/** Inventory and loot cells, px square (was inventory.slotSize). The grids' spacing is the designer's Slot Padding. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "8"))
+	float InventorySlotSize = 48.f;
+	/** Equipment slots on the character panel, px square. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "8"))
+	float EquipSlotSize = 26.f;
+	/** Skill icons in the skills pane, px square. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "8"))
+	float SkillSlotSize = 36.f;
+
+	/** HP fill over half (HP, target, party, friendly nameplates; was hud.hpBar.colors). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor HpHighColour;
+	/** HP fill over a quarter. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor HpMidColour;
+	/** HP fill below a quarter, and hostile nameplates. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor HpLowColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ManaColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor EnergyColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor CastBarColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor CastBarTextColour;
+	/** The cooldown sweep over an action cell, alpha included. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor CooldownColour;
+	/** The action cells' 1-8 key labels. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor KeyLabelColour;
+	/** A selected / armed cell's rim. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor HighlightColour;
+	/** Secondary text C++ writes: equipment slot names, skill details. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor LabelColour;
+	/** Primary text C++ writes: party names, skill names. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ValueColour;
+	/** Chat lines, Slate points (ui-config's 11px). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "6"))
+	int32 ChatFontSize = 8;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatGeneralColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatWorldColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatWhisperColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatPartyColour;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatSystemColour;
+	/** ChatPanel's background while typing (idle it is clear), alpha included. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor ChatOpenBackground;
+
+	// ── Designer panels (B-07) ─────────────────────────────────────────
 	// A WBP_GameHUD child binds its widgets to these by name. BindWidget is
 	// required (the Blueprint will not compile without it); BindWidgetOptional
-	// may be left out and that feature is hidden. The code-built path assigns
-	// the same members, so everything below works off them either way.
+	// may be left out and that feature is hidden.
 	// "leave empty": C++ adds that container's children at runtime.
 
 	// vitals (required)
@@ -614,7 +687,7 @@ protected:
 	TObjectPtr<UScrollBox> CombatLogScroll;
 
 	// chat (required)
-	/** The chat box's background: transparent while idle, chat.bgColor while typing. Required. */
+	/** The chat box's background: transparent while idle, ChatOpenBackground while typing. Holds a Size Box (TickLayout, OpenChat). Required. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|HUD", meta = (BindWidget))
 	TObjectPtr<UBorder> ChatPanel;
 	/** The chat lines go in here (leave empty). Required. */
@@ -698,7 +771,7 @@ private:
 
 	// action bar
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDSlotWidget>> ActionCells;
-	/** The action bar's outer panel (code path) / ActionBarRow (designer path). */
+	/** ActionBarRow (TickLayout measures the canvas panel holding it). */
 	UPROPERTY(Transient) TObjectPtr<UWidget> ActionBarRoot;
 
 	// cast bar
@@ -724,10 +797,16 @@ private:
 	bool bCombatLogDirty = true;
 
 	// chat
-	/** Code path only: the chat's width box (TickLayout narrows it). */
+	/** ChatPanel's Size Box: TickLayout narrows it, OpenChat sets its height. */
 	UPROPERTY(Transient) TObjectPtr<USizeBox> ChatSizer;
 	/** The canvas width TickLayout last laid the chat out for. */
 	float LayoutForWidth = -1.f;
+	/** The designer's chat placement, read once (TickLayout moves it later). */
+	bool bChatDesignKnown = false;
+	FVector2D ChatDesignPosition = FVector2D::ZeroVector;
+	float ChatDesignWidth = 0.f;
+	/** The chat Size Box's Max Desired Height: its height while typing (0 = grow with the lines). */
+	float ChatOpenHeight = 0.f;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> ChatLineWidgets;
 	EValhallaChatChannel ChatChannel = EValhallaChatChannel::General;
 	bool bChatOpen = false;
@@ -749,7 +828,7 @@ private:
 	int32 SkillsBuiltForLevel = -1;
 
 	// inventory
-	/** What ToggleInventory shows: the character + inventory pair (code path) / InventoryPanel (designer path). */
+	/** What ToggleInventory shows: InventoryPanel (CharacterPanel follows it). */
 	UPROPERTY(Transient) TObjectPtr<UWidget> InventoryRoot;
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDSlotWidget>> InventoryCells;
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDSlotWidget>> EquipCells;

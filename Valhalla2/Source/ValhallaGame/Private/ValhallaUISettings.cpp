@@ -63,7 +63,11 @@ TSubclassOf<UValhallaGameHUDWidget> UValhallaUISettings::ResolveGameHUDClass(con
 			UE_LOG(LogValhallaHUD, Log, TEXT("game HUD class %s (Project Settings > Valhalla > UI)."), *Loaded->GetPathName());
 			return Loaded;
 		}
-		UE_LOG(LogValhallaHUD, Warning, TEXT("Game HUD Class '%s' could not be loaded; using the code-built HUD."), *Setting.ToString());
+		UE_LOG(LogValhallaHUD, Error, TEXT("Game HUD Class '%s' could not be loaded; the HUD will be blank (no layout). Fix Project Settings > Valhalla > UI > Game HUD Class."), *Setting.ToString());
+	}
+	else
+	{
+		UE_LOG(LogValhallaHUD, Error, TEXT("Project Settings > Valhalla > UI > Game HUD Class is empty; the HUD will be blank (no layout). Set it to /Game/Valhalla/UI/HUD/WBP_GameHUD."));
 	}
 
 	return UValhallaGameHUDWidget::StaticClass();

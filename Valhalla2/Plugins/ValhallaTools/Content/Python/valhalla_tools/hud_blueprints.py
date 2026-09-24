@@ -30,14 +30,21 @@ designer brushes with the same margins and paddings when those textures are
 imported; without them the trees use the flat ui-config colours. C++ applies
 no frame art to a designer tree, so the art has to be in the Blueprint.
 
-WBP_HUDSlot / WBP_HUDBar are *not* made WBP_GameHUD's ``SlotWidgetClass`` /
-``BarWidgetClass`` by default (``wire_cell_classes`` does it on request):
-``UValhallaHUDSlotWidget::Setup`` / ``UValhallaHUDBarWidget::Setup`` leave a
-designer tree's sizes alone, and C++ makes cells at three sizes (action
-44, inventory / loot 48, equipment 26) and bars at four (party 160x8,
-nameplate 60x4, ...), so one designer size would shrink or grow all of them.
-Until C++ sizes a designer ``Sizer`` from Setup, the cells and bars C++ makes
-stay the code-built classes.
+B-07 step 4: WBP_GameHUD's ``SlotWidgetClass`` / ``BarWidgetClass`` are
+WBP_HUDSlot / WBP_HUDBar (``wire_cell_classes(True, True)``; ``create_blueprints``
+still leaves them alone unless asked). ``UValhallaHUDSlotWidget::Setup`` sizes a
+designer cell's ``Sizer`` (action 44, inventory / loot 48, skills 36,
+equipment 26: WBP_GameHUD's "Valhalla|HUD Style" Class Defaults) and
+``UValhallaHUDBarWidget::SetBarSize`` a designer bar's ``Sizer`` and
+``BarWidth`` (party 160x8, nameplates 60x4), so one designer tree serves every
+size.
+
+B-07 step 4 also trimmed ``ui-config.json`` to chat / inventory (cols x rows) /
+nameplates: the layout now lives in the Blueprints themselves. The layout
+functions below still read the file, and every field they read that is gone
+falls back to its old value (the ``_get`` defaults), so re-running them gives
+the same trees -- but it replaces whatever was edited in the Widget Designer
+since (``replace=True`` is required for a Blueprint that has widgets).
 
 How the tree is built (the B-07 step 2 investigation): UE 5.8's Python cannot
 reach ``UWidgetBlueprint::WidgetTree`` (not an exposed property), but the

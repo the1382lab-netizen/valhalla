@@ -70,8 +70,8 @@ void AValhallaHUD::BeginPlay()
 	// server a HUD exists only for the host anyway; this is belt and braces.
 	if (PlayerOwner && PlayerOwner->IsLocalController() && !GameHUD)
 	{
-		// B-07 step 2: Project Settings > Valhalla > UI (or valhalla.HudClass)
-		// may name a Widget Blueprint child; empty is the code-built HUD.
+		// B-07: Project Settings > Valhalla > UI > Game HUD Class (WBP_GameHUD),
+		// or valhalla.HudClass; empty gives the layout-less C++ class (an error).
 		const TSubclassOf<UValhallaGameHUDWidget> HudClass = UValhallaUISettings::GetGameHUDClass();
 		GameHUD = CreateWidget<UValhallaGameHUDWidget>(PlayerOwner, HudClass, TEXT("ValhallaGameHUD"));
 		if (GameHUD)

@@ -14,8 +14,9 @@ class UValhallaGameHUDWidget;
 /**
  * The HUD actor. Since Phase 8b it does two things:
  *
- *  - It owns the real game HUD, `UValhallaGameHUDWidget` (UMG, laid out from
- *    ui-config.json), creating it for the local player in BeginPlay.
+ *  - It owns the real game HUD, `UValhallaGameHUDWidget` (UMG; B-07: the
+ *    WBP_GameHUD Widget Blueprint lays it out), creating it for the local
+ *    player in BeginPlay.
  *  - It draws the clickable "Loot (n)" labels over loot bags (Phase 9) on the
  *    canvas, because they are world-anchored and hit-tested by the controller.
  *

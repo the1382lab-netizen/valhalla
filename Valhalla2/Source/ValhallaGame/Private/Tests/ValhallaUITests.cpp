@@ -3,14 +3,15 @@
 // Phase 8b: the two pure halves of the game HUD.
 //
 //   Valhalla.Game.UI.ConfigParse  — ui-config.json through FValhallaUIConfig:
-//     the real file (all seven sections, the numbers the UI Layout editor
-//     wrote), a partial file (defaults fill the gaps rather than zeros), and
-//     the colour / CSS-size helpers.
+//     the real file (its three sections since B-07 step 4: chat, inventory,
+//     nameplates), a partial file (defaults fill the gaps rather than zeros),
+//     a pre-B-07 file (the old layout sections are ignored), and the colour /
+//     CSS-size helpers.
 //   Valhalla.Game.UI.ChatCommands — the chat box's grammar (GameScene.ts:5222
 //     `submitChatInput`): /g /world /p /w /invite /accept /decline /leave, the
 //     sticky channel, the usage lines, and Tab's channel cycle.
-//   Valhalla.Game.UI.HudBlueprintGroundwork — B-07 step 2: the game HUD
-//     class setting defaults to the code-built HUD, the C++ class never lays
+//   Valhalla.Game.UI.HudBlueprintGroundwork — B-07: the game HUD class
+//     setting names WBP_GameHUD (and resolves to it), the C++ class never lays
 //     out from a Blueprint, the designer panel names (which WBP_GameHUD must
 //     match) are BindWidget / BindWidgetOptional members of the right types,
 //     and the bar widget clamps its fraction.
@@ -29,6 +30,7 @@
 #include "Components/Border.h"
 #include "Components/UniformGridPanel.h"
 #include "Misc/AutomationTest.h"
+#include "Misc/PackageName.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "UObject/UnrealType.h"
@@ -95,11 +97,14 @@ bool FValhallaUIConfigParseTest::RunTest(const FString& /*Parameters*/)
 
 	// ── Defaults (DEFAULT_UI_CONFIG) ────────────────────────────────────
 	const FValhallaUIConfig Defaults;
-	TestEqual(TEXT("default action bar slot 44"), Defaults.ActionBar.SlotSize, 44.f);
 	TestEqual(TEXT("default inventory 8 cols"), Defaults.Inventory.Cols, 8);
-	TestTrue(TEXT("default death text #ff4444"),
-		NearlyEqual(Defaults.DeathOverlay.TextColor, FValhallaUIConfig::ParseHexColor(TEXT("#ff4444"), FLinearColor::Black)));
+	TestEqual(TEXT("default inventory 4 rows"), Defaults.Inventory.Rows, 4);
+	TestEqual(TEXT("default chat 50 lines typing"), Defaults.Chat.MaxMessages, 50);
+	TestEqual(TEXT("default chat 9 lines idle"), Defaults.Chat.VisibleLines, 9);
+	TestTrue(TEXT("default nameplate text #ffffff"),
+		NearlyEqual(Defaults.Nameplates.Color, FValhallaUIConfig::ParseHexColor(TEXT("#ffffff"), FLinearColor::Black)));
 	TestFalse(TEXT("a default-constructed config carried no sections"), Defaults.HasAllSections());
+	TestEqual(TEXT("three sections"), FValhallaUIConfig::SectionCount, 3);
 
 	// ── The real file, through the real loader ──────────────────────────
 	FString DataRoot;
@@ -120,43 +125,56 @@ bool FValhallaUIConfigParseTest::RunTest(const FString& /*Parameters*/)
 	}
 
 	const FValhallaUIConfig& Real = Tables.UIConfigTyped;
-	TestTrue(TEXT("ui-config.json carries all seven sections"), Real.HasAllSections());
-	TestEqual(TEXT("hud.hpBar.width"), Real.Hud.HpWidth, 200.f);
-	TestEqual(TEXT("hud.classText.fontSize \"12px\""), Real.Hud.ClassFontSize, 12);
-	TestEqual(TEXT("actionBar.slotSize"), Real.ActionBar.SlotSize, 44.f);
+	TestTrue(TEXT("ui-config.json carries all three sections"), Real.HasAllSections());
 	TestEqual(TEXT("chat.maxMessages"), Real.Chat.MaxMessages, 50);
-	TestEqual(TEXT("chat.fontSize \"11px\""), Real.Chat.FontSize, 11);
+	TestEqual(TEXT("chat.visibleLines"), Real.Chat.VisibleLines, 9);
 	TestEqual(TEXT("inventory cols x rows = 32"), Real.Inventory.Cols * Real.Inventory.Rows, 32);
-	TestEqual(TEXT("castBar.yAboveActionBar"), Real.CastBar.YAboveActionBar, 12.f);
 	TestEqual(TEXT("nameplates.yOffset"), Real.Nameplates.YOffset, -44.f);
-	TestEqual(TEXT("deathOverlay.fontSize \"32px\""), Real.DeathOverlay.FontSize, 32);
-	TestTrue(TEXT("chat.colors.whisper #ff88cc"),
-		NearlyEqual(Real.Chat.Whisper, FValhallaUIConfig::ParseHexColor(TEXT("#ff88cc"), FLinearColor::Black)));
+	TestEqual(TEXT("nameplates.fontSize \"12px\""), Real.Nameplates.FontSize, 12);
+	// B-07 step 4: the layout sections live in WBP_GameHUD now, not the file.
+	const TSharedPtr<FJsonObject>& RawFile = Tables.UiConfig;
+	if (TestTrue(TEXT("raw ui-config kept"), RawFile.IsValid()))
+	{
+		for (const TCHAR* Gone : { TEXT("hud"), TEXT("actionBar"), TEXT("castBar"), TEXT("deathOverlay") })
+		{
+			TestFalse(*FString::Printf(TEXT("ui-config.json has no '%s' section (WBP_GameHUD owns it)"), Gone), RawFile->HasField(Gone));
+		}
+	}
 
 	// ── A partial file keeps the defaults, not zeros ────────────────────
 	const TSharedPtr<FJsonObject> Partial = ParseJson(TEXT(
-		"{ \"version\": \"9.9\", \"actionBar\": { \"slotSize\": 60, \"colors\": { \"bg\": \"#102030\" } },"
-		"  \"deathOverlay\": { \"fontSize\": \"40px\" } }"));
+		"{ \"version\": \"9.9\", \"inventory\": { \"cols\": 6 },"
+		"  \"nameplates\": { \"fontSize\": \"16px\" } }"));
 	TestTrue(TEXT("partial JSON parsed"), Partial.IsValid());
 
 	FValhallaUIConfig Parsed;
 	const bool bAll = FValhallaUIConfig::Parse(Partial, Parsed);
 	TestFalse(TEXT("partial file reports missing sections"), bAll);
-	TestTrue(TEXT("actionBar present"), Parsed.bHasActionBar);
+	TestTrue(TEXT("inventory present"), Parsed.bHasInventory);
 	TestFalse(TEXT("chat absent"), Parsed.bHasChat);
 	TestEqual(TEXT("version read"), Parsed.Version, FString(TEXT("9.9")));
-	TestEqual(TEXT("slotSize overridden"), Parsed.ActionBar.SlotSize, 60.f);
-	TestEqual(TEXT("slotGap kept at its default"), Parsed.ActionBar.SlotGap, 4.f);
-	TestTrue(TEXT("border kept at its default"),
-		NearlyEqual(Parsed.ActionBar.Border, Defaults.ActionBar.Border));
-	TestEqual(TEXT("death font overridden"), Parsed.DeathOverlay.FontSize, 40);
-	TestEqual(TEXT("death bgAlpha kept"), Parsed.DeathOverlay.BgAlpha, 0.7f);
-	TestEqual(TEXT("chat height defaulted"), Parsed.Chat.Height, 170.f);
+	TestEqual(TEXT("cols overridden"), Parsed.Inventory.Cols, 6);
+	TestEqual(TEXT("rows kept at its default"), Parsed.Inventory.Rows, 4);
+	TestEqual(TEXT("nameplate font overridden"), Parsed.Nameplates.FontSize, 16);
+	TestEqual(TEXT("nameplate bgAlpha kept"), Parsed.Nameplates.BgAlpha, 0.5f);
+	TestEqual(TEXT("chat idle lines defaulted"), Parsed.Chat.VisibleLines, 9);
+
+	// ── A pre-B-07 file: the old layout sections are read without complaint and ignored ──
+	const TSharedPtr<FJsonObject> Old = ParseJson(TEXT(
+		"{ \"version\": \"1.0.0\", \"hud\": { \"hpBar\": { \"width\": 999 } }, \"actionBar\": { \"slotSize\": 60 },"
+		"  \"chat\": { \"maxWidth\": 500, \"maxMessages\": 30, \"visibleLines\": 5 },"
+		"  \"inventory\": { \"cols\": 10, \"rows\": 3, \"slotSize\": 60 }, \"nameplates\": { \"yOffset\": -50 } }"));
+	FValhallaUIConfig FromOld;
+	TestTrue(TEXT("old file still has the three sections"), FValhallaUIConfig::Parse(Old, FromOld));
+	TestEqual(TEXT("old file: chat.maxMessages"), FromOld.Chat.MaxMessages, 30);
+	TestEqual(TEXT("old file: chat.visibleLines"), FromOld.Chat.VisibleLines, 5);
+	TestEqual(TEXT("old file: 10 x 3"), FromOld.Inventory.Cols * FromOld.Inventory.Rows, 30);
+	TestEqual(TEXT("old file: nameplates.yOffset"), FromOld.Nameplates.YOffset, -50.f);
 
 	// ── No file at all ──────────────────────────────────────────────────
 	FValhallaUIConfig FromNothing;
 	TestFalse(TEXT("null root -> false"), FValhallaUIConfig::Parse(nullptr, FromNothing));
-	TestEqual(TEXT("null root -> defaults"), FromNothing.Inventory.SlotSize, 48.f);
+	TestEqual(TEXT("null root -> defaults"), FromNothing.Inventory.Rows, 4);
 
 	return true;
 }
@@ -246,9 +264,24 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FValhallaUIHudBlueprintGroundworkTest::RunTest(const FString& /*Parameters*/)
 {
 	// ── The game HUD class setting ──────────────────────────────────────
-	// Empty until step 3/4 assigns WBP_GameHUD in DefaultGame.ini; flip this
-	// check then.
-	TestTrue(TEXT("Game HUD Class is empty (the code-built HUD)"), GetDefault<UValhallaUISettings>()->GameHUDClass.IsNull());
+	// B-07 step 4: DefaultGame.ini names WBP_GameHUD (the code-built layout is
+	// gone, so an empty setting means a blank HUD).
+	const TSoftClassPtr<UValhallaGameHUDWidget>& Setting = GetDefault<UValhallaUISettings>()->GameHUDClass;
+	TestFalse(TEXT("Game HUD Class is set"), Setting.IsNull());
+	TestEqual(TEXT("Game HUD Class is WBP_GameHUD"), Setting.ToSoftObjectPath().ToString(),
+		FString(TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C")));
+	if (FPackageName::DoesPackageExist(TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD")))
+	{
+		const UClass* Resolved = UValhallaUISettings::ResolveGameHUDClass(Setting, FString()).Get();
+		TestTrue(TEXT("the setting resolves to WBP_GameHUD_C"), Resolved && Resolved->GetName() == TEXT("WBP_GameHUD_C"));
+		TestTrue(TEXT("WBP_GameHUD_C is a UValhallaGameHUDWidget"), Resolved && Resolved->IsChildOf(UValhallaGameHUDWidget::StaticClass()));
+	}
+	else
+	{
+		AddWarning(TEXT("WBP_GameHUD is not in this build; only the setting's path was checked."));
+	}
+	// That fallback has no layout any more, so it logs an error; expected here.
+	AddExpectedError(TEXT("Game HUD Class is empty"), EAutomationExpectedErrorFlags::Contains, 1);
 	TestTrue(TEXT("no setting, no override -> UValhallaGameHUDWidget"),
 		UValhallaUISettings::ResolveGameHUDClass(TSoftClassPtr<UValhallaGameHUDWidget>(), FString()).Get() == UValhallaGameHUDWidget::StaticClass());
 	TestTrue(TEXT("a /Script override naming the C++ class resolves to it"),

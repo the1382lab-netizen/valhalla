@@ -951,7 +951,7 @@ bool UValhallaDataSubsystem::LoadTablesFromRoot(const FString& ResolvedDataRoot,
 		if (!FValhallaUIConfig::Parse(File, OutTables.UIConfigTyped))
 		{
 			UE_LOG(LogValhallaCore, Warning,
-				TEXT("[ValhallaData] ui-config.json is missing one or more of its seven sections; defaults fill the gaps."));
+				TEXT("[ValhallaData] ui-config.json is missing one or more of its three sections (chat, inventory, nameplates); defaults fill the gaps."));
 		}
 	}
 	else

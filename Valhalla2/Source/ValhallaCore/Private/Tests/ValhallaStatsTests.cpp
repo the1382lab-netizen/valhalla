@@ -617,8 +617,18 @@ bool FValhallaDataLoadsTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("warrior has skills"), Tables.ClassSkills.Contains(FName(TEXT("warrior"))));
 	TestTrue(TEXT("classColors loaded"), Tables.ClassColors.Num() > 0);
 
-	// ui-config.json is kept raw for Phase 8.
+	// ui-config.json is kept raw for Phase 8. B-07 step 4 left it three
+	// sections (the HUD layout is WBP_GameHUD's); typed, all three are there.
 	TestTrue(TEXT("ui-config loaded"), Tables.UiConfig.IsValid());
+	if (Tables.UiConfig.IsValid())
+	{
+		for (const TCHAR* Section : { TEXT("chat"), TEXT("inventory"), TEXT("nameplates") })
+		{
+			TestTrue(*FString::Printf(TEXT("ui-config has '%s'"), Section), Tables.UiConfig->HasTypedField<EJson::Object>(Section));
+		}
+		TestFalse(TEXT("ui-config has no 'hud' (WBP_GameHUD owns the layout)"), Tables.UiConfig->HasField(TEXT("hud")));
+	}
+	TestTrue(TEXT("typed ui-config has all three sections"), Tables.UIConfigTyped.HasAllSections());
 
 	return true;
 }

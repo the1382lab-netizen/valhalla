@@ -7,6 +7,12 @@
 // holds. `UValhallaGameHUDWidget` is its first reader, so this is the first
 // time a designer's edit in the UI Layout editor changes a game.
 //
+// B-07 step 4 trimmed it to what the C++ HUD still reads: the HUD's layout
+// moved into the WBP_GameHUD Widget Blueprint, so the panel positions, sizes and
+// colours (hud, actionBar, castBar, deathOverlay, most of chat and inventory)
+// left the file. What stays: the inventory grid's cols x rows, the chat's line
+// counts, and the nameplates (the world layer is still built in C++).
+//
 // Mirrors `UIConfig` in shared/src/ui-config.ts field for field. Every field
 // defaults to `DEFAULT_UI_CONFIG`, so a file with a section missing (or no file
 // at all) still produces a usable layout; `bHas*` records which sections the
@@ -21,120 +27,32 @@
 
 class FJsonObject;
 
-/** One `{ color, bgColor, bgAlpha }` style resource bar. */
-struct VALHALLACORE_API FValhallaUIBarConfig
-{
-	float Width = 200.f;
-	float Height = 12.f;
-	FLinearColor Color = FLinearColor::White;
-	FLinearColor BgColor = FLinearColor::Black;
-	float BgAlpha = 0.7f;
-};
-
 struct VALHALLACORE_API FValhallaUIConfig
 {
-	FString Version = TEXT("1.0.0");
+	FString Version = TEXT("1.1.0");
 
-	// ── hud ─────────────────────────────────────────────────────────────
-	struct FHud
-	{
-		// hpBar
-		float HpX = 16.f;
-		float HpWidth = 200.f;
-		float HpHeight = 12.f;
-		float HpYOffsetFromBottom = 36.f;
-		FLinearColor HpHigh;
-		FLinearColor HpMid;
-		FLinearColor HpLow;
-		FLinearColor HpBg;
-		float HpBgAlpha = 0.7f;
-
-		// manaBar (gapAboveHp lives here in 1.0 and applies to energy too)
-		FValhallaUIBarConfig Mana;
-		float ManaGapAboveHp = 6.f;
-
-		// energyBar
-		FValhallaUIBarConfig Energy;
-
-		// classText
-		int32 ClassFontSize = 12;
-		FString ClassFontFamily = TEXT("monospace");
-		FLinearColor ClassColor = FLinearColor::White;
-		FLinearColor ClassStrokeColor = FLinearColor::Black;
-		float ClassStrokeThickness = 2.f;
-	} Hud;
-
-	// ── actionBar ───────────────────────────────────────────────────────
-	struct FActionBar
-	{
-		float SlotSize = 44.f;
-		float SlotGap = 4.f;
-		float Padding = 6.f;
-		float BottomMargin = 8.f;
-		FLinearColor Bg;
-		float BgAlpha = 0.95f;
-		FLinearColor Border;
-		FLinearColor CooldownOverlay;
-		float CooldownOverlayAlpha = 0.6f;
-		FLinearColor KeyLabelColor;
-	} ActionBar;
+	// B-07 step 4: the HUD's layout, sizes and panel colours live in the
+	// WBP_GameHUD Widget Blueprint (and its Class Defaults); the file keeps
+	// only what C++ builds or counts at runtime.
 
 	// ── chat ────────────────────────────────────────────────────────────
 	struct FChat
 	{
-		float MaxWidth = 360.f;
-		float Height = 170.f;
-		float BottomMargin = 8.f;
-		float LineHeight = 15.f;
-		float Padding = 6.f;
-		float InputHeight = 18.f;
+		/** Lines listed while the chat box is open (the client keeps 50). */
 		int32 MaxMessages = 50;
+		/** Lines shown while it is idle (each fades 10 s after it arrived). */
 		int32 VisibleLines = 9;
-		int32 FontSize = 11;
-		FLinearColor BgColor;
-		float BgAlpha = 0.72f;
-		FLinearColor BorderColor;
-		float BorderAlpha = 0.9f;
-		FLinearColor General;
-		FLinearColor World;
-		FLinearColor Whisper;
-		FLinearColor System;
 	} Chat;
 
 	// ── inventory ───────────────────────────────────────────────────────
 	struct FInventory
 	{
+		/** The grid C++ fills InventoryGrid with: cols x rows cells. */
 		int32 Cols = 8;
 		int32 Rows = 4;
-		float SlotSize = 48.f;
-		float SlotGap = 4.f;
-		float CharPanelWidth = 220.f;
-		float PanelGap = 8.f;
-		float PanelHeight = 340.f;
-		FLinearColor Bg;
-		float BgAlpha = 0.95f;
-		FLinearColor Border;
-		FLinearColor SlotBg;
-		FLinearColor Highlight;
-		FLinearColor TitleColor;
-		FLinearColor LabelColor;
-		FLinearColor ValueColor;
 	} Inventory;
 
-	// ── castBar ─────────────────────────────────────────────────────────
-	struct FCastBar
-	{
-		float Width = 260.f;
-		float Height = 16.f;
-		float YAboveActionBar = 12.f;
-		FLinearColor Color;
-		FLinearColor BgColor;
-		float BgAlpha = 0.6f;
-		FLinearColor TextColor;
-		int32 FontSize = 11;
-	} CastBar;
-
-	// ── nameplates ──────────────────────────────────────────────────────
+	// ── nameplates (and the world layer: still built in C++) ────────────
 	struct FNameplates
 	{
 		int32 FontSize = 12;
@@ -150,31 +68,21 @@ struct VALHALLACORE_API FValhallaUIConfig
 		float BgRadius = 3.f;
 	} Nameplates;
 
-	// ── deathOverlay ────────────────────────────────────────────────────
-	struct FDeathOverlay
-	{
-		float BgAlpha = 0.7f;
-		FLinearColor TextColor;
-		int32 FontSize = 32;
-	} DeathOverlay;
-
 	// ── Which sections the source JSON actually carried ─────────────────
-	bool bHasHud = false;
-	bool bHasActionBar = false;
 	bool bHasChat = false;
 	bool bHasInventory = false;
-	bool bHasCastBar = false;
 	bool bHasNameplates = false;
-	bool bHasDeathOverlay = false;
 
 	/** `DEFAULT_UI_CONFIG`, colours and all. */
 	FValhallaUIConfig();
 
-	/** True when all seven sections were present in the parsed file. */
+	/** The number of sections the file carries (chat, inventory, nameplates). */
+	static constexpr int32 SectionCount = 3;
+
+	/** True when all three sections were present in the parsed file. */
 	bool HasAllSections() const
 	{
-		return bHasHud && bHasActionBar && bHasChat && bHasInventory
-			&& bHasCastBar && bHasNameplates && bHasDeathOverlay;
+		return bHasChat && bHasInventory && bHasNameplates;
 	}
 
 	/**

@@ -1,132 +1,146 @@
 import React, { useState } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
 
+// Must match UIConfig / DEFAULT_UI_CONFIG in shared/src/ui-config.ts (the editor
+// keeps its own copy, as the other pages do, so it builds without shared/dist).
 interface UIConfig {
-  hpMana?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    borderColor?: string;
-    textColor?: string;
-    fontSize?: number;
-    fontFamily?: string;
-    alpha?: number;
-    cornerRadius?: number;
-  };
-  energy?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    barColor?: string;
-    textColor?: string;
-    fontSize?: number;
-    fontFamily?: string;
-    alpha?: number;
-  };
-  actionBar?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    borderColor?: string;
-    slotSize?: number;
-    columns?: number;
-    rows?: number;
-    alpha?: number;
-  };
-  chat?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    textColor?: string;
-    fontSize?: number;
-    fontFamily?: string;
-    alpha?: number;
-    maxMessages?: number;
-  };
-  inventory?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    borderColor?: string;
-    slotSize?: number;
-    columns?: number;
-    alpha?: number;
-  };
-  castBar?: {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    backgroundColor?: string;
-    barColor?: string;
-    textColor?: string;
-    fontSize?: number;
-    fontFamily?: string;
-    alpha?: number;
-  };
-  nameplates?: {
-    offsetX?: number;
-    offsetY?: number;
-    width?: number;
-    height?: number;
-    fontSize?: number;
-    fontFamily?: string;
-    healthBarColor?: string;
-    manaBarColor?: string;
-    alpha?: number;
-  };
-  deathScreen?: {
-    backgroundColor?: string;
-    textColor?: string;
-    fontSize?: number;
-    fontFamily?: string;
-    buttonColor?: string;
-    buttonTextColor?: string;
-    alpha?: number;
+  version: string;
+  chat: { maxMessages: number; visibleLines: number };
+  inventory: { cols: number; rows: number };
+  nameplates: {
+    fontSize: string;
+    fontWeight: string;
+    color: string;
+    strokeColor: string;
+    strokeThickness: number;
+    bgColor: string;
+    bgAlpha: number;
+    yOffset: number;
+    bgPaddingX: number;
+    bgPaddingY: number;
+    bgRadius: number;
   };
 }
 
-type TabType = 'hpMana' | 'energy' | 'actionBar' | 'chat' | 'inventory' | 'castBar' | 'nameplates' | 'deathScreen';
+const DEFAULT_UI_CONFIG: UIConfig = {
+  version: '1.1.0',
+  chat: { maxMessages: 50, visibleLines: 9 },
+  inventory: { cols: 8, rows: 4 },
+  nameplates: {
+    fontSize: '12px',
+    fontWeight: 'bold',
+    color: '#ffffff',
+    strokeColor: '#000000',
+    strokeThickness: 3,
+    bgColor: '#000000',
+    bgAlpha: 0.5,
+    yOffset: -44,
+    bgPaddingX: 4,
+    bgPaddingY: 2,
+    bgRadius: 3,
+  },
+};
 
-const TABS: { key: TabType; label: string }[] = [
-  { key: 'hpMana', label: 'HP/Mana' },
-  { key: 'energy', label: 'Energy' },
-  { key: 'actionBar', label: 'Action Bar' },
-  { key: 'chat', label: 'Chat' },
+/**
+ * shared/data/ui-config.json — what is left of it after B-07 step 4.
+ *
+ * The game HUD's layout (every panel's place and size, the bars, the action
+ * bar, cast bar, chat box, inventory and character panels, the death overlay
+ * and their colours) moved into the WBP_GameHUD Widget Blueprint in Unreal. This
+ * page edits the few numbers the C++ HUD still reads at runtime: the inventory
+ * grid, the chat's line counts and the nameplates. A save reaches a running
+ * game through the HUD's file watcher (or `valhalla.ReloadUI`).
+ */
+
+type Section = 'inventory' | 'chat' | 'nameplates';
+
+const TABS: { key: Section; label: string }[] = [
   { key: 'inventory', label: 'Inventory' },
-  { key: 'castBar', label: 'Cast Bar' },
+  { key: 'chat', label: 'Chat' },
   { key: 'nameplates', label: 'Nameplates' },
-  { key: 'deathScreen', label: 'Death Screen' },
 ];
+
+/** The stored config over the defaults, section by section, so a partial file still edits. */
+function withDefaults(data: Partial<UIConfig> | null | undefined): UIConfig {
+  const d = data ?? {};
+  return {
+    version: d.version ?? DEFAULT_UI_CONFIG.version,
+    chat: { ...DEFAULT_UI_CONFIG.chat, ...(d.chat ?? {}) },
+    inventory: { ...DEFAULT_UI_CONFIG.inventory, ...(d.inventory ?? {}) },
+    nameplates: { ...DEFAULT_UI_CONFIG.nameplates, ...(d.nameplates ?? {}) },
+  };
+}
+
+/** "12px" or 12 -> 12. */
+function px(value: string | number): number {
+  const n = parseFloat(String(value));
+  return Number.isFinite(n) ? n : 12;
+}
+
+function clampInt(value: string, min: number, max: number, fallback: number): number {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+}
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h;
+  const v = parseInt(full, 16);
+  if (full.length !== 6 || Number.isNaN(v)) return `rgba(0,0,0,${alpha})`;
+  return `rgba(${(v >> 16) & 255},${(v >> 8) & 255},${v & 255},${alpha})`;
+}
+
+const NumberField: React.FC<{
+  label: string;
+  value: number;
+  step?: number;
+  min?: number;
+  max?: number;
+  hint?: string;
+  onChange: (value: number) => void;
+}> = ({ label, value, step = 1, min, max, hint, onChange }) => (
+  <div className="form-group">
+    <label className="form-label">{label}</label>
+    <input
+      className="form-input"
+      type="number"
+      value={value}
+      step={step}
+      min={min}
+      max={max}
+      onChange={(e) => {
+        const n = step < 1 ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
+        if (Number.isFinite(n)) onChange(n);
+      }}
+    />
+    {hint && <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{hint}</div>}
+  </div>
+);
+
+const ColourField: React.FC<{ label: string; value: string; onChange: (value: string) => void }> = ({ label, value, onChange }) => (
+  <div className="form-group">
+    <label className="form-label">{label}</label>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <input className="form-input" type="text" value={value} onChange={(e) => onChange(e.target.value)} style={{ flex: 1 }} />
+      <input type="color" value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#ffffff'} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  </div>
+);
 
 export const UILayoutEditor: React.FC = () => {
   const uiConfig = useEditorStore(s => s.uiConfig);
   const updateData = useEditorStore(s => s.updateData);
   const saveSection = useEditorStore(s => s.saveSection);
-  const [activeTab, setActiveTab] = useState<TabType>('hpMana');
+  const [activeTab, setActiveTab] = useState<Section>('inventory');
 
-  const config: UIConfig = uiConfig.data || {};
+  const config = withDefaults(uiConfig.data as Partial<UIConfig> | null);
 
-  const handleUpdateConfig = (tab: TabType, updates: any) => {
-    const updatedConfig = {
-      ...config,
-      [tab]: {
-        ...config[tab],
-        ...updates,
-      },
-    };
-    updateData('uiConfig', updatedConfig);
-  };
+  function update<K extends Section>(section: K, updates: Partial<UIConfig[K]>) {
+    // Only the three sections are written back: anything else a pre-B-07 file
+    // carried (hud, actionBar, castBar, deathOverlay, ...) is dropped on save.
+    const next: UIConfig = { ...config, [section]: { ...config[section], ...updates } };
+    updateData('uiConfig', next);
+  }
 
   const handleSave = async () => {
     try {
@@ -136,1311 +150,124 @@ export const UILayoutEditor: React.FC = () => {
     }
   };
 
-  const renderPreviewHpMana = () => {
-    const c = config.hpMana || {};
-    const bgColor = c.backgroundColor || '#1a1a1a';
-    const borderColor = c.borderColor || '#444444';
-    const barHeight = 16;
-
+  const renderInventory = () => {
+    const c = config.inventory;
     return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: bgColor,
-            border: `2px solid ${borderColor}`,
-            borderRadius: `${c.cornerRadius || 4}px`,
-            padding: 8,
-            width: '100%',
-            maxWidth: 300,
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-          }}
-        >
-          <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 11, color: c.textColor || '#ffffff', marginBottom: 2 }}>HP</div>
-            <div style={{ backgroundColor: '#333333', borderRadius: 2, height: barHeight, overflow: 'hidden' }}>
-              <div
-                style={{
-                  backgroundColor: '#00ff00',
-                  height: '100%',
-                  width: '75%',
-                  transition: 'width 0.3s',
-                }}
-              />
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 11, color: c.textColor || '#ffffff', marginBottom: 2 }}>Mana</div>
-            <div style={{ backgroundColor: '#333333', borderRadius: 2, height: barHeight, overflow: 'hidden' }}>
-              <div
-                style={{
-                  backgroundColor: '#0099ff',
-                  height: '100%',
-                  width: '50%',
-                  transition: 'width 0.3s',
-                }}
-              />
-            </div>
-          </div>
+      <>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <NumberField label="Columns" value={c.cols} min={1} max={16}
+            onChange={(v) => update('inventory', { cols: clampInt(String(v), 1, 16, 8) })} />
+          <NumberField label="Rows" value={c.rows} min={1} max={16}
+            onChange={(v) => update('inventory', { rows: clampInt(String(v), 1, 16, 4) })} />
         </div>
-      </div>
-    );
-  };
-
-  const renderPreviewActionBar = () => {
-    const c = config.actionBar || {};
-    const cols = c.columns || 5;
-    const rows = c.rows || 2;
-    const slotSize = c.slotSize || 40;
-
-    return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: c.backgroundColor || '#1a1a1a',
-            border: `1px solid ${c.borderColor || '#444444'}`,
-            padding: 8,
-            borderRadius: 4,
-            display: 'grid',
-            gridTemplateColumns: `repeat(${cols}, ${slotSize}px)`,
-            gap: 4,
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-          }}
-        >
-          {Array.from({ length: cols * rows }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: slotSize,
-                height: slotSize,
-                backgroundColor: '#333333',
-                border: '1px solid #555555',
-                borderRadius: 2,
-              }}
-            />
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+          {c.cols * c.rows} cells (the HUD makes at most 64). The server holds 32 inventory slots; cells past that stay empty.
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${c.cols}, 18px)`, gap: 2 }}>
+          {Array.from({ length: Math.min(64, c.cols * c.rows) }, (_, i) => (
+            <div key={i} style={{ width: 18, height: 18, backgroundColor: '#2a2a3e', border: '1px solid #333355' }} />
           ))}
         </div>
+      </>
+    );
+  };
+
+  const renderChat = () => {
+    const c = config.chat;
+    return (
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <NumberField label="Lines while typing (maxMessages)" value={c.maxMessages} min={1} max={50}
+          hint="How many of the last lines the open chat box lists. The client keeps 50."
+          onChange={(v) => update('chat', { maxMessages: clampInt(String(v), 1, 50, 50) })} />
+        <NumberField label="Lines while idle (visibleLines)" value={c.visibleLines} min={0} max={50}
+          hint="How many lines show over the game when the box is closed; each fades 10 s after it arrived."
+          onChange={(v) => update('chat', { visibleLines: clampInt(String(v), 0, 50, 9) })} />
       </div>
     );
   };
 
-  const renderPreviewChat = () => {
-    const c = config.chat || {};
-
+  const renderNameplates = () => {
+    const c = config.nameplates;
+    const outline = Math.max(0, c.strokeThickness * 0.5);
     return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: c.backgroundColor || '#1a1a1a',
-            width: '100%',
-            maxWidth: 300,
-            height: 100,
-            borderRadius: 4,
-            padding: 8,
-            overflow: 'hidden',
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-            border: '1px solid var(--border)',
-            fontSize: c.fontSize || 12,
-            color: c.textColor || '#ffffff',
-            fontFamily: c.fontFamily || 'monospace',
-          }}
-        >
-          <div style={{ marginBottom: 4 }}>Player: Hello!</div>
-          <div style={{ marginBottom: 4 }}>NPC: Welcome!</div>
-          <div style={{ color: '#ffff00' }}>System: Player joined.</div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderPreviewInventory = () => {
-    const c = config.inventory || {};
-    const cols = c.columns || 5;
-    const slotSize = c.slotSize || 48;
-
-    return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: c.backgroundColor || '#1a1a1a',
-            border: `1px solid ${c.borderColor || '#444444'}`,
-            padding: 8,
-            borderRadius: 4,
-            display: 'grid',
-            gridTemplateColumns: `repeat(${cols}, ${slotSize}px)`,
-            gap: 4,
-            width: 'fit-content',
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-          }}
-        >
-          {Array.from({ length: cols * 3 }).map((_, i) => (
-            <div
-              key={i}
-              style={{
-                width: slotSize,
-                height: slotSize,
-                backgroundColor: '#333333',
-                border: '1px solid #555555',
-                borderRadius: 2,
-              }}
-            />
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const renderPreviewCastBar = () => {
-    const c = config.castBar || {};
-
-    return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: c.backgroundColor || '#1a1a1a',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: 8,
-            width: '100%',
-            maxWidth: 250,
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-          }}
-        >
-          <div style={{ fontSize: 11, color: c.textColor || '#ffffff', marginBottom: 4 }}>
-            Fireball
+      <>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
+          <NumberField label="Font size (px)" value={px(c.fontSize)} min={6} max={48}
+            onChange={(v) => update('nameplates', { fontSize: `${v}px` })} />
+          <div className="form-group">
+            <label className="form-label">Font weight</label>
+            <select className="form-input" value={c.fontWeight} onChange={(e) => update('nameplates', { fontWeight: e.target.value })}>
+              <option value="bold">bold</option>
+              <option value="normal">normal</option>
+            </select>
           </div>
-          <div style={{ backgroundColor: '#333333', borderRadius: 2, height: 16, overflow: 'hidden' }}>
+          <ColourField label="Text colour" value={c.color} onChange={(v) => update('nameplates', { color: v })} />
+          <ColourField label="Outline colour" value={c.strokeColor} onChange={(v) => update('nameplates', { strokeColor: v })} />
+          <NumberField label="Outline thickness" value={c.strokeThickness} min={0} max={8}
+            onChange={(v) => update('nameplates', { strokeThickness: v })} />
+          <NumberField label="Y offset (px, negative = up)" value={c.yOffset} min={-200} max={200}
+            onChange={(v) => update('nameplates', { yOffset: v })} />
+          <ColourField label="Background colour" value={c.bgColor} onChange={(v) => update('nameplates', { bgColor: v })} />
+          <NumberField label="Background alpha (0-1)" value={c.bgAlpha} min={0} max={1} step={0.05}
+            onChange={(v) => update('nameplates', { bgAlpha: Math.min(1, Math.max(0, v)) })} />
+          <NumberField label="Background padding X" value={c.bgPaddingX} min={0} max={32}
+            onChange={(v) => update('nameplates', { bgPaddingX: v })} />
+          <NumberField label="Background padding Y" value={c.bgPaddingY} min={0} max={32}
+            onChange={(v) => update('nameplates', { bgPaddingY: v })} />
+          <NumberField label="Background corner radius" value={c.bgRadius} min={0} max={16}
+            onChange={(v) => update('nameplates', { bgRadius: v })} />
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text)' }}>
+          <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
+          <div style={{ backgroundColor: '#3a4a2a', padding: 24, borderRadius: 4, width: 'fit-content' }}>
             <div
               style={{
-                backgroundColor: c.barColor || '#ff6600',
-                height: '100%',
-                width: '60%',
-                transition: 'width 0.1s linear',
+                backgroundColor: hexToRgba(c.bgColor, c.bgAlpha),
+                padding: `${c.bgPaddingY}px ${c.bgPaddingX}px`,
+                borderRadius: c.bgRadius,
+                textAlign: 'center',
               }}
-            />
-          </div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>2.4s / 4.0s</div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderNameplatePreview = () => {
-    const c = config.nameplates || {};
-
-    return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: '#1a1a1a',
-            border: '1px solid var(--border)',
-            borderRadius: 4,
-            padding: 12,
-            width: 'fit-content',
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-          }}
-        >
-          <div
-            style={{
-              fontSize: c.fontSize || 12,
-              fontFamily: c.fontFamily || 'sans-serif',
-              color: '#ffffff',
-              marginBottom: 4,
-            }}
-          >
-            Enemy Name
-          </div>
-          <div style={{ backgroundColor: '#333333', borderRadius: 2, height: 6, width: 100, marginBottom: 2 }}>
-            <div
-              style={{
-                backgroundColor: c.healthBarColor || '#00ff00',
-                height: '100%',
-                width: '75%',
-              }}
-            />
-          </div>
-          <div style={{ backgroundColor: '#333333', borderRadius: 2, height: 6, width: 100 }}>
-            <div
-              style={{
-                backgroundColor: c.manaBarColor || '#0099ff',
-                height: '100%',
-                width: '40%',
-              }}
-            />
+            >
+              <div
+                style={{
+                  fontSize: px(c.fontSize),
+                  fontWeight: c.fontWeight === 'bold' ? 700 : 400,
+                  color: c.color,
+                  textShadow: outline > 0 ? `0 0 ${outline}px ${c.strokeColor}, 0 0 ${outline}px ${c.strokeColor}` : undefined,
+                }}
+              >
+                Goblin Scout
+              </div>
+              <div style={{ backgroundColor: '#000000cc', height: 4, width: 60, margin: '2px auto 0' }}>
+                <div style={{ backgroundColor: '#ff4444', height: '100%', width: '70%' }} />
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </>
     );
-  };
-
-  const renderDeathScreenPreview = () => {
-    const c = config.deathScreen || {};
-
-    return (
-      <div style={{ fontSize: 12, color: 'var(--text)' }}>
-        <div style={{ marginBottom: 12, fontWeight: 500 }}>Preview:</div>
-        <div
-          style={{
-            backgroundColor: c.backgroundColor || '#000000',
-            width: '100%',
-            maxWidth: 300,
-            height: 150,
-            borderRadius: 4,
-            padding: 16,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: c.alpha !== undefined ? c.alpha : 1,
-            border: '1px solid var(--border)',
-          }}
-        >
-          <div
-            style={{
-              color: c.textColor || '#ff0000',
-              fontSize: c.fontSize || 24,
-              fontFamily: c.fontFamily || 'sans-serif',
-              marginBottom: 16,
-              fontWeight: 'bold',
-            }}
-          >
-            YOU DIED
-          </div>
-          <button
-            style={{
-              backgroundColor: c.buttonColor || '#ff6600',
-              color: c.buttonTextColor || '#ffffff',
-              border: 'none',
-              borderRadius: 4,
-              padding: '8px 16px',
-              cursor: 'pointer',
-              fontSize: 12,
-            }}
-          >
-            Respawn
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const getTabConfig = (tab: TabType): any => {
-    return config[tab] || {};
-  };
-
-  const renderTabContent = () => {
-    const tabConfig = getTabConfig(activeTab);
-
-    switch (activeTab) {
-      case 'hpMana':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 10}
-                  onChange={(e) => handleUpdateConfig('hpMana', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 10}
-                  onChange={(e) => handleUpdateConfig('hpMana', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Width</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.width ?? 200}
-                  onChange={(e) => handleUpdateConfig('hpMana', { width: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Height</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.height ?? 80}
-                  onChange={(e) => handleUpdateConfig('hpMana', { height: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('hpMana', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Border Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.borderColor ?? '#444444'}
-                    onChange={(e) => handleUpdateConfig('hpMana', { borderColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.borderColor || '#444444',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.textColor ?? '#ffffff'}
-                    onChange={(e) => handleUpdateConfig('hpMana', { textColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.textColor || '#ffffff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 14}
-                  onChange={(e) => handleUpdateConfig('hpMana', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'sans-serif'}
-                  onChange={(e) => handleUpdateConfig('hpMana', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('hpMana', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Corner Radius</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.cornerRadius ?? 4}
-                  onChange={(e) => handleUpdateConfig('hpMana', { cornerRadius: parseInt(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderPreviewHpMana()}
-          </>
-        );
-
-      case 'energy':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 10}
-                  onChange={(e) => handleUpdateConfig('energy', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 100}
-                  onChange={(e) => handleUpdateConfig('energy', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Width</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.width ?? 200}
-                  onChange={(e) => handleUpdateConfig('energy', { width: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Height</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.height ?? 20}
-                  onChange={(e) => handleUpdateConfig('energy', { height: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('energy', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Bar Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.barColor ?? '#ffff00'}
-                    onChange={(e) => handleUpdateConfig('energy', { barColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.barColor || '#ffff00',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.textColor ?? '#ffffff'}
-                    onChange={(e) => handleUpdateConfig('energy', { textColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.textColor || '#ffffff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 12}
-                  onChange={(e) => handleUpdateConfig('energy', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'sans-serif'}
-                  onChange={(e) => handleUpdateConfig('energy', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('energy', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-          </>
-        );
-
-      case 'actionBar':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 300}
-                  onChange={(e) => handleUpdateConfig('actionBar', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 400}
-                  onChange={(e) => handleUpdateConfig('actionBar', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Slot Size (px)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.slotSize ?? 40}
-                  onChange={(e) => handleUpdateConfig('actionBar', { slotSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Columns</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.columns ?? 5}
-                  onChange={(e) => handleUpdateConfig('actionBar', { columns: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Rows</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.rows ?? 2}
-                  onChange={(e) => handleUpdateConfig('actionBar', { rows: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('actionBar', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Border Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.borderColor ?? '#444444'}
-                    onChange={(e) => handleUpdateConfig('actionBar', { borderColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.borderColor || '#444444',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('actionBar', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderPreviewActionBar()}
-          </>
-        );
-
-      case 'chat':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 10}
-                  onChange={(e) => handleUpdateConfig('chat', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 300}
-                  onChange={(e) => handleUpdateConfig('chat', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Width</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.width ?? 400}
-                  onChange={(e) => handleUpdateConfig('chat', { width: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Height</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.height ?? 150}
-                  onChange={(e) => handleUpdateConfig('chat', { height: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('chat', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.textColor ?? '#ffffff'}
-                    onChange={(e) => handleUpdateConfig('chat', { textColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.textColor || '#ffffff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 12}
-                  onChange={(e) => handleUpdateConfig('chat', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'monospace'}
-                  onChange={(e) => handleUpdateConfig('chat', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Max Messages</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.maxMessages ?? 50}
-                  onChange={(e) => handleUpdateConfig('chat', { maxMessages: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('chat', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderPreviewChat()}
-          </>
-        );
-
-      case 'inventory':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 500}
-                  onChange={(e) => handleUpdateConfig('inventory', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 100}
-                  onChange={(e) => handleUpdateConfig('inventory', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Slot Size (px)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.slotSize ?? 48}
-                  onChange={(e) => handleUpdateConfig('inventory', { slotSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Columns</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.columns ?? 5}
-                  onChange={(e) => handleUpdateConfig('inventory', { columns: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('inventory', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Border Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.borderColor ?? '#444444'}
-                    onChange={(e) => handleUpdateConfig('inventory', { borderColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.borderColor || '#444444',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('inventory', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderPreviewInventory()}
-          </>
-        );
-
-      case 'castBar':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">X Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.x ?? 250}
-                  onChange={(e) => handleUpdateConfig('castBar', { x: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Y Position</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.y ?? 200}
-                  onChange={(e) => handleUpdateConfig('castBar', { y: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Width</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.width ?? 250}
-                  onChange={(e) => handleUpdateConfig('castBar', { width: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Height</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.height ?? 30}
-                  onChange={(e) => handleUpdateConfig('castBar', { height: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#1a1a1a'}
-                    onChange={(e) => handleUpdateConfig('castBar', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#1a1a1a',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Bar Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.barColor ?? '#ff6600'}
-                    onChange={(e) => handleUpdateConfig('castBar', { barColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.barColor || '#ff6600',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.textColor ?? '#ffffff'}
-                    onChange={(e) => handleUpdateConfig('castBar', { textColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.textColor || '#ffffff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 12}
-                  onChange={(e) => handleUpdateConfig('castBar', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'sans-serif'}
-                  onChange={(e) => handleUpdateConfig('castBar', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('castBar', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderPreviewCastBar()}
-          </>
-        );
-
-      case 'nameplates':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">Offset X</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.offsetX ?? 0}
-                  onChange={(e) => handleUpdateConfig('nameplates', { offsetX: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Offset Y</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.offsetY ?? -30}
-                  onChange={(e) => handleUpdateConfig('nameplates', { offsetY: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Width</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.width ?? 120}
-                  onChange={(e) => handleUpdateConfig('nameplates', { width: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Height</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.height ?? 40}
-                  onChange={(e) => handleUpdateConfig('nameplates', { height: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 12}
-                  onChange={(e) => handleUpdateConfig('nameplates', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'sans-serif'}
-                  onChange={(e) => handleUpdateConfig('nameplates', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Health Bar Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.healthBarColor ?? '#00ff00'}
-                    onChange={(e) => handleUpdateConfig('nameplates', { healthBarColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.healthBarColor || '#00ff00',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Mana Bar Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.manaBarColor ?? '#0099ff'}
-                    onChange={(e) => handleUpdateConfig('nameplates', { manaBarColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.manaBarColor || '#0099ff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('nameplates', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderNameplatePreview()}
-          </>
-        );
-
-      case 'deathScreen':
-        return (
-          <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 24 }}>
-              <div className="form-group">
-                <label className="form-label">Background Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.backgroundColor ?? '#000000'}
-                    onChange={(e) => handleUpdateConfig('deathScreen', { backgroundColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.backgroundColor || '#000000',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.textColor ?? '#ff0000'}
-                    onChange={(e) => handleUpdateConfig('deathScreen', { textColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.textColor || '#ff0000',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Size</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  value={tabConfig.fontSize ?? 24}
-                  onChange={(e) => handleUpdateConfig('deathScreen', { fontSize: parseInt(e.target.value) })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Font Family</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={tabConfig.fontFamily ?? 'sans-serif'}
-                  onChange={(e) => handleUpdateConfig('deathScreen', { fontFamily: e.target.value })}
-                />
-              </div>
-              <div className="form-group">
-                <label className="form-label">Button Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.buttonColor ?? '#ff6600'}
-                    onChange={(e) => handleUpdateConfig('deathScreen', { buttonColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.buttonColor || '#ff6600',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Button Text Color</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input
-                    className="form-input"
-                    type="text"
-                    value={tabConfig.buttonTextColor ?? '#ffffff'}
-                    onChange={(e) => handleUpdateConfig('deathScreen', { buttonTextColor: e.target.value })}
-                    style={{ flex: 1 }}
-                  />
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      backgroundColor: tabConfig.buttonTextColor || '#ffffff',
-                      borderRadius: 4,
-                      border: '1px solid var(--border)',
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="form-group">
-                <label className="form-label">Alpha (0-1)</label>
-                <input
-                  className="form-input"
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={tabConfig.alpha ?? 1}
-                  onChange={(e) => handleUpdateConfig('deathScreen', { alpha: parseFloat(e.target.value) })}
-                />
-              </div>
-            </div>
-            {renderDeathScreenPreview()}
-          </>
-        );
-
-      default:
-        return null;
-    }
   };
 
   return (
     <div className="panel">
-      <div className="panel-header">UI Layout Editor</div>
+      <div className="panel-header">UI Layout</div>
       <div className="panel-body" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+        <div
+          style={{
+            fontSize: 12,
+            color: 'var(--text-muted)',
+            border: '1px solid var(--border)',
+            borderRadius: 4,
+            padding: 10,
+            marginBottom: 16,
+          }}
+        >
+          The HUD's layout lives in Unreal: the <code>WBP_GameHUD</code> Widget Blueprint
+          (Content/Valhalla/UI/HUD; its Class Defaults hold the cell sizes and bar and chat colours),
+          with <code>WBP_HUDSlot</code> and <code>WBP_HUDBar</code> for the cells and bars. This page
+          edits the few numbers the game still reads from ui-config.json.
+        </div>
+
         <div className="tabs" style={{ marginBottom: 16 }}>
           {TABS.map(tab => (
             <button
@@ -1465,11 +292,13 @@ export const UILayoutEditor: React.FC = () => {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', marginBottom: 16 }}>
-          {renderTabContent()}
+          {activeTab === 'inventory' && renderInventory()}
+          {activeTab === 'chat' && renderChat()}
+          {activeTab === 'nameplates' && renderNameplates()}
         </div>
 
         <button className="btn btn-primary" onClick={handleSave} style={{ width: '100%' }}>
-          💾 Save UI Config
+          Save UI Config
         </button>
       </div>
     </div>

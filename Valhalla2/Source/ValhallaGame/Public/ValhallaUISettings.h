@@ -1,8 +1,10 @@
 // Copyright Valhalla 2.0. All Rights Reserved.
 //
-// B-07 step 2: which game HUD class AValhallaHUD creates. Empty (the default)
-// is the code-built UValhallaGameHUDWidget; a Widget Blueprint child of it
-// (WBP_GameHUD, step 3) lays the HUD out in the designer instead.
+// B-07: which game HUD class AValhallaHUD creates: a Widget Blueprint child of
+// UValhallaGameHUDWidget that lays the HUD out in the designer. DefaultGame.ini
+// sets it to /Game/Valhalla/UI/HUD/WBP_GameHUD (step 4). The code-built layout
+// is gone, so empty (or a class that will not load) means a blank HUD, with an
+// error in the log.
 
 #pragma once
 
@@ -33,8 +35,9 @@ public:
 
 	/**
 	 * The game HUD widget class: a Widget Blueprint child of
-	 * UValhallaGameHUDWidget. Empty = the code-built HUD (UValhallaGameHUDWidget
-	 * itself), which is also the fallback if the class cannot be loaded.
+	 * UValhallaGameHUDWidget (WBP_GameHUD). Empty, or a class that cannot be
+	 * loaded, falls back to UValhallaGameHUDWidget itself, which has no layout
+	 * since B-07 step 4: only nameplates and floating text show.
 	 */
 	UPROPERTY(Config, EditAnywhere, BlueprintReadOnly, Category = "HUD", meta = (DisplayName = "Game HUD Class"))
 	TSoftClassPtr<UValhallaGameHUDWidget> GameHUDClass;

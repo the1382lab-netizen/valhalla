@@ -16,6 +16,7 @@
 #include "ValhallaPartySubsystem.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSpellProjectile.h"
+#include "ValhallaZoneAtmosphere.h"
 #include "WorldCollision.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaVision);
@@ -405,7 +406,16 @@ float UValhallaVisibilitySubsystem::GetVisionRangeFor(const AActor* Viewer)
 	{
 		if (const AValhallaPlayerState* State = Pawn->GetPlayerState<AValhallaPlayerState>())
 		{
-			return State->VisionRange > 0.f ? State->VisionRange : DefaultVisionRange;
+			const float ClassRange = State->VisionRange > 0.f ? State->VisionRange : DefaultVisionRange;
+
+			// B-06: a zone's atmosphere can cap it (`netRelevancyRadiusCm`), so
+			// a player in Eldmoor's mist is not sent the camp 30 m away that
+			// the fog would hide anyway. A cap only ever lowers the range, and
+			// a zone without one leaves it exactly as it was. This is a player's
+			// own zone (the replicated ZoneId), and NPCs have no player state,
+			// so an NPC's view — and with it aggro — is never touched.
+			const float ZoneCap = ValhallaAtmosphere::GetRelevancyCapCm(Pawn, State->ZoneId);
+			return ZoneCap > 0.f ? FMath::Min(ClassRange, ZoneCap) : ClassRange;
 		}
 	}
 	return DefaultVisionRange;

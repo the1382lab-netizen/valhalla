@@ -233,6 +233,13 @@ public:
 	 * `classes.json` — 1200 for most, 1350 rogue, 1800 ranger. An actor with no
 	 * player state (an NPC asking about a player, say) gets the 1200 default
 	 * rather than infinite sight.
+	 *
+	 * B-06: capped by the player's zone's `atmosphere.netRelevancyRadiusCm`
+	 * when the zone sets one (never raised). This is the per-zone relevancy
+	 * radius. It is applied here rather than through NetCullDistanceSquared,
+	 * which every culled actor sets to 1e12 on purpose (see AValhallaCharacter's
+	 * constructor): that one is a 3D radius from the connection's view point,
+	 * applied before IsNetRelevantFor, and would cull party members too.
 	 */
 	static float GetVisionRangeFor(const AActor* Viewer);
 

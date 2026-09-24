@@ -408,6 +408,13 @@ void AValhallaHUD::DrawLootBagLabels()
 	{
 		const AValhallaLootBag* Bag = *It;
 
+		// B-06: a bag beyond the zone's vision fog is hidden by
+		// AValhallaZoneAtmosphere; its label (and click target) goes with it.
+		if (Bag->IsHidden())
+		{
+			continue;
+		}
+
 		const FVector WorldPosition = Bag->GetActorLocation() + FVector(0.f, 0.f, BagLabelWorldHeight);
 		const FVector Screen = Project(WorldPosition);
 		if (Screen.Z <= 0.f)
@@ -516,7 +523,7 @@ void AValhallaHUD::DrawNPCNameplates()
 	for (TActorIterator<AValhallaNPC> It(World); It; ++It)
 	{
 		const AValhallaNPC* Npc = *It;
-		if (!Npc->IsAlive())
+		if (!Npc->IsAlive() || Npc->IsHidden())
 		{
 			continue;
 		}
@@ -531,15 +538,17 @@ void AValhallaHUD::DrawNPCNameplates()
 			continue;
 		}
 
+		// B-06: a friendly NPC's plate is green, not the enemy red.
+		const FLinearColor PlateColour = Npc->bFriendly ? ColourHeal : ColourEnemy;
 		const FString Label = FString::Printf(TEXT("%s  %.0f/%.0f"), *Npc->DisplayName, Npc->Hp, Npc->MaxHp);
-		DrawText(Label, ColourEnemy, Screen.X - 40.f, Screen.Y, GEngine ? GEngine->GetSmallFont() : nullptr, 1.f, false);
+		DrawText(Label, PlateColour, Screen.X - 40.f, Screen.Y, GEngine ? GEngine->GetSmallFont() : nullptr, 1.f, false);
 
 		constexpr float BarWidth = 80.f;
 		constexpr float BarHeight = 5.f;
 		const float Fraction = Npc->MaxHp > 0.f ? FMath::Clamp(Npc->Hp / Npc->MaxHp, 0.f, 1.f) : 0.f;
 
 		DrawRect(FLinearColor(0.1f, 0.02f, 0.02f, 0.85f), Screen.X - 40.f, Screen.Y + 13.f, BarWidth, BarHeight);
-		DrawRect(ColourEnemy, Screen.X - 40.f, Screen.Y + 13.f, BarWidth * Fraction, BarHeight);
+		DrawRect(PlateColour, Screen.X - 40.f, Screen.Y + 13.f, BarWidth * Fraction, BarHeight);
 	}
 }
 

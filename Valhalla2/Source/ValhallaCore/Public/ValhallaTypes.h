@@ -647,9 +647,20 @@ struct VALHALLACORE_API FValhallaNPCTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	FString Description;
 
-	/** JSON `type`. */
+	/**
+	 * JSON `type`. This is the NPC's hostility: `Npc` is friendly (never aggroes,
+	 * cannot be attacked or picked as an attack target), `Enemy` is hostile.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	EValhallaNPCType Type = EValhallaNPCType::Enemy;
+
+	/**
+	 * JSON `role` (B-06) — optional job of a friendly NPC: `vendor`, `guard`,
+	 * `innkeeper`… NAME_None when absent. Nothing reads it yet; vendor trading
+	 * will.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	FName Role;
 
 	/** JSON `level`. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
@@ -819,6 +830,89 @@ struct VALHALLACORE_API FValhallaLootTable
 //  Zones
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * maps.ts — `ZoneAtmosphere` (B-06). A zone's fog, light and sight.
+ *
+ * Every JSON field is optional, and the defaults below all mean "absent: keep
+ * today's global look" — so a zone with no `atmosphere` object, or with some
+ * fields left out, renders and replicates exactly as it did before B-06:
+ *
+ *   - distances and radii: 0 = not set (no vision fog, no camera cap, no
+ *     relevancy cap);
+ *   - HeightFogDensity / HeightFogStartCm: negative = not set;
+ *   - the two scales: 1 = unchanged;
+ *   - the two colours: only used when their bHas* flag is set.
+ *
+ * Applied on the client by AValhallaZoneAtmosphere (blended over a second when
+ * the local player changes zone) and on the server by
+ * UValhallaVisibilitySubsystem::GetVisionRangeFor (the relevancy cap).
+ */
+USTRUCT(BlueprintType)
+struct VALHALLACORE_API FValhallaZoneAtmosphere
+{
+	GENERATED_BODY()
+
+	/** JSON `visionClearRadiusCm` — ground distance from the player that stays clear. 0: no vision fog. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float VisionClearRadiusCm = 0.f;
+
+	/** JSON `visionFadeWidthCm` — the soft fade from clear to fully fogged. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float VisionFadeWidthCm = 0.f;
+
+	/** True when JSON `fogColor` was a valid `#rrggbb`. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	bool bHasFogColor = false;
+
+	/** JSON `fogColor`, sRGB hex converted to linear. The vision fog and the height fog. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	FLinearColor FogColor = FLinearColor::Black;
+
+	/** JSON `heightFogDensity`. Negative: not set. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float HeightFogDensity = -1.f;
+
+	/** JSON `heightFogStartCm`. Negative: not set. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float HeightFogStartCm = -1.f;
+
+	/** JSON `sunIntensityScale` — multiplies the sun. 1: unchanged. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float SunIntensityScale = 1.f;
+
+	/** JSON `skyLightIntensityScale` — multiplies the sky light and the fill light. 1: unchanged. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float SkyLightIntensityScale = 1.f;
+
+	/** True when JSON `gradeTint` was a valid `#rrggbb`. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	bool bHasGradeTint = false;
+
+	/** JSON `gradeTint`, linear. Multiplied into the post-process colour gain. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	FLinearColor GradeTint = FLinearColor::White;
+
+	/** JSON `cameraMaxArmCm` — the furthest the camera may zoom out. 0: the character's own limit. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float CameraMaxArmCm = 0.f;
+
+	/**
+	 * JSON `netRelevancyRadiusCm` — the server stops sending NPCs, players and
+	 * loot bags further than this from a player in the zone. Caps the class
+	 * vision range; never raises it. 0: no cap.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float NetRelevancyRadiusCm = 0.f;
+
+	bool HasVisionFog() const { return VisionClearRadiusCm > 0.f; }
+
+	/** Where the vision fog is fully opaque, cm. 0 when there is no vision fog. */
+	float GetVisionLimitCm() const
+	{
+		return HasVisionFog() ? VisionClearRadiusCm + FMath::Max(0.f, VisionFadeWidthCm) : 0.f;
+	}
+};
+
 /** maps.ts:28 — `ZoneConfig`. One playable zone and its Tiled map. */
 USTRUCT(BlueprintType)
 struct VALHALLACORE_API FValhallaZoneConfig
@@ -844,6 +938,14 @@ struct VALHALLACORE_API FValhallaZoneConfig
 	/** JSON `defaultSpawn.y` — 1.0 pixel space. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
 	float DefaultSpawnY = 0.f;
+
+	/** True when the zone has a JSON `atmosphere` object (B-06). */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	bool bHasAtmosphere = false;
+
+	/** JSON `atmosphere` (B-06). All defaults when bHasAtmosphere is false. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	FValhallaZoneAtmosphere Atmosphere;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

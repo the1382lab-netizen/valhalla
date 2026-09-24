@@ -10,6 +10,7 @@
 #include "ValhallaInventoryLibrary.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaStats.h"
+#include "ValhallaZoneAtmosphere.h"
 
 AValhallaPlayerState::AValhallaPlayerState()
 {
@@ -291,6 +292,23 @@ void AValhallaPlayerState::SetTargetActor(AActor* NewTarget)
 	if (Resolved && !Resolved->IsValidLowLevelFast())
 	{
 		Resolved = nullptr;
+	}
+
+	// B-06: nothing past the zone's vision fog can be selected. The client
+	// hides it and the server soon stops sending it, but a click on a capsule
+	// that is still there (or a hand-made RPC) must not select it either. A
+	// zone without an atmosphere profile has no limit, as before.
+	const APawn* OwnPawn = GetPawn();
+	if (Resolved && OwnPawn && Resolved != OwnPawn)
+	{
+		const float VisionLimit = ValhallaAtmosphere::GetVisionLimitCm(this, ZoneId);
+		if (VisionLimit > 0.f
+			&& FVector::DistSquared2D(OwnPawn->GetActorLocation(), Resolved->GetActorLocation()) > FMath::Square(static_cast<double>(VisionLimit)))
+		{
+			UE_LOG(LogValhallaGame, Verbose, TEXT("%s target %s refused: beyond the %s vision fog (%.0f cm)"),
+				*CharacterName, *Resolved->GetName(), *ZoneId.ToString(), VisionLimit);
+			Resolved = nullptr;
+		}
 	}
 
 	if (TargetActor.Get() == Resolved)

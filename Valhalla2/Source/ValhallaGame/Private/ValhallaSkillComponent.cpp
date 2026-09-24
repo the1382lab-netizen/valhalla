@@ -376,7 +376,10 @@ FString UValhallaSkillComponent::ValidateCast(const FValhallaSkillTemplate& Skil
 		{
 			return TEXT("Invalid target");
 		}
-		if (Skill.TargetType == EValhallaSkillTargetType::SingleEnemy && !bTargetIsNpc)
+		// B-06: "an NPC" is not enough for an enemy skill — a friendly NPC (a
+		// vendor, a guard) is an NPC nobody may attack. AreHostile is the same
+		// test the auto-attack and every AoE already use.
+		if (Skill.TargetType == EValhallaSkillTargetType::SingleEnemy && !UValhallaCombatLibrary::AreHostile(Character, Target))
 		{
 			return TEXT("Invalid target");
 		}
@@ -1144,7 +1147,7 @@ void UValhallaSkillComponent::ServerFixedTick(float FixedDeltaSeconds, double No
 
 					const bool bTargetIsNpc = UValhallaCombatLibrary::IsNpcTarget(Target);
 					if ((Skill->TargetType == EValhallaSkillTargetType::SingleAlly && bTargetIsNpc)
-						|| (Skill->TargetType == EValhallaSkillTargetType::SingleEnemy && !bTargetIsNpc))
+						|| (Skill->TargetType == EValhallaSkillTargetType::SingleEnemy && !UValhallaCombatLibrary::AreHostile(GetOwner(), Target)))
 					{
 						SendSkillFailed(TEXT("Invalid target"));
 						return;

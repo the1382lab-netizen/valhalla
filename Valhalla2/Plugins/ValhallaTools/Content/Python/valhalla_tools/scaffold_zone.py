@@ -63,10 +63,11 @@ THEMES = {
     },
 }
 
-#: 8 tiles is the smallest box a party fits in; 128 (8192 cm) keeps the fog's
-#: 1024-texel masks at 8 cm a texel or better.
+#: 8 tiles is the smallest box a party fits in; 160 (10240 cm) keeps the fog's
+#: 1024-texel masks at 10 cm a texel or better. B-06 raised it from 128 so
+#: Eldmoor Grasslands (143 tiles, 9152 cm) fits.
 MIN_TILES = 8
-MAX_TILES = 128
+MAX_TILES = 160
 
 ZONE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
 

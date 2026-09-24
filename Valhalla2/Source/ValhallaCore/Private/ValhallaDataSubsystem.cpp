@@ -479,6 +479,7 @@ namespace
 		OptString(Obj, TEXT("description"), Out.Description);
 
 		RequireEnum(Obj, TEXT("type"), Out.Type, &Valhalla::ParseNPCType, Context);
+		OptName(Obj, TEXT("role"), Out.Role);
 		RequireInt(Obj, TEXT("level"), Out.Level, Context);
 
 		// `stats` is a Partial<StatBlock> and is usually `{}` in practice.
@@ -562,6 +563,75 @@ namespace
 		}
 	}
 
+	/**
+	 * A `#rrggbb` (sRGB) colour, as linear. False when absent; false with a
+	 * warning when present but not six hex digits after a '#'.
+	 */
+	bool OptHexColour(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key, FLinearColor& Out, const FString& Context)
+	{
+		FString Text;
+		if (!OptString(Obj, Key, Text))
+		{
+			return false;
+		}
+		Text.TrimStartAndEndInline();
+
+		bool bValid = Text.Len() == 7 && Text[0] == TEXT('#');
+		for (int32 Index = 1; bValid && Index < Text.Len(); ++Index)
+		{
+			bValid = FChar::IsHexDigit(Text[Index]);
+		}
+		if (!bValid)
+		{
+			UE_LOG(LogValhallaCore, Warning, TEXT("[ValhallaData] %s: '%s' is '%s', not a #rrggbb colour — ignored."),
+				*Context, Key, *Text);
+			return false;
+		}
+
+		Out = FLinearColor::FromSRGBColor(FColor::FromHex(Text));
+		return true;
+	}
+
+	/** An optional number that must be finite and >= 0. Left untouched (with a warning) otherwise. */
+	void OptNonNegative(const TSharedPtr<FJsonObject>& Obj, const TCHAR* Key, float& Out, const FString& Context)
+	{
+		float Value = 0.f;
+		if (!OptFloat(Obj, Key, Value))
+		{
+			return;
+		}
+		if (!FMath::IsFinite(Value) || Value < 0.f)
+		{
+			UE_LOG(LogValhallaCore, Warning, TEXT("[ValhallaData] %s: '%s' must be a number >= 0 — ignored."),
+				*Context, Key);
+			return;
+		}
+		Out = Value;
+	}
+
+	/** maps.ts `ZoneAtmosphere` (B-06). Every field optional; see FValhallaZoneAtmosphere for the defaults. */
+	void ParseZoneAtmosphere(const TSharedPtr<FJsonObject>& Obj, FValhallaZoneAtmosphere& Out, const FString& Context)
+	{
+		OptNonNegative(Obj, TEXT("visionClearRadiusCm"), Out.VisionClearRadiusCm, Context);
+		OptNonNegative(Obj, TEXT("visionFadeWidthCm"), Out.VisionFadeWidthCm, Context);
+		Out.bHasFogColor = OptHexColour(Obj, TEXT("fogColor"), Out.FogColor, Context);
+		OptNonNegative(Obj, TEXT("heightFogDensity"), Out.HeightFogDensity, Context);
+		OptNonNegative(Obj, TEXT("heightFogStartCm"), Out.HeightFogStartCm, Context);
+		OptNonNegative(Obj, TEXT("sunIntensityScale"), Out.SunIntensityScale, Context);
+		OptNonNegative(Obj, TEXT("skyLightIntensityScale"), Out.SkyLightIntensityScale, Context);
+		Out.bHasGradeTint = OptHexColour(Obj, TEXT("gradeTint"), Out.GradeTint, Context);
+		OptNonNegative(Obj, TEXT("cameraMaxArmCm"), Out.CameraMaxArmCm, Context);
+		OptNonNegative(Obj, TEXT("netRelevancyRadiusCm"), Out.NetRelevancyRadiusCm, Context);
+
+		const float VisionLimit = Out.GetVisionLimitCm();
+		if (VisionLimit > 0.f && Out.NetRelevancyRadiusCm > 0.f && Out.NetRelevancyRadiusCm < VisionLimit)
+		{
+			UE_LOG(LogValhallaCore, Warning,
+				TEXT("[ValhallaData] %s: netRelevancyRadiusCm %.0f is inside the vision fog (fully fogged at %.0f) — NPCs will pop in where the fog is still see-through."),
+				*Context, Out.NetRelevancyRadiusCm, VisionLimit);
+		}
+	}
+
 	void ParseZone(FName Id, const TSharedPtr<FJsonObject>& Obj, FValhallaZoneConfig& Out)
 	{
 		const FString Context = FString::Printf(TEXT("zones.json/%s"), *Id.ToString());
@@ -570,6 +640,14 @@ namespace
 		OptName(Obj, TEXT("id"), Out.Id);
 		RequireString(Obj, TEXT("name"), Out.Name, Context);
 		RequireString(Obj, TEXT("mapFile"), Out.MapFile, Context);
+
+		// B-06. Before defaultSpawn, whose absence returns early: a zone with a
+		// broken spawn still keeps its look.
+		if (const TSharedPtr<FJsonObject> Atmosphere = OptObject(Obj, TEXT("atmosphere")))
+		{
+			Out.bHasAtmosphere = true;
+			ParseZoneAtmosphere(Atmosphere, Out.Atmosphere, Context + TEXT("/atmosphere"));
+		}
 
 		const TSharedPtr<FJsonObject> Spawn = OptObject(Obj, TEXT("defaultSpawn"));
 		if (!Spawn.IsValid())

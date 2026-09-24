@@ -632,11 +632,23 @@ void AValhallaNPC::OnRep_Hp()
 //  Damage, threat and death — NPCSystem.ts:279 / 306
 // ─────────────────────────────────────────────────────────────────────────────
 
+bool AValhallaNPC::CanEverAggro() const
+{
+	// NPCSystem.ts:497 — canAggro defaults to true for enemies, false for
+	// friendly NPCs. B-06: a friendly NPC never aggroes, whatever its template's
+	// canAggro says — an outpost guard with the box ticked must not start a
+	// fight with the players it is there to keep safe.
+	return !bFriendly && (Template.bCanAggro || Template.Type == EValhallaNPCType::Enemy);
+}
+
 int32 AValhallaNPC::ApplyDamageFromAttacker(AActor* Attacker, int32 Damage, double Now, bool& bOutDied)
 {
 	bOutDied = false;
 
-	if (!HasAuthority() || !bAlive || Damage <= 0)
+	// B-06: a friendly NPC cannot be hurt. Every attack path already refuses
+	// it (UValhallaCombatLibrary::AreHostile); this is the backstop for any
+	// path that does not ask, so a vendor can never be killed by a stray AoE.
+	if (!HasAuthority() || !bAlive || Damage <= 0 || bFriendly)
 	{
 		return 0;
 	}
@@ -647,7 +659,7 @@ int32 AValhallaNPC::ApplyDamageFromAttacker(AActor* Attacker, int32 Damage, doub
 	// NPCSystem.ts:286 — damage dealt is threat generated, and this is the only
 	// place threat is created by combat. A `canAggro: false` NPC takes the damage
 	// but never builds a table, so it never fights back.
-	const bool bCanAggro = Template.bCanAggro || Template.Type == EValhallaNPCType::Enemy;
+	const bool bCanAggro = CanEverAggro();
 	if (bCanAggro && Attacker)
 	{
 		float& Threat = ThreatTable.FindOrAdd(Attacker);
@@ -786,7 +798,7 @@ void AValhallaNPC::NotifyAttackAvoided(AActor* Attacker)
 	// whose attacker missed first never noticed, and one aggroed only by misses
 	// never fought back. One point puts the attacker in the table (so a
 	// canAggro NPC turns on them) without outranking anyone who has hit it.
-	const bool bCanAggro = Template.bCanAggro || Template.Type == EValhallaNPCType::Enemy;
+	const bool bCanAggro = CanEverAggro();
 	if (bCanAggro)
 	{
 		ThreatTable.FindOrAdd(Attacker) += 1.f;
@@ -909,7 +921,7 @@ void AValhallaNPC::UpdateAggro(double Now)
 {
 	// NPCSystem.ts:497 — canAggro defaults to true for enemies, false for
 	// friendly NPCs. A shopkeeper does not chase you for walking past.
-	const bool bCanAggro = Template.bCanAggro || Template.Type == EValhallaNPCType::Enemy;
+	const bool bCanAggro = CanEverAggro();
 	if (!bCanAggro)
 	{
 		AggroTarget = nullptr;

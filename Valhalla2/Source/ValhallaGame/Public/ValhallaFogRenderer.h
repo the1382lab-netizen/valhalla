@@ -74,6 +74,16 @@ public:
 	/** Edge of the render targets, texels. Square. */
 	static constexpr int32 MaskResolution = 1024;
 
+	/**
+	 * B-06: the zone's vision fog, pushed by AValhallaZoneAtmosphere every
+	 * frame — the player's ground position, where the fog starts, how wide its
+	 * fade is, its colour, and a 0..1 strength. Strength 0 is off, and is also
+	 * PP_Fog's own default, so a zone without an atmosphere profile (and a
+	 * PP_Fog built before B-06, which has no such parameters) renders exactly
+	 * as before.
+	 */
+	void SetVisionFog(const FVector2D& Centre, float ClearRadiusCm, float FadeWidthCm, const FLinearColor& Colour, float Strength);
+
 	/** `/Game/Valhalla/Materials/PP_Fog`. Authored by `build_fog.py`. */
 	static constexpr const TCHAR* FogMaterialPath = TEXT("/Game/Valhalla/Materials/PP_Fog");
 

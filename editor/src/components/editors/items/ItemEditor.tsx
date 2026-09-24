@@ -59,6 +59,7 @@ export const ItemEditor: React.FC = () => {
   const saveSection = useEditorStore(s => s.saveSection);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [meshIds, setMeshIds] = useState<string[]>([]);
   const [iconFiles, setIconFiles] = useState<string[]>([]);
 
@@ -74,10 +75,30 @@ export const ItemEditor: React.FC = () => {
       .catch(() => setMeshIds([]));
   }, []);
 
+  /** Item count per category, plus any category in the data that isn't in CATEGORIES. */
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const cat of CATEGORIES) counts[cat] = 0;
+    for (const item of Object.values(items.data)) {
+      const cat = item.category || 'misc';
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+    return counts;
+  }, [items.data]);
+
   const itemList = useMemo(() => {
-    const ids = Object.keys(items.data);
-    return ids.filter(id => id.toLowerCase().includes(searchQuery.toLowerCase())).sort();
-  }, [items.data, searchQuery]);
+    const q = searchQuery.trim().toLowerCase();
+    return Object.keys(items.data)
+      .filter(id => {
+        const item = items.data[id];
+        if (categoryFilter !== 'all' && (item.category || 'misc') !== categoryFilter) return false;
+        if (!q) return true;
+        return id.toLowerCase().includes(q) || (item.name || '').toLowerCase().includes(q);
+      })
+      .sort((a, b) => (items.data[a].name || a).localeCompare(items.data[b].name || b));
+  }, [items.data, searchQuery, categoryFilter]);
+
+  const totalItems = Object.keys(items.data).length;
 
   const selectedItem: ItemTemplate | null = selectedItemId && items.data[selectedItemId]
     ? items.data[selectedItemId]
@@ -155,18 +176,33 @@ export const ItemEditor: React.FC = () => {
   };
 
   return (
-    <div className="split-horizontal">
+    <div className="split-horizontal split-fill">
       <div className="panel">
-        <div className="panel-header">Items ({itemList.length})</div>
-        <div className="panel-body">
-          <div className="search-box">
-            <span className="search-icon">🔍</span>
-            <input
-              type="text"
-              placeholder="Search items..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+        <div className="panel-header">
+          Items ({itemList.length === totalItems ? totalItems : `${itemList.length} of ${totalItems}`})
+        </div>
+        <div className="panel-body list-body">
+          <div className="list-filters">
+            <div className="search-box">
+              <span className="search-icon">🔍</span>
+              <input
+                type="text"
+                placeholder="Search name or id..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <select
+              className="form-select"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              title="Filter by category"
+            >
+              <option value="all">All categories ({totalItems})</option>
+              {Object.keys(categoryCounts).map(cat => (
+                <option key={cat} value={cat}>{cat} ({categoryCounts[cat]})</option>
+              ))}
+            </select>
           </div>
 
           <div style={{ marginBottom: 12, display: 'flex', gap: 6 }}>
@@ -175,29 +211,34 @@ export const ItemEditor: React.FC = () => {
             <button className="btn btn-danger" onClick={handleDeleteItem} disabled={!selectedItem}>Delete</button>
           </div>
 
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Category</th>
-              </tr>
-            </thead>
-            <tbody>
-              {itemList.map(id => {
-                const item = items.data[id];
-                return (
-                  <tr
-                    key={id}
-                    className={selectedItemId === id ? 'selected' : ''}
-                    onClick={() => handleSelectItem(id)}
-                  >
-                    <td>{item.name}</td>
-                    <td>{item.category}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="list-scroll">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Category</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemList.map(id => {
+                  const item = items.data[id];
+                  return (
+                    <tr
+                      key={id}
+                      className={selectedItemId === id ? 'selected' : ''}
+                      onClick={() => handleSelectItem(id)}
+                    >
+                      <td>{item.name}</td>
+                      <td>{item.category}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {itemList.length === 0 && (
+              <div className="list-empty">No items match the search or category filter.</div>
+            )}
+          </div>
         </div>
       </div>
 

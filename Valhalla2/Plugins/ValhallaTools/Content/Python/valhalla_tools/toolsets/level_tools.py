@@ -134,7 +134,7 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
             theme: Kit for the ground: ``grassland``, ``desert`` or ``town``
                 (cave comes later).
             size_tiles: Zone is ``size_tiles`` x ``size_tiles`` tiles of 64 cm,
-                8 to 128. The Phase 3 zones are 64.
+                8 to 160. The Phase 3 zones are 64; Eldmoor (B-06) is 143.
 
         Returns:
             A JSON object as text. Refused: ``ok`` false and ``refused`` (the

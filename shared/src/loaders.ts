@@ -8,6 +8,7 @@ import type { ItemTemplate } from './items.js';
 import type { SkillTemplate } from './skills.js';
 import type { ClassTemplate } from './classes.js';
 import type { ZoneConfig } from './maps.js';
+import { validateZoneAtmosphere } from './maps.js';
 import type { UIConfig } from './ui-config.js';
 import type { NPCTemplate } from './npcs.js';
 import type { LootTable } from './loot-tables.js';
@@ -109,6 +110,13 @@ export function loadZonesFromJson(json: unknown): Record<string, ZoneConfig> | n
     if (!data || typeof data !== 'object' || !data.zones) {
       console.warn('[Loader] Invalid zones JSON');
       return null;
+    }
+    // B-06: a bad atmosphere is reported, not fatal — the game clamps and
+    // falls back to today's look for anything it cannot use.
+    for (const [zoneId, zone] of Object.entries(data.zones)) {
+      for (const problem of validateZoneAtmosphere(zone?.atmosphere)) {
+        console.warn(`[Loader] zones.json/${zoneId}: ${problem}`);
+      }
     }
     return data.zones;
   } catch (e) {

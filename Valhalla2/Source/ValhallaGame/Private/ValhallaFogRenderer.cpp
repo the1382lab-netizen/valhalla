@@ -17,6 +17,7 @@
 #include "ValhallaFogBounds.h"
 #include "ValhallaPlayerController.h"
 #include "ValhallaPlayerState.h"
+#include "ValhallaZoneAtmosphere.h"
 #include "ValhallaZoneSubsystem.h"
 
 namespace
@@ -26,6 +27,13 @@ namespace
 	const FName ParamExploredMask(TEXT("ExploredMask"));
 	const FName ParamFogOrigin(TEXT("FogOrigin"));
 	const FName ParamFogInvSize(TEXT("FogInvSize"));
+
+	/** B-06's vision fog. Also build_fog.py's names. */
+	const FName ParamVisionCentre(TEXT("VisionCentre"));
+	const FName ParamVisionClearRadius(TEXT("VisionClearRadius"));
+	const FName ParamVisionFadeWidth(TEXT("VisionFadeWidth"));
+	const FName ParamVisionFogColor(TEXT("VisionFogColor"));
+	const FName ParamVisionFogStrength(TEXT("VisionFogStrength"));
 }
 
 AValhallaFogRenderer::AValhallaFogRenderer()
@@ -97,6 +105,11 @@ void AValhallaFogRenderer::BeginPlay()
 	{
 		OwningController = Cast<AValhallaPlayerController>(GetOwner());
 	}
+
+	// B-06: the zone atmosphere rides along with the fog — same owner, same
+	// client-only life — and is spawned before any of the early returns below,
+	// because a level with no fog bounds still has lighting to switch.
+	AValhallaZoneAtmosphere::EnsureFor(OwningController.Get());
 
 	// ── Where the masks live in the world ───────────────────────────────
 	//
@@ -249,6 +262,20 @@ void AValhallaFogRenderer::ApplyBoundsToMaterial()
 
 	FogMaterial->SetVectorParameterValue(ParamFogOrigin, FLinearColor(FogBounds.Min.X, FogBounds.Min.Y, 0.f, 0.f));
 	FogMaterial->SetVectorParameterValue(ParamFogInvSize, FLinearColor(1.f / Size.X, 1.f / Size.Y, 0.f, 0.f));
+}
+
+void AValhallaFogRenderer::SetVisionFog(const FVector2D& Centre, float ClearRadiusCm, float FadeWidthCm, const FLinearColor& Colour, float Strength)
+{
+	if (!FogMaterial)
+	{
+		return;
+	}
+
+	FogMaterial->SetVectorParameterValue(ParamVisionCentre, FLinearColor(Centre.X, Centre.Y, 0.f, 0.f));
+	FogMaterial->SetScalarParameterValue(ParamVisionClearRadius, FMath::Max(0.f, ClearRadiusCm));
+	FogMaterial->SetScalarParameterValue(ParamVisionFadeWidth, FMath::Max(1.f, FadeWidthCm));
+	FogMaterial->SetVectorParameterValue(ParamVisionFogColor, Colour);
+	FogMaterial->SetScalarParameterValue(ParamVisionFogStrength, FMath::Clamp(Strength, 0.f, 1.f));
 }
 
 void AValhallaFogRenderer::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -417,10 +444,10 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	const FVector Location = Pawn->GetActorLocation();
 	const FVector2D Origin(Location.X, Location.Y);
 
-	const AValhallaPlayerState* State = Pawn->GetValhallaPlayerState();
-	const float Range = (State && State->VisionRange > 0.f)
-		? State->VisionRange
-		: UValhallaVisibilitySubsystem::DefaultVisionRange;
+	// The class vision range, capped by the zone's atmosphere (B-06) — the same
+	// number the server culls relevancy with, so the lit polygon never shows
+	// ground where the server has stopped sending the NPCs standing on it.
+	const float Range = UValhallaVisibilitySubsystem::GetVisionRangeFor(Pawn);
 
 	GatherBlockerSegments(Location, Range, SegmentScratch);
 

@@ -224,6 +224,69 @@ body {
   height: 100%;
 }
 
+/* Split view that fills the screen: each panel scrolls on its own
+   (used by the Items editor; add "split-fill" to other editors to opt in) */
+.split-horizontal.split-fill {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.split-fill > .panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.split-fill > .panel > .panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* A list panel: search and filters stay put, only the list scrolls */
+.split-fill > .panel > .panel-body.list-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.list-filters {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.list-filters .search-box {
+  flex: 1 1 auto;
+  margin-bottom: 0;
+}
+
+.list-filters .form-select {
+  width: auto;
+  flex: 0 0 170px;
+}
+
+.list-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+}
+
+.list-scroll .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-secondary);
+}
+
+.list-empty {
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
 /* Form elements */
 .form-group {
   margin-bottom: 12px;

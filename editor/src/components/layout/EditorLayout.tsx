@@ -11,6 +11,7 @@ import { NPCEditor } from '../editors/npcs/NPCEditor';
 import { LootTableEditor } from '../editors/loot/LootTableEditor';
 import { UILayoutEditor } from '../editors/ui/UILayoutEditor';
 import { MapEditor } from '../editors/maps/MapEditor';
+import { ZoneEditor } from '../editors/zones/ZoneEditor';
 import { BalanceDashboard } from '../editors/balance/BalanceDashboard';
 import { ValidationPanel } from '../editors/validation/ValidationPanel';
 import { AdminDashboard } from '../editors/admin/AdminDashboard';
@@ -23,6 +24,7 @@ const editorComponents: Record<string, React.FC> = {
   loot: LootTableEditor,
   ui: UILayoutEditor,
   maps: MapEditor,
+  zones: ZoneEditor,
   balance: BalanceDashboard,
   validation: ValidationPanel,
   admin: AdminDashboard,

@@ -1,0 +1,3339 @@
+{
+ "version": "1.0",
+ "zoneId": "grasslands_v2",
+ "name": "Eldmoor Grasslands",
+ "units": "cm",
+ "tileCm": 64,
+ "sizeTiles": 143,
+ "sizeCm": 9152,
+ "axes": {
+  "right": "+X (east)",
+  "down": "+Y (south)",
+  "origin": "top-left / north-west corner"
+ },
+ "levelRange": [
+  4,
+  10
+ ],
+ "fogDesignRadiusM": [
+  10,
+  16
+ ],
+ "outpostSafeRadiusM": 12,
+ "regions": [
+  {
+   "id": "southern_downs",
+   "name": "Southern Downs",
+   "bounds": {
+    "x0": 0,
+    "y0": 6144,
+    "x1": 5888,
+    "y1": 9152,
+    "tiles": [
+     0,
+     96,
+     92,
+     143
+    ]
+   },
+   "levelBand": "4-5",
+   "elevation": "+1 to +3 m rolling; outpost knoll +4 m",
+   "mood": "Open, windy, sheep-cropped grass, scattered rocks and single trees. The road out of the starter zones."
+  },
+  {
+   "id": "mistwater_vale",
+   "name": "Mistwater Vale (river valley)",
+   "bounds": {
+    "x0": 0,
+    "y0": 3072,
+    "x1": 6400,
+    "y1": 6144,
+    "tiles": [
+     0,
+     48,
+     100,
+     96
+    ]
+   },
+   "levelBand": "5-6",
+   "elevation": "0 m at the river, banks +0.5 m, floor within 10 tiles of the river; low local mist",
+   "mood": "Cold, damp, reed banks, the stone bridge and its outlaw toll camp; mist pockets in the low ground."
+  },
+  {
+   "id": "thornwood",
+   "name": "Thornwood",
+   "bounds": {
+    "x0": 5888,
+    "y0": 5376,
+    "x1": 9152,
+    "y1": 9152,
+    "tiles": [
+     92,
+     84,
+     143,
+     143
+    ]
+   },
+   "levelBand": "5-7",
+   "elevation": "+1 to +2 m hummocky, no cliffs",
+   "mood": "Dense wood, fallen logs, stumps, ferns; game trails only; poachers and outlaws, later wolves."
+  },
+  {
+   "id": "kingsbarrow",
+   "name": "Kingsbarrow (old barrow ruins)",
+   "bounds": {
+    "x0": 6400,
+    "y0": 3072,
+    "x1": 9152,
+    "y1": 5376,
+    "tiles": [
+     100,
+     48,
+     143,
+     84
+    ]
+   },
+   "levelBand": "6-7",
+   "elevation": "Long low mound +3 m (x104-136, y52-80); crypt hollow -1 m at (130,58)",
+   "mood": "Broken walls, leaning columns, a headless king statue; cultists of the Drowned Crown keep vigil."
+  },
+  {
+   "id": "greyfell_highlands",
+   "name": "Greyfell Highlands",
+   "bounds": {
+    "x0": 0,
+    "y0": 0,
+    "x1": 3200,
+    "y1": 3072,
+    "tiles": [
+     0,
+     0,
+     50,
+     48
+    ]
+   },
+   "levelBand": "7-8",
+   "elevation": "Ridge +3 to +4 m; Greyfell Tor +7 m plateau (0-26,0-26) with cliffs on its S and E faces; scree pocket (0-26,26-50) +1 to +3 m",
+   "mood": "Bare rock, dead trees, wind; brigands on the shelf; the hidden Greyfell cleft under the tor."
+  },
+  {
+   "id": "ashvane_rise",
+   "name": "Ashvane Keep and its approach",
+   "bounds": {
+    "x0": 3200,
+    "y0": 0,
+    "x1": 6016,
+    "y1": 3072,
+    "tiles": [
+     50,
+     0,
+     94,
+     48
+    ]
+   },
+   "levelBand": "8-10",
+   "elevation": "Plateau +4 m (y0-40) sloping down to +1 m at y48 (glacis); joins the ridge at the postern",
+   "mood": "The renegades' stronghold on the rise; banners, braziers, patrols on the glacis."
+  },
+  {
+   "id": "burnt_steadings",
+   "name": "Burnt Steadings",
+   "bounds": {
+    "x0": 6016,
+    "y0": 0,
+    "x1": 9152,
+    "y1": 3072,
+    "tiles": [
+     94,
+     0,
+     143,
+     48
+    ]
+   },
+   "levelBand": "8-9",
+   "elevation": "+1.5 to +2.5 m, gentle slope down to the river",
+   "mood": "Torched farmsteads, fences, blackened beams; renegade foraging parties. The Desert portal lands at the empty Miller's Stead in the north-east corner."
+  }
+ ],
+ "river": {
+  "name": "Mistwater",
+  "widthCm": 320,
+  "centreline": [
+   [
+    0,
+    4736
+   ],
+   [
+    896,
+    4864
+   ],
+   [
+    1792,
+    4608
+   ],
+   [
+    2688,
+    4224
+   ],
+   [
+    3584,
+    4096
+   ],
+   [
+    4480,
+    3840
+   ],
+   [
+    5376,
+    3456
+   ],
+   [
+    6272,
+    2944
+   ],
+   [
+    7168,
+    2688
+   ],
+   [
+    8064,
+    2304
+   ],
+   [
+    9152,
+    1920
+   ]
+  ],
+  "crossings": [
+   {
+    "id": "stone_bridge",
+    "kind": "humped stone bridge (3.84 m)",
+    "centre": [
+     3584,
+     4096
+    ],
+    "axis": "N-S",
+    "span": [
+     [
+      3584,
+      3904
+     ],
+     [
+      3584,
+      4288
+     ]
+    ]
+   },
+   {
+    "id": "plank_footbridge",
+    "kind": "plank footbridge",
+    "centre": [
+     6912,
+     2752
+    ],
+    "axis": "N-S",
+    "span": [
+     [
+      6912,
+      2560
+     ],
+     [
+      6912,
+      2944
+     ]
+    ]
+   }
+  ]
+ },
+ "roads": [
+  {
+   "id": "road_main_south",
+   "kind": "road",
+   "name": "Warden's Road (portal to outpost)",
+   "widthCm": 64,
+   "points": [
+    [
+     5120,
+     9152
+    ],
+    [
+     5120,
+     8832
+    ],
+    [
+     5120,
+     8192
+    ],
+    [
+     4608,
+     7680
+    ],
+    [
+     4096,
+     7168
+    ]
+   ]
+  },
+  {
+   "id": "road_outpost",
+   "kind": "road",
+   "name": "Outpost street",
+   "widthCm": 64,
+   "points": [
+    [
+     4096,
+     7168
+    ],
+    [
+     3200,
+     7168
+    ],
+    [
+     3200,
+     6400
+    ]
+   ]
+  },
+  {
+   "id": "road_main_north",
+   "kind": "road",
+   "name": "Warden's Road (outpost to keep)",
+   "widthCm": 64,
+   "points": [
+    [
+     3200,
+     6400
+    ],
+    [
+     3328,
+     5760
+    ],
+    [
+     3456,
+     5120
+    ],
+    [
+     3584,
+     4480
+    ],
+    [
+     3584,
+     4288
+    ],
+    [
+     3584,
+     3904
+    ],
+    [
+     3712,
+     3328
+    ],
+    [
+     3968,
+     2816
+    ],
+    [
+     4352,
+     2432
+    ],
+    [
+     4608,
+     2304
+    ],
+    [
+     4608,
+     2176
+    ]
+   ]
+  },
+  {
+   "id": "road_barrow",
+   "kind": "road",
+   "name": "Barrow Road",
+   "widthCm": 64,
+   "points": [
+    [
+     5120,
+     8192
+    ],
+    [
+     5888,
+     7808
+    ],
+    [
+     6528,
+     7296
+    ],
+    [
+     6912,
+     6528
+    ],
+    [
+     7040,
+     5632
+    ],
+    [
+     7168,
+     4864
+    ]
+   ]
+  },
+  {
+   "id": "path_barrow_footbridge",
+   "kind": "track",
+   "name": "Barrow to footbridge",
+   "widthCm": 32,
+   "points": [
+    [
+     7168,
+     4864
+    ],
+    [
+     7040,
+     3968
+    ],
+    [
+     6912,
+     3328
+    ],
+    [
+     6912,
+     2944
+    ],
+    [
+     6912,
+     2560
+    ],
+    [
+     7168,
+     1920
+    ],
+    [
+     7424,
+     1408
+    ]
+   ]
+  },
+  {
+   "id": "path_steadings_keep",
+   "kind": "track",
+   "name": "Steadings to keep gate",
+   "widthCm": 32,
+   "points": [
+    [
+     7424,
+     1408
+    ],
+    [
+     6656,
+     1408
+    ],
+    [
+     6144,
+     1920
+    ],
+    [
+     5632,
+     2432
+    ],
+    [
+     4864,
+     2432
+    ],
+    [
+     4608,
+     2304
+    ]
+   ]
+  },
+  {
+   "id": "track_west",
+   "kind": "track",
+   "name": "West track (Shepherd's Hollow)",
+   "widthCm": 32,
+   "points": [
+    [
+     4608,
+     7680
+    ],
+    [
+     3584,
+     8320
+    ],
+    [
+     2560,
+     8576
+    ],
+    [
+     1536,
+     8576
+    ],
+    [
+     896,
+     7936
+    ]
+   ]
+  },
+  {
+   "id": "track_highland",
+   "kind": "track",
+   "name": "Highland path (bridge to postern)",
+   "widthCm": 32,
+   "points": [
+    [
+     3584,
+     3904
+    ],
+    [
+     3072,
+     3712
+    ],
+    [
+     2560,
+     3456
+    ],
+    [
+     2176,
+     3072
+    ],
+    [
+     1920,
+     2560
+    ],
+    [
+     2048,
+     2048
+    ],
+    [
+     2432,
+     1664
+    ],
+    [
+     2944,
+     1408
+    ],
+    [
+     3200,
+     1280
+    ]
+   ]
+  },
+  {
+   "id": "trail_thornwood_a",
+   "kind": "trail",
+   "name": "Game trail to Sallow's camp",
+   "widthCm": 32,
+   "points": [
+    [
+     6528,
+     7296
+    ],
+    [
+     7168,
+     7168
+    ],
+    [
+     7424,
+     7040
+    ]
+   ]
+  },
+  {
+   "id": "trail_thornwood_b",
+   "kind": "trail",
+   "name": "Game trail to Deadfall",
+   "widthCm": 32,
+   "points": [
+    [
+     5888,
+     7808
+    ],
+    [
+     6656,
+     8192
+    ],
+    [
+     7424,
+     8576
+    ],
+    [
+     7872,
+     8704
+    ]
+   ]
+  },
+  {
+   "id": "trail_steadings",
+   "kind": "trail",
+   "name": "Cart track to the foragers",
+   "widthCm": 32,
+   "points": [
+    [
+     7424,
+     1408
+    ],
+    [
+     7296,
+     1088
+    ],
+    [
+     7232,
+     896
+    ]
+   ]
+  },
+  {
+   "id": "track_landing",
+   "kind": "track",
+   "name": "River track (Desert landing to the footbridge)",
+   "widthCm": 32,
+   "points": [
+    [
+     8640,
+     640
+    ],
+    [
+     8576,
+     1024
+    ],
+    [
+     8192,
+     1536
+    ],
+    [
+     7680,
+     1920
+    ],
+    [
+     7296,
+     2304
+    ],
+    [
+     6912,
+     2560
+    ]
+   ]
+  }
+ ],
+ "portalsAndEntries": [
+  {
+   "id": "portal_to_grasslands",
+   "type": "portal",
+   "x": 5120,
+   "y": 8896,
+   "targetZone": "grasslands",
+   "targetEntry": "entry_from_eldmoor",
+   "label": "Grasslands",
+   "marker": "rune-stone, visible"
+  },
+  {
+   "id": "entry_from_grasslands",
+   "type": "zone_entry",
+   "x": 5120,
+   "y": 8448,
+   "fromZone": "grasslands",
+   "label": "From Grasslands"
+  },
+  {
+   "id": "portal_to_desert",
+   "type": "portal",
+   "x": 8896,
+   "y": 512,
+   "targetZone": "desert",
+   "targetEntry": "entry_from_eldmoor",
+   "label": "Scorched Desert",
+   "marker": "rune-stone, visible; in the yard of the ruined Miller's Stead"
+  },
+  {
+   "id": "entry_from_desert",
+   "type": "zone_entry",
+   "x": 8640,
+   "y": 640,
+   "fromZone": "desert",
+   "label": "From Scorched Desert"
+  },
+  {
+   "id": "hidden_portal_greyfell",
+   "type": "portal",
+   "x": 384,
+   "y": 1664,
+   "targetZone": "cave_dungeon",
+   "targetEntry": "entry_from_eldmoor",
+   "label": "(unmarked)",
+   "marker": "hidden variant: no rune-stone, no glow; trigger inside the cleft",
+   "phase": 2
+  },
+  {
+   "id": "entry_from_greyfell",
+   "type": "zone_entry",
+   "x": 448,
+   "y": 1920,
+   "fromZone": "cave_dungeon",
+   "label": "From Greyfell Cave (Phase 2)",
+   "phase": 2
+  },
+  {
+   "id": "entry_from_greyfell_lair_exit",
+   "type": "zone_entry",
+   "x": 896,
+   "y": 2944,
+   "fromZone": "cave_dungeon",
+   "label": "Greyfell lair exit (optional, Phase 2)",
+   "phase": 2
+  }
+ ],
+ "playerStarts": [
+  {
+   "id": "player_spawn_grasslands_v2_0",
+   "x": 4992,
+   "y": 8384
+  },
+  {
+   "id": "player_spawn_grasslands_v2_1",
+   "x": 5248,
+   "y": 8384
+  },
+  {
+   "id": "player_spawn_grasslands_v2_2",
+   "x": 4992,
+   "y": 8640
+  },
+  {
+   "id": "player_spawn_grasslands_v2_3",
+   "x": 5248,
+   "y": 8640
+  }
+ ],
+ "grasslandsSide": {
+  "portal": {
+   "id": "portal_to_eldmoor",
+   "x": 2048,
+   "y": 96,
+   "edge": "north",
+   "note": "at the north end of the town's N-S road; the Desert portal is on the east edge at (4000,864)"
+  },
+  "entry": {
+   "id": "entry_from_eldmoor",
+   "x": 2048,
+   "y": 380,
+   "note": "on the road between the two northern houses"
+  }
+ },
+ "desertSide": {
+  "portal": {
+   "id": "portal_to_eldmoor",
+   "x": 3968,
+   "y": 864,
+   "edge": "east",
+   "note": "at the east end of the Desert's E-W road; its Grasslands portal (96,864) and entry (480,864) are on the west edge, no clash; a small rock stands near (4000,820) and may need nudging"
+  },
+  "entry": {
+   "id": "entry_from_eldmoor",
+   "x": 3616,
+   "y": 864,
+   "note": "on the road, 3.5 m west of the portal"
+  }
+ },
+ "desertLanding": {
+  "name": "Miller's Stead (Desert landing)",
+  "ruin": {
+   "x0": 8320,
+   "y0": 64,
+   "x1": 8704,
+   "y1": 384,
+   "tiles": [
+    130,
+    1,
+    136,
+    6
+   ]
+  },
+  "signpost": {
+   "tile": [
+    133,
+    12
+   ],
+   "cm": [
+    8512,
+    768
+   ]
+  },
+  "safeRadiusM": 12,
+  "note": "a burnt, empty farmstead at the quiet north-east corner; nothing spawns or patrols within 12 m of the entry"
+ },
+ "bind": {
+  "tile": [
+   48,
+   110
+  ],
+  "cm": [
+   3072,
+   7040
+  ],
+  "note": "bind stone (rune-stone variant, no portal trigger) beside the well; respawn and zones.json defaultSpawn at (50,112) = (3200,7168) cm"
+ },
+ "guardPosts": [
+  {
+   "npc": "npc_harrow_guard_tam",
+   "kind": "gate post",
+   "post": [
+    4160,
+    7104
+   ],
+   "path": null,
+   "note": "stands outside the east gate by its brazier; later: engages anything hostile that comes within 10 tiles of the gate, fights in the gateway, leashes to the post"
+  },
+  {
+   "npc": "npc_harrow_guard_iselle",
+   "kind": "gate post",
+   "post": [
+    3264,
+    6528
+   ],
+   "path": null,
+   "note": "inside the north gate by its brazier; same rule"
+  },
+  {
+   "npc": "npc_harrow_guard_orrin",
+   "kind": "wall patrol",
+   "post": [
+    2432,
+    7104
+   ],
+   "path": [
+    [
+     2432,
+     6656
+    ],
+    [
+     2432,
+     7680
+    ]
+   ],
+   "note": "walks the inside of the west palisade, 20 s each way; later: converges on either gate"
+  },
+  {
+   "npc": "npc_harrow_guard_wyn",
+   "kind": "wall patrol",
+   "post": [
+    2944,
+    7808
+   ],
+   "path": [
+    [
+     2560,
+     7808
+    ],
+    [
+     3840,
+     7808
+    ]
+   ],
+   "note": "walks the inside of the south palisade; same"
+  },
+  {
+   "npc": "npc_harrow_captain",
+   "kind": "command post",
+   "post": [
+    3328,
+    7232
+   ],
+   "path": null,
+   "note": "by the well at the centre, weapon rack beside her; later: joins any fight inside the stakes"
+  }
+ ],
+ "thickets": [
+  {
+   "id": "TH1",
+   "name": "Sallow's ring",
+   "kind": "ring",
+   "centre": [
+    7680,
+    6912
+   ],
+   "rx": 7,
+   "ry": 6,
+   "note": "the game trail ends at the gap; pull lane runs west down the trail",
+   "gap": {
+    "centre": [
+     7296,
+     7040
+    ],
+    "widthCm": 192,
+    "facing": "west"
+   },
+   "rxCm": 448,
+   "ryCm": 384
+  },
+  {
+   "id": "TH2",
+   "name": "Deadfall wall",
+   "kind": "ring",
+   "centre": [
+    8320,
+    8704
+   ],
+   "rx": 7,
+   "ry": 6,
+   "note": "clipped by the zone edge; the hollow is a dead end",
+   "gap": {
+    "centre": [
+     7872,
+     8704
+    ],
+    "widthCm": 192,
+    "facing": "west"
+   },
+   "rxCm": 448,
+   "ryCm": 384
+  },
+  {
+   "id": "TH3",
+   "name": "Wolf den ring (P1)",
+   "kind": "ring",
+   "centre": [
+    6400,
+    6400
+   ],
+   "rx": 6,
+   "ry": 5,
+   "note": "gap faces the Barrow Road; empty until Wave 6",
+   "gap": {
+    "centre": [
+     6784,
+     6400
+    ],
+    "widthCm": 192,
+    "facing": "east"
+   },
+   "rxCm": 384,
+   "ryCm": 320
+  },
+  {
+   "id": "TH4",
+   "name": "Wood's west edge",
+   "kind": "belt",
+   "width_tiles": 2,
+   "note": "an unbroken wall of thicket between the vale/downs and the wood; the only ways in are the Barrow Road and the trails",
+   "points": [
+    [
+     5952,
+     5376
+    ],
+    [
+     5952,
+     7424
+    ]
+   ],
+   "gaps": []
+  },
+  {
+   "id": "TH5",
+   "name": "Wood's north edge",
+   "kind": "belt",
+   "width_tiles": 2,
+   "note": "separates Thornwood from Kingsbarrow",
+   "points": [
+    [
+     6144,
+     5440
+    ],
+    [
+     9152,
+     5440
+    ]
+   ],
+   "gaps": [
+    {
+     "centre": [
+      7040,
+      5440
+     ],
+     "widthCm": 320,
+     "note": "the Barrow Road passes"
+    }
+   ]
+  },
+  {
+   "id": "TH6",
+   "name": "Trail corridors",
+   "kind": "corridor",
+   "note": "thicket clusters 2 tiles either side of both game trails (trail_thornwood_a and _b), broken every 6-8 tiles by ferns and logs, so each trail is a green corridor and each clearing a reveal; the road itself is never walled"
+  }
+ ],
+ "fires": [
+  {
+   "id": "F_C1",
+   "at": "C1 Wood's-Edge Bandits",
+   "tile": [
+    98,
+    128
+   ],
+   "cm": [
+    6272,
+    8192
+   ],
+   "kind": "campfire",
+   "beacon": true,
+   "note": "the first beacon: visible from the portal 21 tiles (13.5 m) away"
+  },
+  {
+   "id": "F_C3",
+   "at": "C3 Mistwater Toll",
+   "tile": [
+    48,
+    72
+   ],
+   "cm": [
+    3072,
+    4608
+   ],
+   "kind": "campfire",
+   "beacon": true,
+   "note": "the toll fire on the south bank, seen from the road bend"
+  },
+  {
+   "id": "F_C4",
+   "at": "C4 Footbridge Poachers",
+   "tile": [
+    98,
+    54
+   ],
+   "cm": [
+    6272,
+    3456
+   ],
+   "kind": "cooking fire",
+   "beacon": true,
+   "note": "seen from the barrow track and from the river track"
+  },
+  {
+   "id": "F_C5",
+   "at": "C5 Sallow's Camp",
+   "tile": [
+    120,
+    108
+   ],
+   "cm": [
+    7680,
+    6912
+   ],
+   "kind": "campfire (large)",
+   "beacon": true,
+   "note": "the glow leaks over thicket TH1; the thicket hides the people, not the light"
+  },
+  {
+   "id": "F_C7",
+   "at": "C7 Kingsbarrow Vigil",
+   "tile": [
+    118,
+    66
+   ],
+   "cm": [
+    7552,
+    4224
+   ],
+   "kind": "altar brazier + candles",
+   "beacon": true,
+   "note": "cold blue-white cult light, not orange: reads as 'something wrong' from the road end"
+  },
+  {
+   "id": "F_C10",
+   "at": "C10 Steadings Foragers",
+   "tile": [
+    112,
+    10
+   ],
+   "cm": [
+    7168,
+    640
+   ],
+   "kind": "cooking fire",
+   "beacon": true,
+   "note": "the warning glow seen from the Desert landing (16.6 m)"
+  },
+  {
+   "id": "F_KEEP_GATE",
+   "at": "Ashvane Keep gatehouse",
+   "tile": [
+    72,
+    35
+   ],
+   "cm": [
+    4608,
+    2240
+   ],
+   "kind": "two braziers",
+   "beacon": true,
+   "note": "seen from the bridge's north end up the glacis"
+  },
+  {
+   "id": "F_KEEP_LANTERN",
+   "at": "Lantern Tower (NE tower top)",
+   "tile": [
+    94,
+    4
+   ],
+   "cm": [
+    6016,
+    256
+   ],
+   "kind": "brazier",
+   "beacon": true,
+   "note": "the zone landmark; readable from the Steadings, the footbridge and the river track"
+  },
+  {
+   "id": "F_KEEP_BAILEY",
+   "at": "A1 outer bailey",
+   "tile": [
+    60,
+    29
+   ],
+   "cm": [
+    3840,
+    1856
+   ],
+   "kind": "campfire",
+   "beacon": false,
+   "note": "inside the walls: the curtain wall blocks it"
+  },
+  {
+   "id": "F_KEEP_YARD",
+   "at": "A2 courtyard",
+   "tile": [
+    76,
+    22
+   ],
+   "cm": [
+    4864,
+    1408
+   ],
+   "kind": "campfire",
+   "beacon": false,
+   "note": "inside the walls"
+  },
+  {
+   "id": "F_KEEP_HALL",
+   "at": "A4 great hall",
+   "tile": [
+    76,
+    5
+   ],
+   "cm": [
+    4864,
+    320
+   ],
+   "kind": "fireplace",
+   "beacon": false,
+   "note": "interior"
+  },
+  {
+   "id": "F_R7",
+   "at": "R7 renegade patrol",
+   "kind": "hand lantern (moving)",
+   "beacon": true,
+   "note": "a moving glow on the glacis and the river track: the patrol announces itself"
+  },
+  {
+   "id": "F_OUTPOST",
+   "at": "Harrow's Rest",
+   "tile": [
+    50,
+    112
+   ],
+   "cm": [
+    3200,
+    7168
+   ],
+   "kind": "5 lamp posts, 2 gate braziers, 1 campfire",
+   "beacon": true,
+   "note": "the safe glow: seen from the portal road and from the bridge"
+  }
+ ],
+ "noFire": [
+  {
+   "where": "C2 Shepherd's Hollow",
+   "why": "cold camp: bandits hiding in a ruined hut; the archer on the wall is the surprise"
+  },
+  {
+   "where": "C6 Deadfall Hideout",
+   "why": "cold camp: sleeping outlaws in a dark hollow behind thicket TH2"
+  },
+  {
+   "where": "C8 Hask's Hold",
+   "why": "cold camp: brigands do not light fires under the ridge; only R6 and the path lead there"
+  },
+  {
+   "where": "C9 Ridge Cairn",
+   "why": "cold camp: lookouts show no light"
+  },
+  {
+   "where": "R8 highland scavenger",
+   "why": "carries no lantern"
+  },
+  {
+   "where": "The whole of the Greyfell Highlands west of x 34 and the scree pocket",
+   "why": "no fire, torch, lamp or glowing prop of any kind: the nearest beacon to the cleft is the Mistwater Toll fire at about 39 m across the river, then the keep gate brazier at about 42 m (the bailey campfire at 35 m is inside the curtain wall); all far beyond the 24 m glow range, and the tor's cliff and the ridge stand between"
+  }
+ ],
+ "fireGlowRangeM": 24,
+ "outpost": {
+  "id": "harrows_rest",
+  "name": "Harrow's Rest (outpost)",
+  "palisade": {
+   "x0": 2304,
+   "y0": 6400,
+   "x1": 4096,
+   "y1": 7936,
+   "tiles": [
+    36,
+    100,
+    64,
+    124
+   ]
+  },
+  "knollCentre": [
+   3200,
+   7168
+  ],
+  "knollHeightM": 4,
+  "gates": [
+   {
+    "id": "east_gate",
+    "side": "east",
+    "x": 4096,
+    "y0": 7040,
+    "y1": 7296
+   },
+   {
+    "id": "north_gate",
+    "side": "north",
+    "y": 6400,
+    "x0": 3072,
+    "x1": 3328
+   }
+  ],
+  "buildings": [
+   {
+    "id": "tavern",
+    "name": "The Broken Spur (tavern kit)",
+    "kit": "tavern",
+    "footprint": {
+     "x0": 2432,
+     "y0": 6528,
+     "x1": 3008,
+     "y1": 6976,
+     "tiles": [
+      38,
+      102,
+      47,
+      109
+     ]
+    },
+    "note": "two-storey kit, only the ground floor is used; roof hides inside"
+   },
+   {
+    "id": "trader_house",
+    "name": "Trader's house (town kit)",
+    "kit": "town",
+    "footprint": {
+     "x0": 3328,
+     "y0": 6528,
+     "x1": 3840,
+     "y1": 6912,
+     "tiles": [
+      52,
+      102,
+      60,
+      108
+     ]
+    },
+    "note": "timber walls, thatch, one door on the south side"
+   },
+   {
+    "id": "smithy",
+    "name": "Smithy lean-to",
+    "kit": "town",
+    "footprint": {
+     "x0": 2432,
+     "y0": 7296,
+     "x1": 2880,
+     "y1": 7680,
+     "tiles": [
+      38,
+      114,
+      45,
+      120
+     ]
+    },
+    "note": "open south side; forge + anvil are an art gap"
+   },
+   {
+    "id": "provisioner_stall",
+    "name": "Provisioner's stall",
+    "kit": "town",
+    "footprint": {
+     "x0": 3136,
+     "y0": 7424,
+     "x1": 3264,
+     "y1": 7552,
+     "tiles": [
+      49,
+      116,
+      51,
+      118
+     ]
+    },
+    "note": "market stall"
+   },
+   {
+    "id": "captain_tent",
+    "name": "Captain's bell tent",
+    "kit": "camp",
+    "footprint": {
+     "x0": 3584,
+     "y0": 7104,
+     "x1": 3776,
+     "y1": 7296,
+     "tiles": [
+      56,
+      111,
+      59,
+      114
+     ]
+    },
+    "note": ""
+   },
+   {
+    "id": "guard_tent_a",
+    "name": "Guard A-frame tent",
+    "kit": "camp",
+    "footprint": {
+     "x0": 3648,
+     "y0": 7488,
+     "x1": 3776,
+     "y1": 7616,
+     "tiles": [
+      57,
+      117,
+      59,
+      119
+     ]
+    },
+    "note": ""
+   },
+   {
+    "id": "guard_tent_b",
+    "name": "Guard A-frame tent",
+    "kit": "camp",
+    "footprint": {
+     "x0": 3840,
+     "y0": 7488,
+     "x1": 3968,
+     "y1": 7616,
+     "tiles": [
+      60,
+      117,
+      62,
+      119
+     ]
+    },
+    "note": ""
+   }
+  ],
+  "props": [
+   {
+    "kind": "well",
+    "tile": [
+     50,
+     111
+    ],
+    "cm": [
+     3200,
+     7104
+    ],
+    "note": ""
+   },
+   {
+    "kind": "campfire",
+    "tile": [
+     56,
+     121
+    ],
+    "cm": [
+     3584,
+     7744
+    ],
+    "note": ""
+   },
+   {
+    "kind": "log_seat",
+    "tile": [
+     55,
+     122
+    ],
+    "cm": [
+     3520,
+     7808
+    ],
+    "note": ""
+   },
+   {
+    "kind": "log_seat",
+    "tile": [
+     58,
+     122
+    ],
+    "cm": [
+     3712,
+     7808
+    ],
+    "note": ""
+   },
+   {
+    "kind": "supply_pile",
+    "tile": [
+     61,
+     121
+    ],
+    "cm": [
+     3904,
+     7744
+    ],
+    "note": ""
+   },
+   {
+    "kind": "weapon_rack",
+    "tile": [
+     46,
+     115
+    ],
+    "cm": [
+     2944,
+     7360
+    ],
+    "note": ""
+   },
+   {
+    "kind": "lamp_post",
+    "tile": [
+     62,
+     109
+    ],
+    "cm": [
+     3968,
+     6976
+    ],
+    "note": ""
+   },
+   {
+    "kind": "lamp_post",
+    "tile": [
+     62,
+     115
+    ],
+    "cm": [
+     3968,
+     7360
+    ],
+    "note": ""
+   },
+   {
+    "kind": "lamp_post",
+    "tile": [
+     47,
+     101
+    ],
+    "cm": [
+     3008,
+     6464
+    ],
+    "note": ""
+   },
+   {
+    "kind": "lamp_post",
+    "tile": [
+     53,
+     101
+    ],
+    "cm": [
+     3392,
+     6464
+    ],
+    "note": ""
+   },
+   {
+    "kind": "lamp_post",
+    "tile": [
+     52,
+     110
+    ],
+    "cm": [
+     3328,
+     7040
+    ],
+    "note": ""
+   },
+   {
+    "kind": "signpost",
+    "tile": [
+     66,
+     115
+    ],
+    "cm": [
+     4224,
+     7360
+    ],
+    "note": ""
+   },
+   {
+    "kind": "brazier",
+    "tile": [
+     65,
+     109
+    ],
+    "cm": [
+     4160,
+     6976
+    ],
+    "note": "gate brazier, real light"
+   },
+   {
+    "kind": "brazier",
+    "tile": [
+     47,
+     99
+    ],
+    "cm": [
+     3008,
+     6336
+    ],
+    "note": "gate brazier, real light"
+   },
+   {
+    "kind": "bind_stone",
+    "tile": [
+     48,
+     110
+    ],
+    "cm": [
+     3072,
+     7040
+    ],
+    "note": "rune-stone variant without a portal trigger"
+   },
+   {
+    "kind": "barrel",
+    "tile": [
+     61,
+     104
+    ],
+    "cm": [
+     3904,
+     6656
+    ],
+    "note": ""
+   },
+   {
+    "kind": "crate",
+    "tile": [
+     61,
+     106
+    ],
+    "cm": [
+     3904,
+     6784
+    ],
+    "note": ""
+   },
+   {
+    "kind": "picket_fence",
+    "tile": [
+     38,
+     110
+    ],
+    "cm": [
+     2432,
+     7040
+    ],
+    "note": "6 sections along the tavern yard, y=110, x38-44"
+   }
+  ],
+  "npcs": [
+   {
+    "id": "npc_harrow_captain",
+    "name": "Captain Bessa Harrow",
+    "role": "Outpost Captain",
+    "futureVendor": "none (later: quests / bind)",
+    "hostility": "friendly",
+    "tile": [
+     52,
+     113
+    ],
+    "cm": [
+     3328,
+     7232
+    ],
+    "hail": "Harrow's Rest holds because nobody has told it to fall yet. Stay inside the stakes after dark, and don't cross the bridge alone."
+   },
+   {
+    "id": "npc_harrow_guard_tam",
+    "name": "Tam Pellow",
+    "role": "Guard, east gate",
+    "futureVendor": "none",
+    "hostility": "friendly",
+    "tile": [
+     65,
+     111
+    ],
+    "cm": [
+     4160,
+     7104
+    ],
+    "hail": "Road's yours as far as the bridge. Past the bridge, it's theirs."
+   },
+   {
+    "id": "npc_harrow_guard_iselle",
+    "name": "Iselle Dunmore",
+    "role": "Guard, north gate",
+    "futureVendor": "none",
+    "hostility": "friendly",
+    "tile": [
+     51,
+     102
+    ],
+    "cm": [
+     3264,
+     6528
+    ],
+    "hail": "Mind the mist in the vale. Things stand in it and don't move until you're close."
+   },
+   {
+    "id": "npc_harrow_guard_orrin",
+    "name": "Orrin Blackwater",
+    "role": "Guard, west wall",
+    "futureVendor": "none",
+    "hostility": "friendly",
+    "tile": [
+     38,
+     111
+    ],
+    "cm": [
+     2432,
+     7104
+    ],
+    "hail": "Some nights you can see the Lantern Tower's brazier from here, up on the keep. That's Vane's men laughing at us."
+   },
+   {
+    "id": "npc_harrow_guard_wyn",
+    "name": "Wyn Cotter",
+    "role": "Guard, south wall",
+    "futureVendor": "none",
+    "hostility": "friendly",
+    "tile": [
+     46,
+     122
+    ],
+    "cm": [
+     2944,
+     7808
+    ],
+    "hail": "Chased a brigand runner up under the ridge once. There's cold air coming out of the rocks under the tor, cold as a cellar. I didn't stay to learn why."
+   },
+   {
+    "id": "npc_harrow_smith",
+    "name": "Hedda Stroud",
+    "role": "Blacksmith",
+    "futureVendor": "weapons, repair",
+    "hostility": "friendly",
+    "tile": [
+     40,
+     117
+    ],
+    "cm": [
+     2560,
+     7488
+    ],
+    "hail": "Iron's dear this far from a town. Bring me back what the renegades drop and we'll talk."
+   },
+   {
+    "id": "npc_harrow_armourer",
+    "name": "Pol Garrick",
+    "role": "Armourer",
+    "futureVendor": "armour, shields",
+    "hostility": "friendly",
+    "tile": [
+     44,
+     117
+    ],
+    "cm": [
+     2816,
+     7488
+    ],
+    "hail": "Ashvane plate, if you can pry it off them. I can make it fit you."
+   },
+   {
+    "id": "npc_harrow_provisioner",
+    "name": "Mother Ada Quill",
+    "role": "Provisioner",
+    "futureVendor": "food, drink, bandages, torches",
+    "hostility": "friendly",
+    "tile": [
+     50,
+     119
+    ],
+    "cm": [
+     3200,
+     7616
+    ],
+    "hail": "Bread, salt pork, bandages. Nothing fancy, nothing poisoned, which is more than the cultists can say."
+   },
+   {
+    "id": "npc_harrow_trader",
+    "name": "Corwen Ashby",
+    "role": "General Trader",
+    "futureVendor": "general goods; buys anything",
+    "hostility": "friendly",
+    "tile": [
+     56,
+     105
+    ],
+    "cm": [
+     3584,
+     6720
+    ],
+    "hail": "I buy anything that isn't still bleeding. Barrow trinkets fetch the best price, if you're brave."
+   },
+   {
+    "id": "npc_harrow_innkeeper",
+    "name": "Maud Fenwick",
+    "role": "Innkeeper, The Broken Spur",
+    "futureVendor": "drink; later: room / bind",
+    "hostility": "friendly",
+    "tile": [
+     42,
+     106
+    ],
+    "cm": [
+     2688,
+     6784
+    ],
+    "hail": "A bed's a bed, even one this close to the vale. Don't track the mist in with you."
+   }
+  ]
+ },
+ "camps": [
+  {
+   "id": "C1",
+   "name": "Wood's-Edge Bandits",
+   "region": "southern_downs",
+   "centre": [
+    6272,
+    8192
+   ],
+   "centreTile": [
+    98,
+    128
+   ],
+   "levelBand": "4-5",
+   "spawnCount": 3,
+   "respawnMinutes": 6,
+   "npcs": [
+    {
+     "templateId": "bandit_cutpurse",
+     "count": 2
+    },
+    {
+     "templateId": "bandit_lookout",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "First camp out of the portal. Lookout stands on the road side at (95,126); pull him to the Barrow Road with a bow or spell, the two cutpurses stay put (social range 4 tiles). Add risk: R1 footpad walks past every ~90 s."
+  },
+  {
+   "id": "C2",
+   "name": "Shepherd's Hollow",
+   "region": "southern_downs",
+   "centre": [
+    512,
+    7296
+   ],
+   "centreTile": [
+    8,
+    114
+   ],
+   "levelBand": "4-5",
+   "spawnCount": 4,
+   "respawnMinutes": 6,
+   "npcs": [
+    {
+     "templateId": "bandit_cutpurse",
+     "count": 2
+    },
+    {
+     "templateId": "bandit_archer",
+     "count": 1
+    },
+    {
+     "templateId": "bandit_thug",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "A dip in the western downs with a ruined shepherd's hut (ruins set). The archer stands on the hut wall and sees the track end at (14,124): pull from behind the boulder at (14,118) to break her line of sight. Thug (lvl 5) is the boss; cutpurses run (flee at 20% hp) toward R2's track."
+  },
+  {
+   "id": "C3",
+   "name": "Mistwater Toll (ford camp)",
+   "region": "mistwater_vale",
+   "centre": [
+    3072,
+    4608
+   ],
+   "centreTile": [
+    48,
+    72
+   ],
+   "levelBand": "5-6",
+   "spawnCount": 4,
+   "respawnMinutes": 8,
+   "npcs": [
+    {
+     "templateId": "outlaw_footpad",
+     "count": 2
+    },
+    {
+     "templateId": "outlaw_bowman",
+     "count": 1
+    },
+    {
+     "templateId": "outlaw_ringleader",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "Outlaws 'taxing' the stone bridge from the south bank, 8 tiles west of the road. Pull single footpads from the road bend at (54,80); the ringleader and bowman are linked (pull as a pair). Fight on the road, not the bank: the mist pocket hides adds. R3 courier is the roaming add."
+  },
+  {
+   "id": "C4",
+   "name": "Footbridge Poachers",
+   "region": "mistwater_vale",
+   "centre": [
+    6272,
+    3456
+   ],
+   "centreTile": [
+    98,
+    54
+   ],
+   "levelBand": "5-6",
+   "spawnCount": 4,
+   "respawnMinutes": 8,
+   "npcs": [
+    {
+     "templateId": "poacher",
+     "count": 2
+    },
+    {
+     "templateId": "poacher_bowman",
+     "count": 1
+    },
+    {
+     "templateId": "poacher_houndmaster",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "South bank west of the plank footbridge. Approached from the barrow track at (108,52). The houndmaster (lvl 6) gets a hound when creatures arrive (placeholder: a second poacher). Chokepoint: the footbridge itself, single file. Do not fight on the north bank: R7 patrol crosses the river track at (112,32)."
+  },
+  {
+   "id": "C5",
+   "name": "Sallow's Camp (Poacher-King)",
+   "region": "thornwood",
+   "centre": [
+    7680,
+    6912
+   ],
+   "centreTile": [
+    120,
+    108
+   ],
+   "levelBand": "6-7",
+   "spawnCount": 5,
+   "respawnMinutes": 10,
+   "npcs": [
+    {
+     "templateId": "poacher",
+     "count": 2
+    },
+    {
+     "templateId": "poacher_bowman",
+     "count": 1
+    },
+    {
+     "templateId": "poacher_skinner",
+     "count": 1
+    },
+    {
+     "templateId": "poacher_captain / Merrik Sallow",
+     "count": 1
+    }
+   ],
+   "named": {
+    "name": "Merrik Sallow, the Poacher-King",
+    "level": 7,
+    "chance": 0.25,
+    "placeholder": "a poacher captain (6)",
+    "respawn_min": 20
+   },
+   "pullNotes": "Clearing ringed by thicket TH1 (blocks sight) and fallen logs, one 3-tile gap on the west at (114,110) where the game trail ends. From the trail you see only the fire glow; step into the gap to see the fire and the captain/Merrik with the two poachers (linked). The skinner at the racks on the north side is a single pull once you are in the gap. Bowman on a stump at (123,105) adds if you fight inside the ring: pull to the gap and fall back down the trail, where the thicket breaks his line of sight."
+  },
+  {
+   "id": "C6",
+   "name": "Deadfall Hideout",
+   "region": "thornwood",
+   "centre": [
+    8320,
+    8704
+   ],
+   "centreTile": [
+    130,
+    136
+   ],
+   "levelBand": "5-6",
+   "spawnCount": 4,
+   "respawnMinutes": 8,
+   "npcs": [
+    {
+     "templateId": "outlaw_footpad",
+     "count": 2
+    },
+    {
+     "templateId": "outlaw_bowman",
+     "count": 1
+    },
+    {
+     "templateId": "outlaw_ringleader",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "Dead-end hollow in the south-east corner under a fallen giant (dead tree + logs), walled by thicket TH2 with one 3-tile gap on the west at (123,136) where the trail ends. No fire: you see nothing until you are in the gap. Footpads sleep on bedrolls (slow to aggro: 6-tile range); the ringleader paces the gap and is the natural first pull. R4 tracker may wander in behind you."
+  },
+  {
+   "id": "C7",
+   "name": "Kingsbarrow Vigil (cultists)",
+   "region": "kingsbarrow",
+   "centre": [
+    7552,
+    4224
+   ],
+   "centreTile": [
+    118,
+    66
+   ],
+   "levelBand": "6-7",
+   "spawnCount": 5,
+   "respawnMinutes": 10,
+   "npcs": [
+    {
+     "templateId": "cultist_acolyte",
+     "count": 2
+    },
+    {
+     "templateId": "cultist_zealot",
+     "count": 1
+    },
+    {
+     "templateId": "cultist_bloodpriest",
+     "count": 1
+    },
+    {
+     "templateId": "barrow hierophant / Selwen Marr",
+     "count": 1
+    }
+   ],
+   "named": {
+    "name": "Hierophant Selwen Marr",
+    "level": 7,
+    "chance": 0.25,
+    "placeholder": "a barrow hierophant (6)",
+    "respawn_min": 20
+   },
+   "pullNotes": "Atop the mound among broken columns; the Barrow Road ends 8 tiles south. Acolytes kneel at the statue on the south edge (single pulls). The bloodpriest (caster, heals) stands with the hierophant at the altar stone: pull the pair through the half-arch at (114,70), which is a one-wide chokepoint. R5 procession (x2) circles the mound every ~3 min: watch the west face."
+  },
+  {
+   "id": "C8",
+   "name": "Hask's Hold (brigands)",
+   "region": "greyfell_highlands",
+   "centre": [
+    1792,
+    2432
+   ],
+   "centreTile": [
+    28,
+    38
+   ],
+   "levelBand": "7-8",
+   "spawnCount": 5,
+   "respawnMinutes": 12,
+   "npcs": [
+    {
+     "templateId": "brigand",
+     "count": 2
+    },
+    {
+     "templateId": "brigand_crossbowman",
+     "count": 1
+    },
+    {
+     "templateId": "brigand_bruiser",
+     "count": 1
+    },
+    {
+     "templateId": "brigand chief / Grimald Hask",
+     "count": 1
+    }
+   ],
+   "named": {
+    "name": "Grimald Hask",
+    "level": 8,
+    "chance": 0.3,
+    "placeholder": "a brigand chief (7)",
+    "respawn_min": 25
+   },
+   "pullNotes": "A shelf under the ridge scarp, reached by the highland path from (34,48). Crossbowman on the boulder at (25,34) covers the path: pull him first from the bend at (30,44) (line of sight is broken by the rock at (31,42)). Brigands and bruiser are linked with the chief; fight on the path below the shelf so the scarp blocks the lookouts' sight."
+  },
+  {
+   "id": "C9",
+   "name": "Ridge Cairn (lookouts)",
+   "region": "greyfell_highlands",
+   "centre": [
+    2688,
+    1536
+   ],
+   "centreTile": [
+    42,
+    24
+   ],
+   "levelBand": "7-8",
+   "spawnCount": 3,
+   "respawnMinutes": 12,
+   "npcs": [
+    {
+     "templateId": "brigand_lookout",
+     "count": 2
+    },
+    {
+     "templateId": "brigand_crossbowman",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "Cairn on the ridge top beside the path to the postern. Lookouts have a long aggro range (10 tiles) but no linking: pull them one by one from (36,28). Killing them opens the quiet way to the Postern Tower chamber (A6)."
+  },
+  {
+   "id": "C10",
+   "name": "Steadings Foragers",
+   "region": "burnt_steadings",
+   "centre": [
+    7168,
+    640
+   ],
+   "centreTile": [
+    112,
+    10
+   ],
+   "levelBand": "8-9",
+   "spawnCount": 4,
+   "respawnMinutes": 12,
+   "npcs": [
+    {
+     "templateId": "renegade_footman",
+     "count": 2
+    },
+    {
+     "templateId": "renegade_archer",
+     "count": 1
+    },
+    {
+     "templateId": "renegade_sergeant",
+     "count": 1
+    }
+   ],
+   "named": null,
+   "pullNotes": "Renegades loading a cart by the cooking fire in a burnt farmyard (picket fence, one gate on the south at (113,14), the cart track from (116,22)). Footmen are linked with the sergeant (lvl 9); the archer stands apart at the well (108,7) and is the single pull. Fight at the fence gate. R7 patrol passes (116,22) every ~2 min: the last pull before the keep. 16.6 m from the Desert landing, so only its fire glow is visible from there."
+  }
+ ],
+ "placeholderCamps": [
+  {
+   "id": "P1",
+   "name": "Thornwood wolf den (placeholder)",
+   "region": "thornwood",
+   "centre": [
+    6400,
+    6400
+   ],
+   "levelBand": "5-6",
+   "spawnCount": 3,
+   "note": "Wave 6 creatures; until then leave empty (or 3 poachers)."
+  },
+  {
+   "id": "P2",
+   "name": "Barrow crypt spiders (placeholder)",
+   "region": "kingsbarrow",
+   "centre": [
+    8320,
+    3712
+   ],
+   "levelBand": "7",
+   "spawnCount": 3,
+   "note": "Wave 6; the crypt hollow is a -1 m dip with rubble and a broken statue."
+  }
+ ],
+ "roamers": [
+  {
+   "id": "R1",
+   "name": "a wayside footpad",
+   "region": "southern_downs",
+   "levelBand": "4",
+   "spawnCount": 1,
+   "respawnMinutes": 8,
+   "path": [
+    [
+     5504,
+     8320
+    ],
+    [
+     5888,
+     7808
+    ],
+    [
+     6528,
+     7296
+    ],
+    [
+     5888,
+     7808
+    ]
+   ],
+   "note": "walks the Barrow Road between the fork and the wood's edge, past C1"
+  },
+  {
+   "id": "R2",
+   "name": "a bandit scout",
+   "region": "southern_downs",
+   "levelBand": "5",
+   "spawnCount": 1,
+   "respawnMinutes": 8,
+   "path": [
+    [
+     1280,
+     8832
+    ],
+    [
+     640,
+     8192
+    ],
+    [
+     384,
+     7040
+    ]
+   ],
+   "note": "far west track, back and forth; never within 12 m of the palisade"
+  },
+  {
+   "id": "R3",
+   "name": "an outlaw courier",
+   "region": "mistwater_vale",
+   "levelBand": "5-6",
+   "spawnCount": 1,
+   "respawnMinutes": 10,
+   "path": [
+    [
+     3392,
+     5120
+    ],
+    [
+     3584,
+     4480
+    ],
+    [
+     4480,
+     4224
+    ],
+    [
+     3584,
+     4480
+    ]
+   ],
+   "note": "south bank only, never crosses the bridge"
+  },
+  {
+   "id": "R4",
+   "name": "a poacher tracker",
+   "region": "thornwood",
+   "levelBand": "6",
+   "spawnCount": 1,
+   "respawnMinutes": 10,
+   "path": [
+    [
+     6528,
+     7296
+    ],
+    [
+     7168,
+     7168
+    ],
+    [
+     7296,
+     7040
+    ],
+    [
+     6656,
+     8192
+    ],
+    [
+     7424,
+     8576
+    ]
+   ],
+   "note": "walks both game trails, never enters the clearings"
+  },
+  {
+   "id": "R5",
+   "name": "a cultist procession",
+   "region": "kingsbarrow",
+   "levelBand": "7",
+   "spawnCount": 2,
+   "respawnMinutes": 12,
+   "path": [
+    [
+     6784,
+     5120
+    ],
+    [
+     8320,
+     5248
+    ],
+    [
+     8576,
+     3712
+    ],
+    [
+     6912,
+     3584
+    ]
+   ],
+   "note": "pair, loop around the mound, chanting"
+  },
+  {
+   "id": "R6",
+   "name": "a brigand runner",
+   "region": "greyfell_highlands",
+   "levelBand": "7-8",
+   "spawnCount": 1,
+   "respawnMinutes": 12,
+   "path": [
+    [
+     2560,
+     3456
+    ],
+    [
+     1920,
+     2560
+    ],
+    [
+     2432,
+     1664
+    ],
+    [
+     3072,
+     1408
+    ]
+   ],
+   "note": "highland path, hold to postern"
+  },
+  {
+   "id": "R7",
+   "name": "a renegade patrol",
+   "region": "ashvane_rise",
+   "levelBand": "8-9",
+   "spawnCount": 2,
+   "respawnMinutes": 15,
+   "path": [
+    [
+     7168,
+     2048
+    ],
+    [
+     7424,
+     1408
+    ],
+    [
+     6656,
+     1408
+    ],
+    [
+     6400,
+     2048
+    ],
+    [
+     5760,
+     2624
+    ],
+    [
+     4864,
+     2560
+    ]
+   ],
+   "note": "pair with a lantern (a moving light), crosses the river track above the footbridge and walks to the keep gate"
+  },
+  {
+   "id": "R8",
+   "name": "a highland scavenger",
+   "region": "greyfell_highlands",
+   "levelBand": "7",
+   "spawnCount": 1,
+   "respawnMinutes": 12,
+   "path": [
+    [
+     640,
+     3328
+    ],
+    [
+     1280,
+     2816
+    ],
+    [
+     1792,
+     3200
+    ],
+    [
+     1024,
+     3584
+    ]
+   ],
+   "note": "picks over the scree; the only reason to wander below the tor"
+  }
+ ],
+ "castle": {
+  "id": "ashvane_keep",
+  "name": "Ashvane Keep",
+  "outerWall": {
+   "x0": 3200,
+   "y0": 256,
+   "x1": 6016,
+   "y1": 2176,
+   "tiles": [
+    50,
+    4,
+    94,
+    34
+   ]
+  },
+  "riseM": 4,
+  "towers": [
+   {
+    "id": "T_SW",
+    "tile": [
+     50,
+     34
+    ],
+    "cm": [
+     3200,
+     2176
+    ],
+    "room": null
+   },
+   {
+    "id": "T_SE",
+    "tile": [
+     94,
+     34
+    ],
+    "cm": [
+     6016,
+     2176
+    ],
+    "room": null
+   },
+   {
+    "id": "T_NW",
+    "tile": [
+     50,
+     4
+    ],
+    "cm": [
+     3200,
+     256
+    ],
+    "room": "Armoury"
+   },
+   {
+    "id": "T_NE",
+    "tile": [
+     94,
+     4
+    ],
+    "cm": [
+     6016,
+     256
+    ],
+    "room": "Lantern Tower"
+   },
+   {
+    "id": "T_W",
+    "tile": [
+     50,
+     20
+    ],
+    "cm": [
+     3200,
+     1280
+    ],
+    "room": "Postern Tower"
+   },
+   {
+    "id": "T_GH_W",
+    "tile": [
+     68,
+     34
+    ],
+    "cm": [
+     4352,
+     2176
+    ],
+    "room": null
+   },
+   {
+    "id": "T_GH_E",
+    "tile": [
+     76,
+     34
+    ],
+    "cm": [
+     4864,
+     2176
+    ],
+    "room": null
+   }
+  ],
+  "gatehouse": {
+   "centre": [
+    4608,
+    2176
+   ],
+   "openingX": [
+    4480,
+    4736
+   ],
+   "kit": "keep gatehouse, portcullis raised (walk-through)"
+  },
+  "innerWall": {
+   "y": 1536,
+   "x0": 3264,
+   "x1": 5952,
+   "gateX": [
+    4480,
+    4736
+   ],
+   "note": "second chokepoint; a 128 cm door module or a second gatehouse"
+  },
+  "postern": {
+   "tile": [
+    50,
+    20
+   ],
+   "cm": [
+    3200,
+    1280
+   ],
+   "note": "door in the postern tower's west face, reached by the highland path; opens into the muster yard"
+  },
+  "undercroftRamp": {
+   "top": {
+    "tile": [
+     76,
+     6
+    ],
+    "cm": [
+     4864,
+     384
+    ]
+   },
+   "foot": {
+    "tile": [
+     66,
+     6
+    ],
+    "cm": [
+     4224,
+     384
+    ]
+   },
+   "widthCm": 128,
+   "runCm": 640,
+   "dropCm": 300,
+   "slopeDeg": 25.1,
+   "slot": {
+    "x0": 4224,
+    "y0": 320,
+    "x1": 4864,
+    "y1": 448,
+    "tiles": [
+     66,
+     5,
+     76,
+     7
+    ]
+   },
+   "landscapeHole": {
+    "x0": 3904,
+    "y0": 320,
+    "x1": 4928,
+    "y1": 832,
+    "tiles": [
+     61,
+     5,
+     77,
+     13
+    ]
+   },
+   "room": {
+    "x0": 3968,
+    "y0": 320,
+    "x1": 4864,
+    "y1": 768,
+    "tiles": [
+     62,
+     5,
+     76,
+     12
+    ]
+   },
+   "roomFloorCm": -300,
+   "wallHeightCm": 360,
+   "notes": [
+    "Ramp: a straight stone ramp along the hall's north wall, top at tile (76,6) at hall-floor level, foot at (66,6) at -300 cm. Run 10 tiles = 640 cm, drop 300 cm: slope 25.1 deg (tan = 0.47), well under the 35 deg limit and under CharacterMovement's default walkable floor angle (44.8 deg). Width 2 tiles = 128 cm (y 5-7), the same as a door module; it is the undercroft's only way in or out.",
+    "Slot in the hall floor: x 66-76, y 5-7 (640 x 128 cm). Its south edge carries a 90 cm stone parapet (a short variant of the 50 cm curtain module, minor art gap) so nobody walks off it; its north edge is the hall's north wall.",
+    "Landscape hole: x 61-77, y 5-13 (16 x 8 tiles = 1024 x 512 cm), painted with the visibility mask. That is the room (62-76, 5-12) plus one tile of margin east, west and south; the north edge coincides with the hall's north wall line, where the undercroft's north wall stacks directly under the outer curtain wall.",
+    "Room: floor mesh (stone floor tiles) at -300 cm, walls from keep curtain modules stacked two high (360 cm) standing on the undercroft floor in the one-tile margin, so no Landscape edge is ever visible. The great hall's floor mesh is the undercroft's ceiling: it overlaps the hole by at least one tile on every side and hides for the local player while they are below (the same roof-hide rule as a building). The hall's stone walls sit on solid ground outside the hole.",
+    "Under the ramp's high end (x 70-76, y 5-7) the clearance is under 122 cm, so that strip is filled with kegs and crates and is not walkable. Everything else in the room has 300 cm headroom.",
+    "The plateau is +4 m, so the cellar floor is still +1 m above the river; no water table, no drainage hole needed. Nav mesh (B-16): the ramp is a normal walkable slope; NPCs chase up and down it."
+   ]
+  },
+  "areas": [
+   {
+    "id": "A1",
+    "name": "Gatehouse and outer bailey",
+    "bounds": {
+     "x0": 3264,
+     "y0": 1600,
+     "x1": 5952,
+     "y1": 2112,
+     "tiles": [
+      51,
+      25,
+      93,
+      33
+     ]
+    },
+    "levelBand": "8",
+    "spawnCount": 6,
+    "contents": "Gatehouse; stables corner at the west end (supply piles, barrels, crates; hay is an art gap); campfire with log seats at (60,29); well at (84,29); smithy corner at the east end (weapon racks; forge is an art gap); banners on the inner wall.",
+    "spawns": [
+     {
+      "template": "renegade_footman (gate guard)",
+      "tile": [
+       70,
+       31
+      ],
+      "cm": [
+       4480,
+       1984
+      ]
+     },
+     {
+      "template": "renegade_footman (gate guard)",
+      "tile": [
+       74,
+       31
+      ],
+      "cm": [
+       4736,
+       1984
+      ]
+     },
+     {
+      "template": "renegade_footman (bailey patrol, pair)",
+      "tile": [
+       54,
+       29
+      ],
+      "cm": [
+       3456,
+       1856
+      ]
+     },
+     {
+      "template": "renegade_archer (bailey patrol, pair)",
+      "tile": [
+       55,
+       29
+      ],
+      "cm": [
+       3520,
+       1856
+      ]
+     },
+     {
+      "template": "renegade_footman (sentry)",
+      "tile": [
+       56,
+       27
+      ],
+      "cm": [
+       3584,
+       1728
+      ]
+     },
+     {
+      "template": "renegade_archer (sentry)",
+      "tile": [
+       88,
+       27
+      ],
+      "cm": [
+       5632,
+       1728
+      ]
+     }
+    ],
+    "patrol": [
+     [
+      3456,
+      1856
+     ],
+     [
+      5760,
+      1856
+     ]
+    ],
+    "pullNotes": "Gate guards are linked and stand in the gatehouse arch: pull the pair to the glacis at (72,40). The bailey patrol pair walks the full length every ~40 s; wait for it at the east end, then take the west sentry alone."
+   },
+   {
+    "id": "A2",
+    "name": "Inner courtyard (training yard)",
+    "bounds": {
+     "x0": 3968,
+     "y0": 768,
+     "x1": 5248,
+     "y1": 1536,
+     "tiles": [
+      62,
+      12,
+      82,
+      24
+     ]
+    },
+    "levelBand": "8-9",
+    "spawnCount": 5,
+    "contents": "Inner gate; weapon racks along the south wall; training posts (art gap: use stumps); supply pile at (80,22); a second campfire; doors to barracks (62,14), great hall (72,12), chapel (82,18).",
+    "spawns": [
+     {
+      "template": "renegade_footman (sparring)",
+      "tile": [
+       66,
+       16
+      ],
+      "cm": [
+       4224,
+       1024
+      ]
+     },
+     {
+      "template": "renegade_footman (sparring)",
+      "tile": [
+       68,
+       18
+      ],
+      "cm": [
+       4352,
+       1152
+      ]
+     },
+     {
+      "template": "renegade_footman (sparring)",
+      "tile": [
+       78,
+       16
+      ],
+      "cm": [
+       4992,
+       1024
+      ]
+     },
+     {
+      "template": "Sergeant-at-Arms Kell Draven (9, always up)",
+      "tile": [
+       72,
+       15
+      ],
+      "cm": [
+       4608,
+       960
+      ]
+     },
+     {
+      "template": "renegade_quartermaster (8)",
+      "tile": [
+       80,
+       22
+      ],
+      "cm": [
+       5120,
+       1408
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "The inner gate (70-74,24) is a one-and-a-half-tile chokepoint: pull sparring pairs through it into the bailey. Kell Draven (9) links to all three sparring footmen: kill them first from the gate, then Draven alone."
+   },
+   {
+    "id": "A3",
+    "name": "Barracks (west range)",
+    "bounds": {
+     "x0": 3264,
+     "y0": 320,
+     "x1": 3968,
+     "y1": 1088,
+     "tiles": [
+      51,
+      5,
+      62,
+      17
+     ]
+    },
+    "levelBand": "8-9",
+    "spawnCount": 6,
+    "contents": "8 beds along the west wall, chests at their feet, a long table with candles, weapon rack, fireplace on the north wall, kegs. Door from the courtyard at (62,14). The muster yard (51-62,17-24) outside it is open ground with the postern tower.",
+    "spawns": [
+     {
+      "template": "renegade_footman (off duty, sitting)",
+      "tile": [
+       54,
+       8
+      ],
+      "cm": [
+       3456,
+       512
+      ]
+     },
+     {
+      "template": "renegade_footman (off duty, sleeping)",
+      "tile": [
+       53,
+       12
+      ],
+      "cm": [
+       3392,
+       768
+      ]
+     },
+     {
+      "template": "renegade_footman (off duty, sleeping)",
+      "tile": [
+       53,
+       15
+      ],
+      "cm": [
+       3392,
+       960
+      ]
+     },
+     {
+      "template": "renegade_footman (at table)",
+      "tile": [
+       58,
+       10
+      ],
+      "cm": [
+       3712,
+       640
+      ]
+     },
+     {
+      "template": "renegade_archer (at table)",
+      "tile": [
+       59,
+       12
+      ],
+      "cm": [
+       3776,
+       768
+      ]
+     },
+     {
+      "template": "renegade_corporal (9)",
+      "tile": [
+       56,
+       6
+      ],
+      "cm": [
+       3584,
+       384
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "Sleeping soldiers have a 3-tile aggro range and are not linked: single pulls to the door. The corporal and the two at the table are linked (pull of three): do it from the muster yard with the door as the chokepoint."
+   },
+   {
+    "id": "A4",
+    "name": "Great hall (north range)",
+    "bounds": {
+     "x0": 3968,
+     "y0": 320,
+     "x1": 5760,
+     "y1": 768,
+     "tiles": [
+      62,
+      5,
+      90,
+      12
+     ]
+    },
+    "levelBand": "9-10",
+    "spawnCount": 5,
+    "contents": "Two long tables with benches, fireplace on the north wall at (76,5), dais at the east end (86,8) with the Castellan's chair and the Ashvane banner (a black hound on ash-grey), a ramp slot along the north wall (x 66-76, y 5-7) descending west into the undercroft, with a 90 cm parapet on its south edge. Door from the courtyard at (72,12).",
+    "spawns": [
+     {
+      "template": "renegade_hallguard (9)",
+      "tile": [
+       72,
+       10
+      ],
+      "cm": [
+       4608,
+       640
+      ]
+     },
+     {
+      "template": "renegade_hallguard (9)",
+      "tile": [
+       78,
+       10
+      ],
+      "cm": [
+       4992,
+       640
+      ]
+     },
+     {
+      "template": "renegade_steward (9, caster)",
+      "tile": [
+       68,
+       8
+      ],
+      "cm": [
+       4352,
+       512
+      ]
+     },
+     {
+      "template": "renegade_archer (9)",
+      "tile": [
+       84,
+       6
+      ],
+      "cm": [
+       5376,
+       384
+      ]
+     },
+     {
+      "template": "a renegade lieutenant (9) / Castellan Ordric Vane (10, 20%, 25-30 min)",
+      "tile": [
+       86,
+       8
+      ],
+      "cm": [
+       5504,
+       512
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "The hall door is the chokepoint. Hall guards are linked to each other; the steward heals. Pull the guards through the door into the courtyard, then the steward, then the archer, then the lieutenant/Castellan alone on the dais. Vane hits hard and calls no help: a level 8-9 group of five can take him once the hall is clear."
+   },
+   {
+    "id": "A5",
+    "name": "Chapel (east range, temple kit)",
+    "bounds": {
+     "x0": 5248,
+     "y0": 768,
+     "x1": 5952,
+     "y1": 1536,
+     "tiles": [
+      82,
+      12,
+      93,
+      24
+     ]
+    },
+    "levelBand": "9",
+    "spawnCount": 4,
+    "contents": "Two rows of limestone columns, altar on the north wall at (87,14) with steps, candles, a broken statue (the old lord's saint, defaced), books. Door from the courtyard at (82,18).",
+    "spawns": [
+     {
+      "template": "Chaplain Mael Corvane (9, named, always up, 15 min)",
+      "tile": [
+       87,
+       15
+      ],
+      "cm": [
+       5568,
+       960
+      ]
+     },
+     {
+      "template": "ashvane_zealot (9)",
+      "tile": [
+       85,
+       20
+      ],
+      "cm": [
+       5440,
+       1280
+      ]
+     },
+     {
+      "template": "ashvane_zealot (9)",
+      "tile": [
+       89,
+       20
+      ],
+      "cm": [
+       5696,
+       1280
+      ]
+     },
+     {
+      "template": "renegade_penitent (8, kneeling)",
+      "tile": [
+       87,
+       22
+      ],
+      "cm": [
+       5568,
+       1408
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "The penitent by the door is a single pull. The zealots are linked with the Chaplain (caster, roots and nukes): pull all three through the door and interrupt the Chaplain in the doorway, where the columns break his line of sight to the group."
+   },
+   {
+    "id": "A6",
+    "name": "Tower rooms (ground floor)",
+    "bounds": null,
+    "levelBand": "9",
+    "spawnCount": 3,
+    "contents": "The 2.16 m round towers are too small for rooms, so each tower room is a 3x3-tile stone chamber (keep-kit modules) built against the tower on the inside: NW Armoury (weapon racks, chests) at (51-54,5-8); NE Lantern Tower (stair up is fake, brazier on top is the zone landmark) at (90-93,5-8); Postern Tower chamber at (51-54,18-21) with the postern door.",
+    "spawns": [
+     {
+      "template": "renegade_armsmaster (9)",
+      "tile": [
+       52,
+       6
+      ],
+      "cm": [
+       3328,
+       384
+      ]
+     },
+     {
+      "template": "renegade_signaller (9)",
+      "tile": [
+       92,
+       6
+      ],
+      "cm": [
+       5888,
+       384
+      ]
+     },
+     {
+      "template": "Gatewarden Brann Coll (9, always up)",
+      "tile": [
+       52,
+       19
+      ],
+      "cm": [
+       3328,
+       1216
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "Each is a solo pull from its doorway. The Gatewarden is the first fight if you come in by the postern: his chamber opens both to the highland path and to the muster yard, so the barracks (A3) hears the fight if it runs long (link range 6 tiles)."
+   },
+   {
+    "id": "A7",
+    "name": "Undercroft (cellar, via ramp)",
+    "bounds": {
+     "x0": 3968,
+     "y0": 320,
+     "x1": 4864,
+     "y1": 768,
+     "tiles": [
+      62,
+      5,
+      76,
+      12
+     ]
+    },
+    "levelBand": "10",
+    "spawnCount": 4,
+    "contents": "Under the west half of the great hall, floor 3 m below the hall, reached by the ramp (top (76,6), foot (66,6), see the ramp spec). Kegs, crates, chests, a gaol cell with iron bars (art gap) at the west end, a strongroom with the Castellan's chest at the south-east, candles, kegs stacked under the high end of the ramp, and a bricked-up arch on the west wall (Phase-2 flavour: the old lords dug toward the ridge). Dark: torch light only.",
+    "spawns": [
+     {
+      "template": "Warden Hesk (10, named, always up, 20 min)",
+      "tile": [
+       64,
+       9
+      ],
+      "cm": [
+       4096,
+       576
+      ]
+     },
+     {
+      "template": "renegade_gaoler (10)",
+      "tile": [
+       68,
+       8
+      ],
+      "cm": [
+       4352,
+       512
+      ]
+     },
+     {
+      "template": "renegade_gaoler (10)",
+      "tile": [
+       70,
+       10
+      ],
+      "cm": [
+       4480,
+       640
+      ]
+     },
+     {
+      "template": "ashvane_alchemist (10, caster)",
+      "tile": [
+       74,
+       10
+      ],
+      "cm": [
+       4736,
+       640
+      ]
+     }
+    ],
+    "patrol": null,
+    "pullNotes": "The ramp is a 128 cm wide chokepoint and the only way out. Gaolers are linked and stand at its foot; the alchemist throws oil (AoE). Pull the gaolers up the ramp into the hall; the Warden and alchemist stand at the strongroom and must be fought below. The first 'dungeon' fight of the game."
+   }
+  ],
+  "totalSpawns": 33
+ },
+ "hiddenEntrance": {
+  "id": "greyfell_cleft",
+  "cleft": {
+   "tile": [
+    6,
+    27
+   ],
+   "cm": [
+    384,
+    1728
+   ]
+  },
+  "trigger": {
+   "tile": [
+    6,
+    26
+   ],
+   "cm": [
+    384,
+    1664
+   ]
+  },
+  "facing": "south",
+  "description": "A narrow cleft at the foot of Greyfell Tor's southern cliff face, at the far west end where the cliff meets the zone edge. It opens south into the scree pocket.",
+  "screen": [
+   {
+    "prop": "boulder (large, art gap: rock outcrop)",
+    "tile": [
+     3,
+     30
+    ],
+    "cm": [
+     192,
+     1920
+    ]
+   },
+   {
+    "prop": "boulder (large)",
+    "tile": [
+     9,
+     31
+    ],
+    "cm": [
+     576,
+     1984
+    ]
+   },
+   {
+    "prop": "dead tree",
+    "tile": [
+     2,
+     34
+    ],
+    "cm": [
+     128,
+     2176
+    ]
+   },
+   {
+    "prop": "dead tree",
+    "tile": [
+     12,
+     33
+    ],
+    "cm": [
+     768,
+     2112
+    ]
+   },
+   {
+    "prop": "fallen log",
+    "tile": [
+     5,
+     33
+    ],
+    "cm": [
+     320,
+     2112
+    ]
+   },
+   {
+    "prop": "fallen log",
+    "tile": [
+     10,
+     34
+    ],
+    "cm": [
+     640,
+     2176
+    ]
+   },
+   {
+    "prop": "bush",
+    "tile": [
+     4,
+     31
+    ],
+    "cm": [
+     256,
+     1984
+    ]
+   },
+   {
+    "prop": "bush",
+    "tile": [
+     8,
+     32
+    ],
+    "cm": [
+     512,
+     2048
+    ]
+   },
+   {
+    "prop": "fern clumps",
+    "tile": [
+     6,
+     32
+    ],
+    "cm": [
+     384,
+     2048
+    ]
+   },
+   {
+    "prop": "stump",
+    "tile": [
+     11,
+     29
+    ],
+    "cm": [
+     704,
+     1856
+    ]
+   },
+   {
+    "prop": "rock (small) x6 scree",
+    "tile": [
+     8,
+     36
+    ],
+    "cm": [
+     512,
+     2304
+    ]
+   }
+  ],
+  "approach": "From the scree pocket: climb north-west from the highland path's bend at (34,48) across open scree with no path, past the scavenger's ground, to the cliff foot at (12,32); walk WEST along the cliff foot, around the back (north side) of the boulder at (9,31); the cleft is then in front of you at (6,27). From the south or east the two boulders and the fallen logs hide the gap completely.",
+  "whyHard": "No path or signpost leads there; it is 17 m from the nearest path point (30,40) and 15.5 m from Hask's Hold, both beyond the 10-16 m fog radius; the tor cliff and boulders block line of sight; a dense mist pocket sits over the scree; nothing glows; and the only reason to wander there is R8, a single scavenger. The hint is Wyn Cotter's hail line at the outpost.",
+  "phase2": "The trigger just inside the cleft is a hidden-portal variant (rune-stone marker off) to cave_dungeon entry 'entry_from_eldmoor'. Greyfell's tier-1 entrance tunnels begin here; the optional lair exit returns players to (14,46) below the scree. Testers use the admin teleport."
+ },
+ "mistPockets": [
+  {
+   "id": "M1",
+   "name": "River bottom (west)",
+   "centre": [
+    1920,
+    4480
+   ],
+   "radiusXCm": 2176,
+   "radiusYCm": 576,
+   "density": "medium",
+   "note": "both banks, Mistwater Toll camp sits in it"
+  },
+  {
+   "id": "M2",
+   "name": "River bottom (bridge to footbridge)",
+   "centre": [
+    5120,
+    3584
+   ],
+   "radiusXCm": 1664,
+   "radiusYCm": 512,
+   "density": "medium",
+   "note": ""
+  },
+  {
+   "id": "M3",
+   "name": "Scree pocket under the tor",
+   "centre": [
+    832,
+    2560
+   ],
+   "radiusXCm": 832,
+   "radiusYCm": 768,
+   "density": "dense",
+   "note": "hides the cleft further"
+  },
+  {
+   "id": "M4",
+   "name": "Thornwood hollow",
+   "centre": [
+    6400,
+    6400
+   ],
+   "radiusXCm": 512,
+   "radiusYCm": 448,
+   "density": "dense",
+   "note": "wolf placeholder den"
+  },
+  {
+   "id": "M5",
+   "name": "Barrow crypt hollow",
+   "centre": [
+    8320,
+    3712
+   ],
+   "radiusXCm": 384,
+   "radiusYCm": 320,
+   "density": "dense",
+   "note": ""
+  },
+  {
+   "id": "M6",
+   "name": "Deadfall",
+   "centre": [
+    8320,
+    8704
+   ],
+   "radiusXCm": 448,
+   "radiusYCm": 384,
+   "density": "medium",
+   "note": ""
+  }
+ ],
+ "landmarks": [
+  {
+   "name": "Lantern Tower brazier (Ashvane Keep NE tower)",
+   "tile": [
+    94,
+    4
+   ],
+   "cm": [
+    6016,
+    256
+   ],
+   "note": "warm glow readable at ~1.5x fog range (engineering ask)"
+  },
+  {
+   "name": "Greyfell Tor silhouette",
+   "tile": [
+    13,
+    13
+   ],
+   "cm": [
+    832,
+    832
+   ],
+   "note": "+7 m crag, unwalkable; visible as a dark mass from the vale"
+  },
+  {
+   "name": "Outpost lamp posts and campfire",
+   "tile": [
+    50,
+    112
+   ],
+   "cm": [
+    3200,
+    7168
+   ],
+   "note": "glow from the road"
+  },
+  {
+   "name": "Kingsbarrow headless king statue",
+   "tile": [
+    116,
+    72
+   ],
+   "cm": [
+    7424,
+    4608
+   ],
+   "note": "on the mound's south edge above the road end"
+  },
+  {
+   "name": "Camp fires at every camp",
+   "note": "glow visible before the NPCs are"
+  }
+ ],
+ "spawnTotals": {
+  "camps": 41,
+  "roamers": 10,
+  "castle": 33,
+  "live": 84,
+  "placeholders": 6
+ }
+}

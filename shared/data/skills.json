@@ -857,24 +857,6 @@
       "iconAbbrev": "TP",
       "scalingStat": "intelligence",
       "effectNotes": ""
-    },
-    "skill_1790263240045": {
-      "id": "skill_1790263240045",
-      "name": "New Skill",
-      "description": "",
-      "classId": "warrior",
-      "levelRequired": 1,
-      "resourceType": "mana",
-      "resourceCost": 0,
-      "castTimeMs": 0,
-      "cooldownMs": 0,
-      "range": 0,
-      "targetType": "singleEnemy",
-      "category": "buff",
-      "iconColor": 16729224,
-      "iconAbbrev": "SK",
-      "scalingStat": "strength",
-      "effectNotes": ""
     }
   },
   "classSkills": {
@@ -885,8 +867,7 @@
       "warrior_cleave",
       "warrior_battle_shout",
       "warrior_charge",
-      "warrior_shield_wall",
-      "skill_1790263240045"
+      "warrior_shield_wall"
     ],
     "cleric": [
       "melee_attack",

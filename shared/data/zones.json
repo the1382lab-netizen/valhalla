@@ -26,6 +26,19 @@
       "defaultSpawn": {
         "x": 2080,
         "y": 3808
+      },
+      "atmosphere": {
+        "notes": "B-06 STARTING VALUES (2026-09-24) for Phase 2, not playtested. Clear to 4 m, fully fogged at 7 m; camera capped at the default 1500 so the view reaches ~7 m and cannot look over walls. No sun or sky: the player light and crystals come in Phase 2.",
+        "visionClearRadiusCm": 400,
+        "visionFadeWidthCm": 300,
+        "fogColor": "#0b0f18",
+        "heightFogDensity": 0.05,
+        "heightFogStartCm": 1000,
+        "sunIntensityScale": 0,
+        "skyLightIntensityScale": 0,
+        "gradeTint": "#c8d2e6",
+        "cameraMaxArmCm": 1500,
+        "netRelevancyRadiusCm": 800
       }
     },
     "grasslands_v2": {
@@ -35,6 +48,19 @@
       "defaultSpawn": {
         "x": 2208,
         "y": 1824
+      },
+      "atmosphere": {
+        "notes": "B-06 STARTING VALUES (2026-09-24), derived from the camera, not playtested. Default view reaches ~7.4 m at its corners; clear to 10 m, fully fogged at 16 m; max zoom-out (2400) reaches ~12 m. Tune in playtest.",
+        "visionClearRadiusCm": 1000,
+        "visionFadeWidthCm": 600,
+        "fogColor": "#8c978a",
+        "heightFogDensity": 0.03,
+        "heightFogStartCm": 1600,
+        "sunIntensityScale": 0.6,
+        "skyLightIntensityScale": 0.85,
+        "gradeTint": "#eef3ee",
+        "cameraMaxArmCm": 2400,
+        "netRelevancyRadiusCm": 1700
       }
     }
   }

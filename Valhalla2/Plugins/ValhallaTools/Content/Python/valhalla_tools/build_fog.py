@@ -36,6 +36,16 @@ Per pixel:
    These are ``FogOfWar.ts``'s three states with its alphas written from the
    other end — 1.0 drew black at alpha 0.95 / 0.5 / 0 over the scene, which is
    the same picture as multiplying the scene by 0.05 / 0.5 / 1.
+5. B-06 vision fog: fade the (already dimmed) pixel to ``VisionFogColor`` by
+   its *ground* distance from ``VisionCentre`` (the local player, written by
+   ``AValhallaZoneAtmosphere`` every frame): clear inside
+   ``VisionClearRadius``, a smoothstep over ``VisionFadeWidth``, fully fogged
+   beyond. ``VisionFogStrength`` (0..1) scales the whole term and defaults to
+   0, so with no zone profile the output is exactly steps 1-4. The colour is
+   divided by the eye adaptation so a designer's ``#rrggbb`` reads as that
+   colour on screen whatever the auto exposure is doing. Sky pixels are "far
+   away" and so fully fogged, which is what hides the horizon when the camera
+   is tilted up.
 
 Ordering against ``PP_Outline`` is ``blendable_priority``, not the order the two
 are added to the camera. Both sit at ``BL_SCENE_COLOR_BEFORE_DOF`` (they both
@@ -71,6 +81,13 @@ BLUR_TEXELS = 8.0
 HIDDEN_BRIGHTNESS = 0.05
 EXPLORED_BRIGHTNESS = 0.5
 VISIBLE_BRIGHTNESS = 1.0
+
+#: B-06 vision fog parameter defaults. Strength 0 = off, so a camera whose zone
+#: has no atmosphere profile renders exactly as before. The renderer overrides
+#: all of them per zone (ValhallaFogRenderer.cpp names the same strings).
+VISION_STRENGTH_DEFAULT = 0.0
+VISION_CLEAR_DEFAULT = 1000.0
+VISION_FADE_DEFAULT = 600.0
 
 #: Candidates for the parameters' default texture. The renderer overrides both
 #: with its render targets at runtime; this only has to exist and compile, and
@@ -255,7 +272,77 @@ def build_fog(debug=""):
     _wire(source_rgb, "", dimmed, "A")
     _wire(brightness, "", dimmed, "B")
 
-    output = dimmed
+    # ── B-06: the zone's vision fog, by ground distance from the player ──
+    vision_centre = _vector(material, "VisionCentre", unreal.LinearColor(0.0, 0.0, 0.0, 0.0), -2400, 2000)
+    vision_centre_xy = _mask(material, -2150, 2000, vision_centre)
+
+    ground_distance = _expr(material, unreal.MaterialExpressionDistance, -1900, 2000)
+    _wire(world_xy, "", ground_distance, "A")
+    _wire(vision_centre_xy, "", ground_distance, "B")
+
+    clear_radius = _scalar(material, "VisionClearRadius", VISION_CLEAR_DEFAULT, -1900, 2150)
+    past_clear = _expr(material, unreal.MaterialExpressionSubtract, -1650, 2050)
+    _wire(ground_distance, "", past_clear, "A")
+    _wire(clear_radius, "", past_clear, "B")
+
+    fade_width = _scalar(material, "VisionFadeWidth", VISION_FADE_DEFAULT, -1900, 2300)
+    safe_fade = _expr(material, unreal.MaterialExpressionMax, -1650, 2300)
+    _wire(fade_width, "", safe_fade, "A")
+    safe_fade.set_editor_property("const_b", 1.0)
+
+    fade_ratio = _expr(material, unreal.MaterialExpressionDivide, -1400, 2100)
+    _wire(past_clear, "", fade_ratio, "A")
+    _wire(safe_fade, "", fade_ratio, "B")
+
+    fade_t = _expr(material, unreal.MaterialExpressionSaturate, -1200, 2100)
+    _wire(fade_ratio, "", fade_t, "")
+
+    # smoothstep: t * t * (3 - 2t), so the edge has no visible ring.
+    t_squared = _expr(material, unreal.MaterialExpressionMultiply, -1000, 2050)
+    _wire(fade_t, "", t_squared, "A")
+    _wire(fade_t, "", t_squared, "B")
+    two_t = _expr(material, unreal.MaterialExpressionMultiply, -1000, 2200)
+    _wire(fade_t, "", two_t, "A")
+    two_t.set_editor_property("const_b", 2.0)
+    three_minus = _expr(material, unreal.MaterialExpressionOneMinus, -800, 2200)
+    # 1 - 2t + 2 = 3 - 2t: OneMinus gives 1 - 2t, the Add below supplies the 2.
+    _wire(two_t, "", three_minus, "")
+    three_minus_2t = _expr(material, unreal.MaterialExpressionAdd, -600, 2200)
+    _wire(three_minus, "", three_minus_2t, "A")
+    three_minus_2t.set_editor_property("const_b", 2.0)
+    smooth = _expr(material, unreal.MaterialExpressionMultiply, -400, 2100)
+    _wire(t_squared, "", smooth, "A")
+    _wire(three_minus_2t, "", smooth, "B")
+
+    strength = _scalar(material, "VisionFogStrength", VISION_STRENGTH_DEFAULT, -400, 2300)
+    vision_alpha = _expr(material, unreal.MaterialExpressionMultiply, -150, 2150)
+    _wire(smooth, "", vision_alpha, "A")
+    _wire(strength, "", vision_alpha, "B")
+
+    fog_colour = _vector(material, "VisionFogColor", unreal.LinearColor(0.27, 0.31, 0.26, 1.0), -400, 2450)
+    fog_rgb = _expr(material, unreal.MaterialExpressionComponentMask, -150, 2450)
+    fog_rgb.set_editor_property("r", True)
+    fog_rgb.set_editor_property("g", True)
+    fog_rgb.set_editor_property("b", True)
+    fog_rgb.set_editor_property("a", False)
+    _wire(fog_colour, "", fog_rgb, "")
+
+    # Scene colour here is before exposure; divide by it so the designer's
+    # colour is what reaches the screen.
+    exposure = _expr(material, unreal.MaterialExpressionEyeAdaptation, -150, 2600)
+    safe_exposure = _expr(material, unreal.MaterialExpressionMax, 50, 2600)
+    _wire(exposure, "", safe_exposure, "A")
+    safe_exposure.set_editor_property("const_b", 0.0001)
+    fog_scene = _expr(material, unreal.MaterialExpressionDivide, 100, 2450)
+    _wire(fog_rgb, "", fog_scene, "A")
+    _wire(safe_exposure, "", fog_scene, "B")
+
+    fogged = _expr(material, unreal.MaterialExpressionLinearInterpolate, 600, 1900)
+    _wire(dimmed, "", fogged, "A")
+    _wire(fog_scene, "", fogged, "B")
+    _wire(vision_alpha, "", fogged, "Alpha")
+
+    output = fogged
     if debug == "uv":
         # Red/green = the fog UV. A smooth gradient across the ground means the
         # world position really is being rebuilt from scene depth; a flat

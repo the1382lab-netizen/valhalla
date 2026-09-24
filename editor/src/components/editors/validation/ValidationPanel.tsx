@@ -416,6 +416,42 @@ export const ValidationPanel: React.FC = () => {
           });
         }
       }
+
+      // B-06: the optional atmosphere. Mirrors validateZoneAtmosphere in shared/src/maps.ts.
+      const atm = zone.atmosphere;
+      if (atm !== undefined) {
+        const zoneLabel = zone.name || zoneId;
+        if (atm === null || typeof atm !== 'object' || Array.isArray(atm)) {
+          foundIssues.push({ severity: 'error', category: 'zones', id: zoneId, message: `Zone "${zoneLabel}" atmosphere must be an object` });
+        } else {
+          const numberKeys = ['visionClearRadiusCm', 'visionFadeWidthCm', 'heightFogDensity', 'heightFogStartCm',
+            'sunIntensityScale', 'skyLightIntensityScale', 'cameraMaxArmCm', 'netRelevancyRadiusCm'];
+          const colorKeys = ['fogColor', 'gradeTint'];
+          Object.keys(atm).forEach(key => {
+            if (key !== 'notes' && !numberKeys.includes(key) && !colorKeys.includes(key)) {
+              foundIssues.push({ severity: 'warning', category: 'zones', id: zoneId, message: `Zone "${zoneLabel}" atmosphere.${key} is not a known field` });
+            }
+          });
+          numberKeys.forEach(key => {
+            const v = atm[key];
+            if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
+              foundIssues.push({ severity: 'error', category: 'zones', id: zoneId, message: `Zone "${zoneLabel}" atmosphere.${key} must be a number >= 0` });
+            }
+          });
+          colorKeys.forEach(key => {
+            const v = atm[key];
+            if (v !== undefined && (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v))) {
+              foundIssues.push({ severity: 'error', category: 'zones', id: zoneId, message: `Zone "${zoneLabel}" atmosphere.${key} must be a colour like #8a9486` });
+            }
+          });
+          const clear = typeof atm.visionClearRadiusCm === 'number' ? atm.visionClearRadiusCm : 0;
+          const fade = typeof atm.visionFadeWidthCm === 'number' ? atm.visionFadeWidthCm : 0;
+          const relevancy = typeof atm.netRelevancyRadiusCm === 'number' ? atm.netRelevancyRadiusCm : 0;
+          if (clear > 0 && relevancy > 0 && relevancy < clear + fade) {
+            foundIssues.push({ severity: 'warning', category: 'zones', id: zoneId, message: `Zone "${zoneLabel}" relevancy radius (${relevancy}) is inside the vision fog (${clear + fade}); NPCs will pop in where the fog is still see-through` });
+          }
+        }
+      }
     });
 
     setIssues(foundIssues);

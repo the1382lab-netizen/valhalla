@@ -2678,7 +2678,9 @@ void UValhallaGameHUDWidget::TickTargetFrame()
 	}
 	TargetRoot->SetVisibility(ESlateVisibility::Visible);
 
-	const bool bHostile = UValhallaCombatLibrary::IsNpcTarget(Target);
+	// B-06: a friendly NPC is not an enemy, so its name is not red.
+	const AValhallaNPC* TargetNpc = Cast<AValhallaNPC>(Target);
+	const bool bHostile = UValhallaCombatLibrary::IsNpcTarget(Target) && !(TargetNpc && TargetNpc->bFriendly);
 	TargetName->SetText(AsText(FString::Printf(TEXT("%s   Lv %d"), *Info.DisplayName, Info.Level)));
 	TargetName->SetColorAndOpacity(FSlateColor(bHostile ? Srgb(0xff, 0x66, 0x66) : Srgb(0x88, 0xcc, 0xff)));
 
@@ -3184,7 +3186,10 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 	const float ScreenOffset = Config.Nameplates.YOffset + 44.f;
 	int32 Used = 0;
 
-	auto ShowPlate = [&](const AActor* Actor, const FString& Name, float Hp, float MaxHp, bool bHostile)
+	// B-06: a friendly NPC (template `type: "npc"`) gets a green name and bar.
+	const FLinearColor FriendlyNameColour = Srgb(0x8c, 0xe6, 0x8c);
+
+	auto ShowPlate = [&](const AActor* Actor, const FString& Name, float Hp, float MaxHp, bool bHostile, const FLinearColor& NameColour)
 	{
 		if (Used >= Plates.Num())
 		{
@@ -3197,6 +3202,7 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 		}
 		FPlate& Plate = Plates[Used++];
 		Plate.Name->SetText(AsText(Name));
+		Plate.Name->SetColorAndOpacity(FSlateColor(NameColour));
 		const float Frac = MaxHp > 0.f ? Hp / MaxHp : 0.f;
 		Plate.Bar->SetFraction(Frac);
 		Plate.Bar->SetFillColour(bHostile ? EffectiveHpLowColour() : EffectiveHpHighColour());
@@ -3210,17 +3216,19 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 	// B-21 step 5: the player's nameplate switches.
 	for (TActorIterator<AValhallaNPC> It(World); It && bShowNpcNameplates; ++It)
 	{
-		if (It->IsAlive())
+		// B-06: an NPC hidden by the zone's vision fog has no plate either.
+		if (It->IsAlive() && !It->IsHidden())
 		{
-			ShowPlate(*It, It->DisplayName, It->Hp, It->MaxHp, true);
+			ShowPlate(*It, It->DisplayName, It->Hp, It->MaxHp, !It->bFriendly,
+				It->bFriendly ? FriendlyNameColour : Config.Nameplates.Color);
 		}
 	}
 	for (TActorIterator<AValhallaCharacter> It(World); It && bShowPlayerNameplates; ++It)
 	{
 		const AValhallaPlayerState* Other = It->GetValhallaPlayerState();
-		if (*It != OwnPawn && Other && Other->IsAlive())
+		if (*It != OwnPawn && Other && Other->IsAlive() && !It->IsHidden())
 		{
-			ShowPlate(*It, Other->CharacterName, Other->Hp, Other->MaxHp, false);
+			ShowPlate(*It, Other->CharacterName, Other->Hp, Other->MaxHp, false, Config.Nameplates.Color);
 		}
 	}
 	for (int32 Index = Used; Index < Plates.Num(); ++Index)

@@ -6,6 +6,8 @@ interface NPCTemplate {
   name: string;
   description: string;
   type: 'enemy' | 'npc';
+  /** B-06: optional job for a friendly NPC (vendor, guard, innkeeper...). */
+  role?: string;
   level: number;
   stats: Partial<Record<string, number>>;
   hp: number;
@@ -291,9 +293,12 @@ export const NPCEditor: React.FC = () => {
                     value={selectedNpc.type}
                     onChange={(e) => handleUpdateNpc({ type: e.target.value as 'enemy' | 'npc' })}
                   >
-                    <option value="enemy">Enemy</option>
-                    <option value="npc">NPC</option>
+                    <option value="enemy">Enemy (hostile)</option>
+                    <option value="npc">NPC (friendly)</option>
                   </select>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Friendly: never aggroes, can't be attacked
+                  </div>
                 </div>
 
                 <div className="form-group">
@@ -307,6 +312,22 @@ export const NPCEditor: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {selectedNpc.type === 'npc' && (
+                <div className="form-group">
+                  <label className="form-label">Role</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    placeholder="e.g. vendor, guard, innkeeper"
+                    value={selectedNpc.role || ''}
+                    onChange={(e) => handleUpdateNpc({ role: e.target.value.trim() ? e.target.value : undefined })}
+                  />
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    Optional. Vendor trading will use it later.
+                  </div>
+                </div>
+              )}
 
               <div className="form-row">
                 <div className="form-group">

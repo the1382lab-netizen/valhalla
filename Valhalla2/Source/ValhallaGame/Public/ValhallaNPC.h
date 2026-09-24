@@ -227,6 +227,13 @@ public:
 	int32 ApplyDamageFromAttacker(AActor* Attacker, int32 Damage, double Now, bool& bOutDied);
 
 	/**
+	 * Whether this NPC ever builds threat and fights: its template's
+	 * `canAggro`, defaulting to true for enemies — and never for a friendly
+	 * NPC (B-06), whatever the template says.
+	 */
+	bool CanEverAggro() const;
+
+	/**
 	 * NPCSystem.ts:306 `tauntNpc` — add threat and switch target immediately.
 	 * The switch is unconditional: a taunt that only added threat would be a
 	 * suggestion, and Taunt is not a suggestion.

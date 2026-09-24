@@ -10,14 +10,24 @@ export interface NPCTemplate {
   id: string;
   name: string;
   description: string;
+  /**
+   * `enemy`: hostile, can be attacked. `npc`: friendly — never aggroes, cannot
+   * be attacked or picked as an attack target.
+   * This is the NPC's hostility; there is no separate hostility field.
+   */
   type: 'enemy' | 'npc';
+  /**
+   * Optional job for a friendly NPC, e.g. `vendor`, `guard`, `innkeeper`
+   * (B-06). Free text for now; vendor trading will read it later.
+   */
+  role?: string;
   level: number;
   stats: Partial<StatBlock>;
   hp: number;
   mana?: number;
   lootTableId?: string;
   behaviorType: 'passive' | 'aggressive' | 'patrol' | 'stationary' | 'fleeing';
-  /** Whether this NPC can aggro. Defaults to true for enemies, false for friendly NPCs. */
+  /** Whether this NPC can aggro. Defaults to true for enemies, false for friendly NPCs. A friendly NPC never aggroes, whatever this says. */
   canAggro?: boolean;
   aggroRange?: number;
   /** Max distance from spawn before NPC resets (default: aggroRange * 3). */

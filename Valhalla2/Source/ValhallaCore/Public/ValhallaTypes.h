@@ -837,28 +837,50 @@ struct VALHALLACORE_API FValhallaLootTable
  * today's global look" — so a zone with no `atmosphere` object, or with some
  * fields left out, renders and replicates exactly as it did before B-06:
  *
- *   - distances and radii: 0 = not set (no vision fog, no camera cap, no
- *     relevancy cap);
+ *   - VisionScale 0 = no vision fog, and the class vision range unchanged;
+ *   - CameraMaxArmCm 0 = the character's own camera limit;
  *   - HeightFogDensity / HeightFogStartCm: negative = not set;
- *   - the two scales: 1 = unchanged;
+ *   - the two light scales: 1 = unchanged;
  *   - the two colours: only used when their bHas* flag is set.
+ *
+ * Vision is relative to the player (B-06 follow-up, Kevin 2026-09-24): a zone
+ * scales each player's class vision range rather than capping it, so a ranger
+ * still sees further than a wizard in the mist. The one formula lives in
+ * ValhallaAtmosphere::ResolveVision (ValhallaZoneAtmosphere.h):
+ *
+ *     effective  = classVisionRange x VisionScale     (fully fogged here)
+ *     clear      = effective x VisionClearFraction
+ *     relevancy  = effective + RelevancyMarginCm      (server LOS / net relevancy)
  *
  * Applied on the client by AValhallaZoneAtmosphere (blended over a second when
  * the local player changes zone) and on the server by
- * UValhallaVisibilitySubsystem::GetVisionRangeFor (the relevancy cap).
+ * UValhallaVisibilitySubsystem::GetVisionRangeFor.
  */
 USTRUCT(BlueprintType)
 struct VALHALLACORE_API FValhallaAtmosphereProfile
 {
 	GENERATED_BODY()
 
-	/** JSON `visionClearRadiusCm` — ground distance from the player that stays clear. 0: no vision fog. */
-	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
-	float VisionClearRadiusCm = 0.f;
+	/** Defaults for the two relative vision fields when a zone sets VisionScale but not them. */
+	static constexpr float DefaultVisionClearFraction = 0.625f;
+	static constexpr float DefaultRelevancyMarginCm = 100.f;
 
-	/** JSON `visionFadeWidthCm` — the soft fade from clear to fully fogged. */
+	/**
+	 * JSON `visionScale` — multiplies each player's class vision range (1200 cm
+	 * for most classes, 1350 rogue, 1800 ranger) to give their effective range,
+	 * where the vision fog is fully opaque. Setting it turns the vision fog on.
+	 * 0 (absent): no vision fog, class range unchanged.
+	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
-	float VisionFadeWidthCm = 0.f;
+	float VisionScale = 0.f;
+
+	/** JSON `visionClearFraction` — the part of the effective range that stays clear (0..1). */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float VisionClearFraction = DefaultVisionClearFraction;
+
+	/** JSON `relevancyMarginCm` — the server sends actors out to the effective range plus this. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float RelevancyMarginCm = DefaultRelevancyMarginCm;
 
 	/** True when JSON `fogColor` was a valid `#rrggbb`. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
@@ -897,14 +919,6 @@ struct VALHALLACORE_API FValhallaAtmosphereProfile
 	float CameraMaxArmCm = 0.f;
 
 	/**
-	 * JSON `netRelevancyRadiusCm` — the server stops sending NPCs, players and
-	 * loot bags further than this from a player in the zone. Caps the class
-	 * vision range; never raises it. 0: no cap.
-	 */
-	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
-	float NetRelevancyRadiusCm = 0.f;
-
-	/**
 	 * JSON `firelightGlow` — how strongly fires, braziers and lamp posts glow
 	 * through the vision fog. 1: default, 0: off. Only matters with vision fog.
 	 */
@@ -913,18 +927,12 @@ struct VALHALLACORE_API FValhallaAtmosphereProfile
 
 	/**
 	 * JSON `firelightRangeCm` — glows fade out beyond this ground distance from
-	 * the player. 0: 1.5 x the fully fogged distance.
+	 * the player. 0: 1.5 x the player's effective vision range.
 	 */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
 	float FirelightRangeCm = 0.f;
 
-	bool HasVisionFog() const { return VisionClearRadiusCm > 0.f; }
-
-	/** Where the vision fog is fully opaque, cm. 0 when there is no vision fog. */
-	float GetVisionLimitCm() const
-	{
-		return HasVisionFog() ? VisionClearRadiusCm + FMath::Max(0.f, VisionFadeWidthCm) : 0.f;
-	}
+	bool HasVisionFog() const { return VisionScale > 0.f; }
 };
 
 /** maps.ts:28 — `ZoneConfig`. One playable zone and its Tiled map. */

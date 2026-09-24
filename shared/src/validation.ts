@@ -20,14 +20,14 @@
 
 /** The numeric ZoneAtmosphere fields, for editors and validators. */
 export const ZONE_ATMOSPHERE_NUMBER_FIELDS = [
-  'visionClearRadiusCm',
-  'visionFadeWidthCm',
+  'visionScale',
+  'visionClearFraction',
+  'relevancyMarginCm',
   'heightFogDensity',
   'heightFogStartCm',
   'sunIntensityScale',
   'skyLightIntensityScale',
   'cameraMaxArmCm',
-  'netRelevancyRadiusCm',
   'firelightGlow',
   'firelightRangeCm',
 ] as const;
@@ -49,8 +49,13 @@ export function validateZoneAtmosphere(atmosphere: unknown): string[] {
   }
   const a = atmosphere as Record<string, unknown>;
   const known = new Set<string>(['notes', ...ZONE_ATMOSPHERE_NUMBER_FIELDS, ...ZONE_ATMOSPHERE_COLOR_FIELDS]);
+  const retired = new Set<string>(['visionClearRadiusCm', 'visionFadeWidthCm', 'netRelevancyRadiusCm']);
   for (const key of Object.keys(a)) {
-    if (!known.has(key)) errors.push(`atmosphere.${key} is not a known field`);
+    if (retired.has(key)) {
+      errors.push(`atmosphere.${key} is no longer used: vision is visionScale x the class range (with visionClearFraction and relevancyMarginCm)`);
+    } else if (!known.has(key)) {
+      errors.push(`atmosphere.${key} is not a known field`);
+    }
   }
   if (a.notes !== undefined && typeof a.notes !== 'string') {
     errors.push('atmosphere.notes must be text');
@@ -69,13 +74,14 @@ export function validateZoneAtmosphere(atmosphere: unknown): string[] {
       errors.push(`atmosphere.${key} must be a colour like #8a9486`);
     }
   }
-  const clear = a.visionClearRadiusCm;
-  const relevancy = a.netRelevancyRadiusCm;
-  if (typeof clear === 'number' && clear > 0 && typeof relevancy === 'number' && relevancy > 0) {
-    const fade = typeof a.visionFadeWidthCm === 'number' ? a.visionFadeWidthCm : 0;
-    if (relevancy < clear + fade) {
-      errors.push('atmosphere.netRelevancyRadiusCm is inside the vision fog: actors would pop in where the fog is still see-through');
-    }
+  if (typeof a.visionScale === 'number' && a.visionScale === 0) {
+    errors.push('atmosphere.visionScale 0 would blind every player: leave it out for no vision fog');
+  }
+  if (typeof a.visionClearFraction === 'number' && a.visionClearFraction >= 1) {
+    errors.push('atmosphere.visionClearFraction must be below 1 (the part of the vision range that stays clear)');
+  }
+  if (a.visionScale === undefined && (a.visionClearFraction !== undefined || a.relevancyMarginCm !== undefined)) {
+    errors.push('atmosphere.visionClearFraction / relevancyMarginCm do nothing without visionScale');
   }
   return errors;
 }
@@ -416,7 +422,8 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
     }
     // B-06: the optional per-zone atmosphere (same rules the loader and the Zone editor use).
     for (const problem of validateZoneAtmosphere(zone.atmosphere)) {
-      const mild = problem.includes('is not a known field') || problem.includes('inside the vision fog');
+      // Ignored-by-the-game problems are warnings; values the game cannot use are errors.
+      const mild = problem.includes('is not a known field') || problem.includes('is no longer used') || problem.includes('do nothing without');
       add(mild ? 'warning' : 'error', 'zones', id, problem);
     }
   }

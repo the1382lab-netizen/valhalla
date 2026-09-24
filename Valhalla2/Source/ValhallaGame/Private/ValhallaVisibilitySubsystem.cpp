@@ -406,16 +406,14 @@ float UValhallaVisibilitySubsystem::GetVisionRangeFor(const AActor* Viewer)
 	{
 		if (const AValhallaPlayerState* State = Pawn->GetPlayerState<AValhallaPlayerState>())
 		{
-			const float ClassRange = State->VisionRange > 0.f ? State->VisionRange : DefaultVisionRange;
-
-			// B-06: a zone's atmosphere can cap it (`netRelevancyRadiusCm`), so
-			// a player in Eldmoor's mist is not sent the camp 30 m away that
-			// the fog would hide anyway. A cap only ever lowers the range, and
-			// a zone without one leaves it exactly as it was. This is a player's
-			// own zone (the replicated ZoneId), and NPCs have no player state,
-			// so an NPC's view — and with it aggro — is never touched.
-			const float ZoneCap = ValhallaAtmosphere::GetRelevancyCapCm(Pawn, State->ZoneId);
-			return ZoneCap > 0.f ? FMath::Min(ClassRange, ZoneCap) : ClassRange;
+			// B-06: the player's own vision (class range x the zone's
+			// visionScale) plus the zone's relevancy margin, so a player in
+			// Eldmoor's mist is not sent the camp the fog hides anyway, and a
+			// ranger is still sent more than a wizard. A zone without vision
+			// fog gives exactly the class range, as before. This is a player's
+			// own zone (the replicated ZoneId); NPCs have no player state, so
+			// an NPC's view, and with it aggro, is never touched.
+			return ValhallaAtmosphere::ResolveVision(State).RelevancyRangeCm;
 		}
 	}
 	return DefaultVisionRange;

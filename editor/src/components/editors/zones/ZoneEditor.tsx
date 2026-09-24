@@ -1,5 +1,11 @@
 import React, { useState, useMemo } from 'react';
-import { validateZoneAtmosphere } from '@valhalla/shared';
+import {
+  resolveZoneVision,
+  validateZoneAtmosphere,
+  DEFAULT_RELEVANCY_MARGIN_CM,
+  DEFAULT_VISION_CLEAR_FRACTION,
+  type ZoneAtmosphere,
+} from '@valhalla/shared';
 import { useEditorStore } from '../../../store/editorStore';
 
 /**
@@ -13,34 +19,18 @@ import { useEditorStore } from '../../../store/editorStore';
  */
 
 type AtmosphereNumberKey =
-  | 'visionClearRadiusCm'
-  | 'visionFadeWidthCm'
+  | 'visionScale'
+  | 'visionClearFraction'
+  | 'relevancyMarginCm'
   | 'heightFogDensity'
   | 'heightFogStartCm'
   | 'sunIntensityScale'
   | 'skyLightIntensityScale'
   | 'cameraMaxArmCm'
-  | 'netRelevancyRadiusCm'
   | 'firelightGlow'
   | 'firelightRangeCm';
 
 type AtmosphereColorKey = 'fogColor' | 'gradeTint';
-
-interface ZoneAtmosphere {
-  notes?: string;
-  visionClearRadiusCm?: number;
-  visionFadeWidthCm?: number;
-  fogColor?: string;
-  heightFogDensity?: number;
-  heightFogStartCm?: number;
-  sunIntensityScale?: number;
-  skyLightIntensityScale?: number;
-  gradeTint?: string;
-  cameraMaxArmCm?: number;
-  netRelevancyRadiusCm?: number;
-  firelightGlow?: number;
-  firelightRangeCm?: number;
-}
 
 interface ZoneConfig {
   id: string;
@@ -51,16 +41,16 @@ interface ZoneConfig {
 }
 
 const NUMBER_FIELDS: { key: AtmosphereNumberKey; label: string; step: number; hint: string }[] = [
-  { key: 'visionClearRadiusCm', label: 'Vision clear radius (cm)', step: 50, hint: 'Ground distance from the player that stays clear. Empty = no vision fog.' },
-  { key: 'visionFadeWidthCm', label: 'Vision fade width (cm)', step: 50, hint: 'Soft fade from clear to fully fogged.' },
+  { key: 'visionScale', label: 'Vision scale ×', step: 0.0417, hint: "Each player's class vision range × this = fully fogged. 1.3333 turns 12 m into 16 m. Empty = no vision fog." },
+  { key: 'visionClearFraction', label: 'Clear fraction', step: 0.025, hint: `Part of that range that stays clear (below 1). Empty = ${DEFAULT_VISION_CLEAR_FRACTION}.` },
+  { key: 'relevancyMarginCm', label: 'Relevancy margin (cm)', step: 50, hint: `The server sends NPCs/players/loot out to the fully fogged range + this. Empty = ${DEFAULT_RELEVANCY_MARGIN_CM}.` },
   { key: 'heightFogDensity', label: 'Height fog density', step: 0.005, hint: "Horizon haze when the camera tilts up. Today's: 0.012." },
   { key: 'heightFogStartCm', label: 'Height fog start (cm)', step: 100, hint: "Distance from the camera. Today's: 1800." },
   { key: 'sunIntensityScale', label: 'Sun intensity ×', step: 0.05, hint: '1 = today, 0 = no sun.' },
   { key: 'skyLightIntensityScale', label: 'Sky light ×', step: 0.05, hint: 'Sky light and the cool fill light. 1 = today, 0 = off.' },
   { key: 'cameraMaxArmCm', label: 'Camera max zoom-out (cm)', step: 50, hint: 'Boom length. The default view is 1500; the normal limit is 2600.' },
-  { key: 'netRelevancyRadiusCm', label: 'Relevancy radius (cm)', step: 50, hint: 'Server stops sending NPCs/players/loot beyond this. Caps the class vision range (1200–1800). Keep ≥ clear + fade.' },
   { key: 'firelightGlow', label: 'Firelight glow ×', step: 0.1, hint: 'Fires, braziers and lamp posts glow through the vision fog. 1 = default, 0 = off.' },
-  { key: 'firelightRangeCm', label: 'Firelight range (cm)', step: 100, hint: 'Glows fade out beyond this distance. Empty = 1.5 × the fully fogged distance.' },
+  { key: 'firelightRangeCm', label: 'Firelight range (cm)', step: 100, hint: "Glows fade out beyond this distance. Empty = 1.5 × each player's fully fogged range." },
 ];
 
 const COLOR_FIELDS: { key: AtmosphereColorKey; label: string; fallback: string; hint: string }[] = [
@@ -78,6 +68,7 @@ export const ZoneEditor: React.FC = () => {
   const setSelectedZoneId = useEditorStore(s => s.setSelectedZoneId);
   const updateData = useEditorStore(s => s.updateData);
   const saveSection = useEditorStore(s => s.saveSection);
+  const classes = useEditorStore(s => s.classes.data.classes);
 
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -118,8 +109,19 @@ export const ZoneEditor: React.FC = () => {
 
   const atmosphere = zone?.atmosphere;
   const problems = validateZoneAtmosphere(atmosphere);
-  const clear = atmosphere?.visionClearRadiusCm ?? 0;
-  const fade = atmosphere?.visionFadeWidthCm ?? 0;
+
+  // The per-class preview: classes that share a vision range share a row.
+  const visionRows = useMemo(() => {
+    const byRange = new Map<number, string[]>();
+    for (const [id, cls] of Object.entries(classes || {}) as [string, any][]) {
+      const range = typeof cls?.visionRange === 'number' && cls.visionRange > 0 ? cls.visionRange : 1200;
+      byRange.set(range, [...(byRange.get(range) || []), cls?.name || id]);
+    }
+    return [...byRange.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([range, names]) => ({ names: names.join(' / '), vision: resolveZoneVision(range, atmosphere) }));
+  }, [classes, atmosphere]);
+  const m = (cm: number) => `${(cm / 100).toFixed(1)} m`;
 
   return (
     <div className="split-horizontal">
@@ -282,11 +284,38 @@ export const ZoneEditor: React.FC = () => {
                     );
                   })}
 
-                  <div style={{ ...hint, marginBottom: 8 }}>
-                    {clear > 0
-                      ? `Clear to ${(clear / 100).toFixed(1)} m, fully fogged at ${((clear + fade) / 100).toFixed(1)} m.`
-                      : 'No vision fog.'}
-                    {' '}The default camera shows about 7.4 m from the player to the screen corner; zoomed out to 2600 about 12.8 m.
+                  <div className="form-group">
+                    <label className="form-label">Vision per class (preview)</label>
+                    {atmosphere.visionScale ? (
+                      <table className="data-table">
+                        <thead>
+                          <tr>
+                            <th>Classes</th>
+                            <th>Class range</th>
+                            <th>Clear to</th>
+                            <th>Fully fogged</th>
+                            <th>Sent to</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visionRows.map(row => (
+                            <tr key={row.names}>
+                              <td>{row.names}</td>
+                              <td>{m(row.vision.baseRangeCm)}</td>
+                              <td>{m(row.vision.clearRadiusCm)}</td>
+                              <td>{m(row.vision.effectiveRangeCm)}</td>
+                              <td>{m(row.vision.relevancyRangeCm)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={hint}>No vision fog: every class sees its own class range, as in zones without a profile.</div>
+                    )}
+                    <div style={hint}>
+                      "Fully fogged" is also where NPCs stop being drawn and can't be targeted. The default camera
+                      shows about 7.4 m from the player to the screen corner; zoomed out to 2600 about 12.8 m.
+                    </div>
                   </div>
 
                   {problems.length > 0 && (

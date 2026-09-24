@@ -301,7 +301,10 @@ void AValhallaPlayerState::SetTargetActor(AActor* NewTarget)
 	const APawn* OwnPawn = GetPawn();
 	if (Resolved && OwnPawn && Resolved != OwnPawn)
 	{
-		const float VisionLimit = ValhallaAtmosphere::GetVisionLimitCm(this, ZoneId);
+		// This player's own fully fogged distance (class range x the zone's
+		// visionScale); 0 in a zone without vision fog.
+		const FValhallaVision Vision = ValhallaAtmosphere::ResolveVision(this);
+		const float VisionLimit = Vision.bHasVisionFog ? Vision.EffectiveRangeCm : 0.f;
 		if (VisionLimit > 0.f
 			&& FVector::DistSquared2D(OwnPawn->GetActorLocation(), Resolved->GetActorLocation()) > FMath::Square(static_cast<double>(VisionLimit)))
 		{

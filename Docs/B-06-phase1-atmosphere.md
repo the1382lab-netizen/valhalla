@@ -124,3 +124,32 @@ Relevancy is capped by the class vision range as well (1200 most classes,
      posts or a campfire: a warm glow shows through the mist where the fire
      is; set Firelight glow to 0 and Save: it goes; 2: brighter.
    - Leave the Grasslands profile off again before committing `zones.json`.
+
+### B-06 follow-up — vision is a scale on the class range, not a cap (2026-09-24)
+
+Kevin's call: the zone cap (`netRelevancyRadiusCm`, a min with the class
+range) took the ranger's advantage away in fog zones. Now one effective range
+per player drives everything:
+
+- **Data:** `visionScale` (turns the vision fog on; absent = no fog, class
+  range unchanged), `visionClearFraction` (default 0.625), `relevancyMarginCm`
+  (default 100). `visionClearRadiusCm`, `visionFadeWidthCm` and
+  `netRelevancyRadiusCm` are retired (the validator warns, the game logs and
+  ignores them).
+- **Formula** (`ValhallaAtmosphere::ResolveVision` in C++,
+  `resolveZoneVision` in `shared/src/maps.ts`): effective = class
+  `visionRange` x `visionScale` (fully fogged, hide and target limit);
+  clear = effective x `visionClearFraction`; relevancy = effective +
+  `relevancyMarginCm` (server line of sight and net relevancy, and the fog
+  renderer's lit polygon). Firelight range defaults to 1.5 x effective.
+- **Hooks:** `ValhallaAtmosphere::GetBaseVisionRange(PlayerState)` is the one
+  place buff and race vision modifiers (B-20) multiply in;
+  `ValhallaAtmosphere::ResolveCameraMaxArm(Profile, PlayerState)` is where a
+  per-class camera modifier would go (the camera limit stays per zone).
+- **Values:** Eldmoor 1.3333 / 0.625 / 100 — a 12 m class is clear to 10 m,
+  fully fogged at 16 m, sent to 17 m (as before); a rogue 11.3 / 18 / 19 m; a
+  ranger 15 / 24 / 25 m. Greyfell 0.5833 / 0.571 / 100 — 12 m class 4 / 7 /
+  8 m; ranger 6 / 10.5 / 11.5 m. Grasslands and the Desert have no profile and
+  are unchanged.
+- **Web editor:** the Zones page has the three fields and a per-class preview
+  table (clear / fully fogged / sent to) computed with `resolveZoneVision`.

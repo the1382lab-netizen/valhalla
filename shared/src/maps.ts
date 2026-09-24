@@ -31,19 +31,33 @@ export interface ZoneConnection {
  * Every field is optional, and a missing field (or a missing `atmosphere`
  * object) means "exactly what the world does today": the global L_World
  * lighting, no vision fog, the character's own camera limit and the class
- * vision range for relevancy. The Unreal client blends to a zone's profile over
- * about a second when the local player walks into it; the server uses
- * `netRelevancyRadiusCm` to stop sending actors the player cannot see.
+ * vision range for line of sight and relevancy. The Unreal client blends to a
+ * zone's profile over about a second when the local player walks into it.
+ *
+ * Vision is relative to each player (see resolveZoneVision): the zone scales
+ * the player's class vision range (classes.json `visionRange`), so a ranger
+ * still sees further than a wizard in the mist.
  *
  * Distances are centimetres (1 tile = 64 cm). Colours are `#rrggbb` (sRGB).
  */
 export interface ZoneAtmosphere {
   /** Designer note (e.g. "starting values, tune in playtest"). Ignored by the game. */
   notes?: string;
-  /** Vision fog: ground distance from the player that stays fully clear. */
-  visionClearRadiusCm?: number;
-  /** Vision fog: width of the soft fade from clear to fully fogged. */
-  visionFadeWidthCm?: number;
+  /**
+   * Vision fog on, and how far each player sees in this zone: their class
+   * vision range x this = their effective range, where the fog is fully
+   * opaque. Absent = no vision fog and the class range unchanged.
+   * E.g. 1.3333 turns a 12 m class into 16 m.
+   */
+  visionScale?: number;
+  /** The part of the effective range that stays clear (0 to <1). Default 0.625. */
+  visionClearFraction?: number;
+  /**
+   * The server sends NPCs, players and loot bags out to the effective range
+   * plus this margin (line of sight and net relevancy). Default 100.
+   * Aggro range is unaffected.
+   */
+  relevancyMarginCm?: number;
   /** Colour of the vision fog, and of the height fog (the horizon when the camera tilts up). */
   fogColor?: string;
   /** ExponentialHeightFog density. Today's global value is 0.012. */
@@ -59,20 +73,55 @@ export interface ZoneAtmosphere {
   /** Furthest the camera may zoom out, boom length in cm (the character's own limit is 2600). */
   cameraMaxArmCm?: number;
   /**
-   * Server relevancy: a player is not sent NPCs, players or loot bags further
-   * than this from them. Caps the class vision range (1200–1800); never raises
-   * it. Should sit at or just above the fully fogged distance
-   * (visionClearRadiusCm + visionFadeWidthCm). Aggro range is unaffected.
-   */
-  netRelevancyRadiusCm?: number;
-  /**
    * How strongly fires, braziers and lamp posts (lights tagged by
    * fire_lights.py / lamp_lights.py, or `ValhallaBeacon`) glow through the
    * vision fog. 1 = default, 0 = off. Only matters with vision fog.
    */
   firelightGlow?: number;
-  /** Glows fade out beyond this ground distance from the player. Default 1.5 x the fully fogged distance. */
+  /** Glows fade out beyond this ground distance from the player. Default 1.5 x the player's effective range. */
   firelightRangeCm?: number;
+}
+
+/** Defaults for the relative vision fields (same numbers as FValhallaAtmosphereProfile). */
+export const DEFAULT_VISION_CLEAR_FRACTION = 0.625;
+export const DEFAULT_RELEVANCY_MARGIN_CM = 100;
+/** classes.json `visionRange` when a class has none (Valhalla::DefaultVisionRange). */
+export const DEFAULT_CLASS_VISION_RANGE_CM = 1200;
+
+/** One player's vision in a zone; every distance comes from the effective range. */
+export interface ZoneVision {
+  /** The player's own range: class vision range (x buff/race modifiers, later). */
+  baseRangeCm: number;
+  /** base x visionScale: fully fogged here; the hide and target limit. */
+  effectiveRangeCm: number;
+  /** Clear out to here: effective x visionClearFraction. */
+  clearRadiusCm: number;
+  /** Server line of sight and relevancy: effective + relevancyMarginCm. */
+  relevancyRangeCm: number;
+  hasVisionFog: boolean;
+}
+
+/**
+ * The vision formula — the TypeScript twin of the game's
+ * ValhallaAtmosphere::ResolveVision (ValhallaZoneAtmosphere.h). Used by the
+ * web editor's per-class preview; keep the two in step.
+ */
+export function resolveZoneVision(classRangeCm: number | undefined, atmosphere: ZoneAtmosphere | undefined): ZoneVision {
+  const base = classRangeCm && classRangeCm > 0 ? classRangeCm : DEFAULT_CLASS_VISION_RANGE_CM;
+  const scale = atmosphere?.visionScale ?? 0;
+  if (!(scale > 0)) {
+    return { baseRangeCm: base, effectiveRangeCm: base, clearRadiusCm: base, relevancyRangeCm: base, hasVisionFog: false };
+  }
+  const effective = Math.max(1, base * scale);
+  const fraction = Math.min(0.99, Math.max(0, atmosphere?.visionClearFraction ?? DEFAULT_VISION_CLEAR_FRACTION));
+  const margin = Math.max(0, atmosphere?.relevancyMarginCm ?? DEFAULT_RELEVANCY_MARGIN_CM);
+  return {
+    baseRangeCm: base,
+    effectiveRangeCm: effective,
+    clearRadiusCm: effective * fraction,
+    relevancyRangeCm: effective + margin,
+    hasVisionFog: true,
+  };
 }
 
 export interface ZoneConfig {

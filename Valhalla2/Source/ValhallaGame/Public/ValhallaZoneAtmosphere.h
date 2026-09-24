@@ -10,30 +10,78 @@
 class AValhallaCharacter;
 class AValhallaFogRenderer;
 class AValhallaPlayerController;
+class AValhallaPlayerState;
 class UCameraComponent;
 class UExponentialHeightFogComponent;
 class ULightComponent;
 class USkyLightComponent;
 
 /**
- * B-06: per-zone atmosphere lookups, shared by the client presentation
- * (AValhallaZoneAtmosphere), the server's relevancy (GetVisionRangeFor) and
- * target validation (AValhallaPlayerState::SetTargetActor).
+ * One player's vision in one zone. Every distance is derived from the one
+ * effective range, so the server's line of sight and relevancy, the client's
+ * vision fog, hide-beyond-fog and the target refusal can never disagree.
+ */
+struct FValhallaVision
+{
+	/** The player's own range before the zone: class vision range (x buff/race modifiers, later). */
+	float BaseRangeCm = 0.f;
+
+	/** Base x the zone's visionScale. The vision fog is fully opaque here; hide and target limit. */
+	float EffectiveRangeCm = 0.f;
+
+	/** The vision fog is clear out to here (effective x visionClearFraction). */
+	float ClearRadiusCm = 0.f;
+
+	/** Server line of sight and net relevancy (effective + relevancyMarginCm). */
+	float RelevancyRangeCm = 0.f;
+
+	/** False in a zone without vision fog: all four are the base range, as before B-06. */
+	bool bHasVisionFog = false;
+};
+
+/**
+ * B-06: per-zone atmosphere and vision, shared by the client presentation
+ * (AValhallaZoneAtmosphere), the server's line of sight and relevancy
+ * (UValhallaVisibilitySubsystem::GetVisionRangeFor) and target validation
+ * (AValhallaPlayerState::SetTargetActor).
  *
- * All three read `zones.json` through UValhallaDataSubsystem on every call, so
- * a hot reload of the data takes effect on the next frame with nothing cached
- * here to invalidate.
+ * Everything reads `zones.json` through UValhallaDataSubsystem on every call,
+ * so a hot reload of the data takes effect on the next frame with nothing
+ * cached here to invalidate.
  */
 namespace ValhallaAtmosphere
 {
 	/** The zone's atmosphere, or null when it has none (today's look) or the data is not loaded. */
 	VALHALLAGAME_API const FValhallaAtmosphereProfile* Find(const UObject* WorldContextObject, FName ZoneId);
 
-	/** The zone's server relevancy cap, cm. 0: no cap (class vision range only). */
-	VALHALLAGAME_API float GetRelevancyCapCm(const UObject* WorldContextObject, FName ZoneId);
+	/**
+	 * The player's own vision range before any zone: `classes.json`
+	 * `visionRange` (1200 most classes, 1350 rogue, 1800 ranger), or 1200
+	 * without a player state.
+	 *
+	 * THE hook for personal vision modifiers: when B-20 buffs (or races) change
+	 * how far someone sees, multiply them in here and every consumer — fog,
+	 * hide, targeting, line of sight, relevancy — follows.
+	 */
+	VALHALLAGAME_API float GetBaseVisionRange(const AValhallaPlayerState* State);
 
-	/** Where the zone's vision fog is fully opaque, cm. 0: no vision fog. */
-	VALHALLAGAME_API float GetVisionLimitCm(const UObject* WorldContextObject, FName ZoneId);
+	/**
+	 * The player's vision in a zone: base range x the zone's `visionScale`,
+	 * with the clear radius and the relevancy range derived from it. ZoneId
+	 * None uses the player state's replicated ZoneId (the server's answer); the
+	 * client's atmosphere passes the zone its pawn is standing in.
+	 */
+	VALHALLAGAME_API FValhallaVision ResolveVision(const AValhallaPlayerState* State, FName ZoneId = NAME_None);
+
+	/** ResolveVision(...).EffectiveRangeCm — where this player's vision fog is fully opaque. */
+	VALHALLAGAME_API float GetEffectiveVisionRange(const AValhallaPlayerState* State, FName ZoneId = NAME_None);
+
+	/**
+	 * The camera's maximum boom length for this player in this zone, cm; 0 =
+	 * the character's own limit. Per zone today. A per-class (or per-ability)
+	 * camera modifier, e.g. a ranger's wider view, goes here.
+	 */
+	VALHALLAGAME_API float ResolveCameraMaxArm(const FValhallaAtmosphereProfile* Profile, const AValhallaPlayerState* State);
 }
 
 /**
@@ -150,7 +198,7 @@ private:
 	void CaptureBaseline();
 
 	/** The state a profile asks for. Null profile: the baseline. */
-	FValhallaAtmosphereState BuildTarget(const FValhallaAtmosphereProfile* Profile) const;
+	FValhallaAtmosphereState BuildTarget(const FValhallaAtmosphereProfile* Profile, const FValhallaVision& Vision, const AValhallaPlayerState* State) const;
 
 	/** Push a state onto the world, the camera and PP_Fog. */
 	void ApplyState(const FValhallaAtmosphereState& State, AValhallaCharacter* Pawn, bool bBlendFinished);

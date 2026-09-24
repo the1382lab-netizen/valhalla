@@ -21,7 +21,9 @@
 #include "ValhallaFogRenderer.h"
 #include "ValhallaLootBag.h"
 #include "ValhallaNPC.h"
+#include "ValhallaConstants.h"
 #include "ValhallaPlayerController.h"
+#include "ValhallaPlayerState.h"
 #include "ValhallaVisibilitySubsystem.h"
 #include "ValhallaZoneSubsystem.h"
 
@@ -43,16 +45,49 @@ const FValhallaAtmosphereProfile* ValhallaAtmosphere::Find(const UObject* WorldC
 	return (Zone && Zone->bHasAtmosphere) ? &Zone->Atmosphere : nullptr;
 }
 
-float ValhallaAtmosphere::GetRelevancyCapCm(const UObject* WorldContextObject, FName ZoneId)
+float ValhallaAtmosphere::GetBaseVisionRange(const AValhallaPlayerState* State)
 {
-	const FValhallaAtmosphereProfile* Atmosphere = Find(WorldContextObject, ZoneId);
-	return Atmosphere ? Atmosphere->NetRelevancyRadiusCm : 0.f;
+	const float ClassRange = (State && State->VisionRange > 0.f)
+		? State->VisionRange
+		: static_cast<float>(Valhalla::DefaultVisionRange);
+
+	// B-20 (buffs) and races: multiply personal vision modifiers in here.
+	return ClassRange;
 }
 
-float ValhallaAtmosphere::GetVisionLimitCm(const UObject* WorldContextObject, FName ZoneId)
+FValhallaVision ValhallaAtmosphere::ResolveVision(const AValhallaPlayerState* State, FName ZoneId)
 {
-	const FValhallaAtmosphereProfile* Atmosphere = Find(WorldContextObject, ZoneId);
-	return Atmosphere ? Atmosphere->GetVisionLimitCm() : 0.f;
+	FValhallaVision Vision;
+	Vision.BaseRangeCm = GetBaseVisionRange(State);
+	Vision.EffectiveRangeCm = Vision.BaseRangeCm;
+	Vision.ClearRadiusCm = Vision.BaseRangeCm;
+	Vision.RelevancyRangeCm = Vision.BaseRangeCm;
+
+	const FName Zone = !ZoneId.IsNone() ? ZoneId : (State ? State->ZoneId : NAME_None);
+	const FValhallaAtmosphereProfile* Profile = State ? Find(State, Zone) : nullptr;
+	if (!Profile || !Profile->HasVisionFog())
+	{
+		// No vision fog: exactly the pre-B-06 class range for everything.
+		return Vision;
+	}
+
+	Vision.bHasVisionFog = true;
+	Vision.EffectiveRangeCm = FMath::Max(1.f, Vision.BaseRangeCm * Profile->VisionScale);
+	Vision.ClearRadiusCm = Vision.EffectiveRangeCm * FMath::Clamp(Profile->VisionClearFraction, 0.f, 0.99f);
+	Vision.RelevancyRangeCm = Vision.EffectiveRangeCm + FMath::Max(0.f, Profile->RelevancyMarginCm);
+	return Vision;
+}
+
+float ValhallaAtmosphere::GetEffectiveVisionRange(const AValhallaPlayerState* State, FName ZoneId)
+{
+	return ResolveVision(State, ZoneId).EffectiveRangeCm;
+}
+
+float ValhallaAtmosphere::ResolveCameraMaxArm(const FValhallaAtmosphereProfile* Profile, const AValhallaPlayerState* /*State*/)
+{
+	// Per zone today. A per-class camera modifier (a ranger's wider view,
+	// B-20a) would scale this by something read off the player state.
+	return (Profile && Profile->CameraMaxArmCm > 0.f) ? Profile->CameraMaxArmCm : 0.f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -308,7 +343,7 @@ void AValhallaZoneAtmosphere::CaptureBaseline()
 		SkyLight.IsValid() ? TEXT("found") : TEXT("MISSING"), Baseline.SkyIntensity);
 }
 
-FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaAtmosphereProfile* Profile) const
+FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaAtmosphereProfile* Profile, const FValhallaVision& Vision, const AValhallaPlayerState* State) const
 {
 	FValhallaAtmosphereState Out = Baseline;
 
@@ -353,21 +388,24 @@ FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaAtm
 		Out.GradeTint = Profile->GradeTint;
 	}
 
-	if (Profile->HasVisionFog())
+	if (Vision.bHasVisionFog)
 	{
-		Out.VisionClearRadiusCm = Profile->VisionClearRadiusCm;
-		Out.VisionFadeWidthCm = FMath::Max(1.f, Profile->VisionFadeWidthCm);
+		// This player's own distances: a ranger's mist starts further out
+		// than a wizard's. See ValhallaAtmosphere::ResolveVision.
+		Out.VisionClearRadiusCm = Vision.ClearRadiusCm;
+		Out.VisionFadeWidthCm = FMath::Max(1.f, Vision.EffectiveRangeCm - Vision.ClearRadiusCm);
 		Out.VisionFogColor = Profile->bHasFogColor ? Profile->FogColor : Baseline.HeightFogColor;
 		Out.VisionFogStrength = 1.f;
 		Out.FirelightStrength = Profile->FirelightGlow;
 		Out.FirelightRangeCm = Profile->FirelightRangeCm > 0.f
 			? Profile->FirelightRangeCm
-			: Profile->GetVisionLimitCm() * DefaultFirelightRangeScale;
+			: Vision.EffectiveRangeCm * DefaultFirelightRangeScale;
 	}
 
-	if (Profile->CameraMaxArmCm > 0.f)
+	const float CameraMax = ValhallaAtmosphere::ResolveCameraMaxArm(Profile, State);
+	if (CameraMax > 0.f)
 	{
-		Out.CameraMaxArmCm = FMath::Clamp(Profile->CameraMaxArmCm, AValhallaCharacter::CameraArmMin, AValhallaCharacter::CameraArmMax);
+		Out.CameraMaxArmCm = FMath::Clamp(CameraMax, AValhallaCharacter::CameraArmMin, AValhallaCharacter::CameraArmMax);
 	}
 
 	return Out;
@@ -427,9 +465,14 @@ void AValhallaZoneAtmosphere::Tick(float DeltaSeconds)
 	// Looked up every frame rather than on the zone change alone: a data hot
 	// reload (the web editor's Zones page) changes the profile with no event,
 	// and this is one map lookup.
+	//
+	// The vision distances are this player's own (class range x the zone's
+	// scale), for the zone the pawn is standing in.
 	const FValhallaAtmosphereProfile* Profile = ValhallaAtmosphere::Find(this, CurrentZoneId);
-	const FValhallaAtmosphereState NewTarget = BuildTarget(Profile);
-	HideLimitCm = Profile ? Profile->GetVisionLimitCm() : 0.f;
+	const AValhallaPlayerState* LocalState = Pawn ? Pawn->GetValhallaPlayerState() : nullptr;
+	const FValhallaVision Vision = ValhallaAtmosphere::ResolveVision(LocalState, CurrentZoneId);
+	const FValhallaAtmosphereState NewTarget = BuildTarget(Profile, Vision, LocalState);
+	HideLimitCm = Vision.bHasVisionFog ? Vision.EffectiveRangeCm : 0.f;
 
 	if (!bHaveState)
 	{

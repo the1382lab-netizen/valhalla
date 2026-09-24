@@ -613,8 +613,16 @@ namespace
 	/** maps.ts `ZoneAtmosphere` (B-06). Every field optional; see FValhallaAtmosphereProfile for the defaults. */
 	void ParseZoneAtmosphere(const TSharedPtr<FJsonObject>& Obj, FValhallaAtmosphereProfile& Out, const FString& Context)
 	{
-		OptNonNegative(Obj, TEXT("visionClearRadiusCm"), Out.VisionClearRadiusCm, Context);
-		OptNonNegative(Obj, TEXT("visionFadeWidthCm"), Out.VisionFadeWidthCm, Context);
+		OptNonNegative(Obj, TEXT("visionScale"), Out.VisionScale, Context);
+		OptNonNegative(Obj, TEXT("visionClearFraction"), Out.VisionClearFraction, Context);
+		OptNonNegative(Obj, TEXT("relevancyMarginCm"), Out.RelevancyMarginCm, Context);
+		if (Out.VisionClearFraction >= 1.f)
+		{
+			UE_LOG(LogValhallaCore, Warning,
+				TEXT("[ValhallaData] %s: visionClearFraction %.3f must be below 1 — using %.3f."),
+				*Context, Out.VisionClearFraction, FValhallaAtmosphereProfile::DefaultVisionClearFraction);
+			Out.VisionClearFraction = FValhallaAtmosphereProfile::DefaultVisionClearFraction;
+		}
 		Out.bHasFogColor = OptHexColour(Obj, TEXT("fogColor"), Out.FogColor, Context);
 		OptNonNegative(Obj, TEXT("heightFogDensity"), Out.HeightFogDensity, Context);
 		OptNonNegative(Obj, TEXT("heightFogStartCm"), Out.HeightFogStartCm, Context);
@@ -622,16 +630,18 @@ namespace
 		OptNonNegative(Obj, TEXT("skyLightIntensityScale"), Out.SkyLightIntensityScale, Context);
 		Out.bHasGradeTint = OptHexColour(Obj, TEXT("gradeTint"), Out.GradeTint, Context);
 		OptNonNegative(Obj, TEXT("cameraMaxArmCm"), Out.CameraMaxArmCm, Context);
-		OptNonNegative(Obj, TEXT("netRelevancyRadiusCm"), Out.NetRelevancyRadiusCm, Context);
 		OptNonNegative(Obj, TEXT("firelightGlow"), Out.FirelightGlow, Context);
 		OptNonNegative(Obj, TEXT("firelightRangeCm"), Out.FirelightRangeCm, Context);
 
-		const float VisionLimit = Out.GetVisionLimitCm();
-		if (VisionLimit > 0.f && Out.NetRelevancyRadiusCm > 0.f && Out.NetRelevancyRadiusCm < VisionLimit)
+		// The pre-follow-up absolute fields: say so rather than silently ignore.
+		for (const TCHAR* Retired : { TEXT("visionClearRadiusCm"), TEXT("visionFadeWidthCm"), TEXT("netRelevancyRadiusCm") })
 		{
-			UE_LOG(LogValhallaCore, Warning,
-				TEXT("[ValhallaData] %s: netRelevancyRadiusCm %.0f is inside the vision fog (fully fogged at %.0f) — NPCs will pop in where the fog is still see-through."),
-				*Context, Out.NetRelevancyRadiusCm, VisionLimit);
+			if (Obj.IsValid() && Obj->HasField(Retired))
+			{
+				UE_LOG(LogValhallaCore, Warning,
+					TEXT("[ValhallaData] %s: '%s' is no longer used — vision is visionScale x the class range now."),
+					*Context, Retired);
+			}
 		}
 	}
 

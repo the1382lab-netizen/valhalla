@@ -55,7 +55,7 @@ run through them.
 import unreal
 
 from valhalla_tools.build_zone import (
-    FLOOR_TOP, TILE, WALL_HEIGHT, N, ZoneBuilder, rnd, tile_xy,
+    FLOOR_TOP, TILE, WALL_HEIGHT, N, ZoneBuilder, rnd, run_builder, tile_xy,
 )
 
 LEVEL_PATH = "/Game/Valhalla/Maps/Zones/L_Grasslands"
@@ -566,8 +566,19 @@ class Grasslands(ZoneBuilder):
         self.write_overlay()
 
 
-def build():
-    builder = Grasslands()
-    result = builder.build()
+#: The builder class, for `build_world.build_zone_level`.
+BUILDER = Grasslands
+
+
+def build(force=False, backup=True):
+    """Build the zone into the open level and write its overlay.
+
+    B-05: refuses (places nothing, returns ``{"ok": False, "refused": ...}``)
+    when the open level is listed in ``maps/handedited.json``, and skips the
+    overlay when ``grasslands`` is listed there, unless ``force=True`` — which first
+    backs both up to ``Saved/LevelBackups/<timestamp>/``. See
+    ``build_zone.run_builder``.
+    """
+    result = run_builder(Grasslands, force=force, backup=backup)
     unreal.log("VALHALLA_GRASSLANDS " + str(result))
     return result

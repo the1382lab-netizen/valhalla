@@ -179,7 +179,10 @@ class ZoneBuilder(object):
     #: zone can draw on several kits — the town props live in their own.
     KITS = []
 
-    def __init__(self):
+    def __init__(self, force=False):
+        #: B-05: without it, `write_overlay` skips an overlay listed in
+        #: `maps/handedited.json`. See `valhalla_tools/level_protection.py`.
+        self.force = force
         self.actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
         self._mesh_cache = {}
         self._fields = {}
@@ -495,12 +498,24 @@ class ZoneBuilder(object):
         portal's overlay coordinate is checked against the portal actor's
         position by `ValidateOverlayPoint`, and the only way to keep those in
         step across a rebuild is for one pass to emit both.
+
+        B-05: an overlay listed in `maps/handedited.json` is hand-edited and is
+        left alone unless the builder was made with `force=True`; the skip is
+        recorded in `notes["overlaySkipped"]` and nothing is written.
         """
+        from valhalla_tools import level_protection
+
         directory = overlay_dir()
+        path = os.path.join(directory, "{}.json".format(self.ZONE_ID)).replace("\\", "/")
+
+        if not self.force and level_protection.is_overlay_protected(self.ZONE_ID):
+            message = level_protection.refusal_message(overlays=[self.ZONE_ID])
+            unreal.log_warning("VALHALLA_ZONE " + message)
+            self.notes["overlaySkipped"] = path
+            return None
+
         if not os.path.isdir(directory):
             os.makedirs(directory)
-
-        path = os.path.join(directory, "{}.json".format(self.ZONE_ID)).replace("\\", "/")
         document = {
             "version": "2.0",
             "units": "cm",
@@ -525,3 +540,50 @@ class ZoneBuilder(object):
             "overlayPoints": len(self.overlay_points),
             "notes": self.notes,
         }
+
+
+# ── B-05: the guarded entry point ───────────────────────────────────────
+
+
+def _current_level_path():
+    level = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).get_current_level()
+    return level.get_outer().get_path_name().split(".")[0] if level else ""
+
+
+def run_builder(builder_cls, force=False, backup=True):
+    """Run a zone builder into the open level, honouring `maps/handedited.json`.
+
+    What `build_grasslands.build()` / `build_desert.build()` call. The builder
+    places actors into *whatever level is current*, so:
+
+    * current level listed in the marker and `force` False: refuse — nothing
+      is placed and nothing written; returns `{"ok": False, "refused": ...}`.
+    * the zone's overlay listed and `force` False: the level is built but the
+      overlay is not written (`notes["overlaySkipped"]`).
+    * `force` True and `backup` True: the current level's files and the
+      overlay are copied to `Saved/LevelBackups/<timestamp>/` first.
+
+    `build_world.build_all` makes these checks itself (it has to decide before
+    emptying the level) and calls this with `backup=False`.
+    """
+    from valhalla_tools import level_protection
+
+    marker = level_protection.load_marker()
+    current = _current_level_path()
+    zone_id = builder_cls.ZONE_ID
+
+    if not force and current and level_protection.is_level_protected(current, marker):
+        message = level_protection.refusal_message(levels=[current], marker=marker)
+        unreal.log_warning("VALHALLA_ZONE " + message)
+        return {"ok": False, "zoneId": zone_id, "refused": {"levels": [current]},
+                "message": message}
+
+    backup_folder = None
+    if force and backup:
+        backup_folder = level_protection.backup_targets(
+            [current] if current.startswith("/Game/") else [], [zone_id])["folder"]
+
+    result = builder_cls(force=force).build()
+    if backup_folder:
+        result["backup"] = backup_folder
+    return result

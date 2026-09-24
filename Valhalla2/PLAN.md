@@ -873,9 +873,31 @@ in place for `valhalla.Visual.BodyProfile 0`.
 - [ ] The game connection (UDP 7777) is unencrypted and carries the JWT in the
       join URL; the `Join request` log line still prints it in full.
 
+## B-05 — hand-edited level protection (2026-09-23)
+
+- [x] **Marker.** `maps/handedited.json` (next to `overlays-2.0/`) lists the
+      hand-edited levels (`L_World`, `Zones/L_Grasslands`, `Zones/L_Desert`)
+      and overlays (`grasslands`, `desert`). Edit it to protect or release one.
+- [x] **The rebuild tools refuse them.** `build_world_levels` /
+      `build_world.build_all`, `build_grasslands.build` / `build_desert.build`
+      (refuse when the open level is marked), `ZoneBuilder.write_overlay` and
+      `npc_setup.migrate_overlay_spawns` skip every marked level/overlay, name
+      it in `skipped` / `message`, and still build anything unmarked (a new
+      zone). With everything marked the MCP call changes nothing: verified by
+      `.umap` mtimes and overlay md5s before/after.
+- [x] **To force:** `build_world_levels(force=True)` (or `build(force=True)`).
+      Only when Kevin asks for his hand edits to be discarded. It first copies
+      the old `.umap` / `_BuiltData.uasset` / overlay JSONs to
+      `Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`, paths relative to the repo root,
+      and logs the folder. Logic and self-check:
+      `valhalla_tools/level_protection.py` (`self_check()`, 13 checks).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder
 "Valhalla 2.0 Backlog": the index document "Valhalla 2.0 — Backlog"
 (https://docs.google.com/document/d/1pGBSZFRmC25Vw6mJIIcS9fPpWIo_ufkfvQ_qNeDPWCk/edit)
 links one plan document per item (B-01 ...). Check it before starting new work.
+
+Current index (2026-09-23, supersedes the link above): "Valhalla 2.0 — Backlog"
+(https://docs.google.com/document/d/11_6hlP2HgrbNl8QTKk3NRAx1t_sf1rAE9gqlseRyW-A/edit).

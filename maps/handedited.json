@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "levels": [
+    "/Game/Valhalla/Maps/L_World",
+    "/Game/Valhalla/Maps/Zones/L_Grasslands",
+    "/Game/Valhalla/Maps/Zones/L_Desert"
+  ],
+  "overlays": [
+    "grasslands",
+    "desert"
+  ],
+  "note": "Listed levels/overlays are hand-edited; the rebuild tool refuses to overwrite them without force=True"
+}

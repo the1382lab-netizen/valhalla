@@ -52,7 +52,7 @@ for. The one deliberate gap is on the west, where the portal stands.
 import unreal
 
 from valhalla_tools.build_zone import (
-    N, ZoneBuilder, ring_tiles, rnd, tile_xy,
+    N, ZoneBuilder, ring_tiles, rnd, run_builder, tile_xy,
 )
 
 LEVEL_PATH = "/Game/Valhalla/Maps/Zones/L_Desert"
@@ -449,8 +449,19 @@ class Desert(ZoneBuilder):
         self.write_overlay()
 
 
-def build():
-    builder = Desert()
-    result = builder.build()
+#: The builder class, for `build_world.build_zone_level`.
+BUILDER = Desert
+
+
+def build(force=False, backup=True):
+    """Build the zone into the open level and write its overlay.
+
+    B-05: refuses (places nothing, returns ``{"ok": False, "refused": ...}``)
+    when the open level is listed in ``maps/handedited.json``, and skips the
+    overlay when ``desert`` is listed there, unless ``force=True`` — which first
+    backs both up to ``Saved/LevelBackups/<timestamp>/``. See
+    ``build_zone.run_builder``.
+    """
+    result = run_builder(Desert, force=force, backup=backup)
     unreal.log("VALHALLA_DESERT " + str(result))
     return result

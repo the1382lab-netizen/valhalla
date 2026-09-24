@@ -38,7 +38,11 @@ def _fail(message: str, **kwargs) -> str:
 
 @unreal.uclass()
 class ValhallaLevelTools(unreal.ToolsetDefinition):
-    """Level creation and saving, and simple material authoring."""
+    """Level creation and saving, and simple material authoring.
+
+    Levels and overlays listed in ``<repo>/maps/handedited.json`` are
+    hand-edited: ``build_world_levels`` skips them unless ``force=True`` (B-05).
+    """
 
     @toolset_registry.tool_call
     @staticmethod
@@ -82,28 +86,52 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
 
     @toolset_registry.tool_call
     @staticmethod
-    def build_world_levels() -> str:
-        """Rebuild `L_World`, `L_Grasslands` and `L_Desert`, and both overlays.
+    def build_world_levels(force: bool = False) -> str:
+        """Rebuild `L_World`, `L_Grasslands` and `L_Desert`, and both overlays — except hand-edited ones.
 
-        Replaces all three levels from scratch and writes
-        ``<1.0 repo>/maps/overlays-2.0/{grasslands,desert}.json`` as a side
-        effect, because the overlay's portal coordinates are checked against
-        the level's portal actors and the only way to keep those in step across
-        a rebuild is for one pass to emit both.
+        HAND-EDITED LEVELS ARE PROTECTED (B-05). Every level or overlay listed
+        in ``<repo>/maps/handedited.json`` — today ``L_World``,
+        ``L_Grasslands``, ``L_Desert`` and the ``grasslands`` / ``desert``
+        overlays, i.e. everything this tool builds — is SKIPPED unless
+        ``force=True``: not opened, not emptied, not saved. The result's
+        ``skipped`` names each one; anything not listed (a new zone) still
+        builds. With nothing left to build it returns without touching the
+        editor. Do not pass ``force=True`` unless Kevin explicitly asks for
+        his hand edits to be thrown away. A forced run first copies the
+        existing ``.umap`` / ``_BuiltData.uasset`` / overlay JSON files to
+        ``Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`` (paths relative to
+        the repo root) and returns that folder as ``backup``. To protect or
+        release a level, edit the marker file.
 
-        Replaces whatever level is currently open, so save first. See
-        ``valhalla_tools/build_world.py`` for the streaming layout and
-        ``build_grasslands.py`` / ``build_desert.py`` for the two themes.
+        An unprotected level is replaced from scratch, and building a zone
+        writes ``<repo>/maps/overlays-2.0/<zone>.json`` as a side effect
+        (unless that overlay is protected), because the overlay's portal
+        coordinates are checked against the level's portal actors and the only
+        way to keep those in step across a rebuild is for one pass to emit
+        both.
+
+        Replaces whatever level is currently open when anything is built, so
+        save first. See ``valhalla_tools/build_world.py`` for the streaming
+        layout, ``build_grasslands.py`` / ``build_desert.py`` for the two
+        themes and ``level_protection.py`` for the marker.
+
+        Args:
+            force: Overwrite levels and overlays listed in
+                ``maps/handedited.json`` (after backing them up). Default
+                False.
 
         Returns:
-            A JSON object as text with keys ``ok``, ``grasslands``, ``desert``
-            and ``world`` — each carrying its actor counts per outliner folder
-            and the measured positions the gate needs.
+            A JSON object as text with keys ``ok``, ``force``, ``skipped``
+            (``levels`` and ``overlays`` left alone), ``built``,
+            ``overlaysWritten``, ``message`` (when anything was skipped),
+            ``backup`` (forced runs), and per built zone ``grasslands`` /
+            ``desert`` plus ``world`` — each carrying its actor counts per
+            outliner folder and the measured positions the gate needs.
         """
         from valhalla_tools import build_world
 
         try:
-            return _ok(**build_world.build_all())
+            return _ok(**build_world.build_all(force=force))
         except Exception as exc:  # noqa: BLE001 - reported, never raised at MCP
             import traceback
             return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])

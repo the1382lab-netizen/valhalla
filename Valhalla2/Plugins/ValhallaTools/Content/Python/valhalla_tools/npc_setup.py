@@ -204,12 +204,23 @@ def _ring(point):
              point["y"] + math.sin(2.0 * math.pi * i / count) * radius) for i in range(count)]
 
 
-def migrate_overlay_spawns():
-    """Replace overlay enemy/NPC spawns with NPC Spawn Points. Needs L_World open."""
+def migrate_overlay_spawns(force=False):
+    """Replace overlay enemy/NPC spawns with NPC Spawn Points. Needs L_World open.
+
+    B-05: an overlay listed in `maps/handedited.json` is hand-edited, so its
+    zone is skipped (reported as such, nothing placed or rewritten) unless
+    `force=True`.
+    """
+    from valhalla_tools import level_protection
+
     world = unreal.EditorLevelLibrary.get_editor_world()
     report = {}
+    marker = level_protection.load_marker()
 
     for zone_id, (level_path, offset) in ZONES.items():
+        if not force and level_protection.is_overlay_protected(zone_id, marker):
+            report[zone_id] = level_protection.refusal_message(overlays=[zone_id], marker=marker)
+            continue
         overlay_path = os.path.join(overlay_dir(), "{}.json".format(zone_id))
         if not os.path.isfile(overlay_path):
             report[zone_id] = "no overlay"
@@ -278,12 +289,12 @@ def migrate_overlay_spawns():
     return report
 
 
-def run_all():
+def run_all(force=False):
     result = {
         "npcTypes": create_npc_types(),
         "sublevels": ensure_world_has_gameplay_levels(),
     }
-    result["migration"] = migrate_overlay_spawns()
+    result["migration"] = migrate_overlay_spawns(force=force)
     _log("VALHALLA_NPC_DONE " + json.dumps(result, default=str))
     return result
 

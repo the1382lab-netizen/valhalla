@@ -8,6 +8,12 @@ Replaces `L_World`, `L_Grasslands` and `L_Desert` in that order, and writes both
 zones' overlay files as a side effect of building them. Anything unsaved in
 whatever level is open is lost, so save first.
 
+**B-05: hand-edited levels are protected.** Every level and overlay listed in
+`<repo>/maps/handedited.json` — today all three levels and both overlays — is
+skipped unless `build_all(force=True)`, and a forced run backs the old files up
+to `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/` first. See `build_all` and
+`valhalla_tools/level_protection.py`.
+
 ## The structure, and why it is this one
 
     /Game/Valhalla/Maps/L_World                 persistent: lighting only
@@ -62,7 +68,7 @@ zone bounds: the box is a level actor, so it arrives already offset.
 
 import unreal
 
-from valhalla_tools import build_desert, build_grasslands
+from valhalla_tools import build_desert, build_grasslands, level_protection
 from valhalla_tools.build_zone import ZONE_CM
 
 WORLD_PATH = "/Game/Valhalla/Maps/L_World"
@@ -237,12 +243,19 @@ def _open_empty_level(level_path):
     return current_path
 
 
-def build_zone_level(level_path, builder_module):
-    """Create one zone sublevel from scratch and run its builder into it."""
+def build_zone_level(level_path, builder_module, force=False):
+    """Create one zone sublevel from scratch and run its builder into it.
+
+    The caller (`build_all`) has already refused a protected level and made the
+    backup; `force` here only decides whether a protected *overlay* is written.
+    """
     _log("building {}".format(level_path))
 
     _open_empty_level(level_path)
-    result = builder_module.build()
+    # The builder class directly, not `builder_module.build()`: the level is
+    # now empty, so re-checking it against the marker would be checking the
+    # rebuild this call was already allowed to make.
+    result = builder_module.BUILDER(force=force).build()
 
     if not _levels().save_current_level():
         raise RuntimeError("could not save {}".format(level_path))
@@ -476,14 +489,78 @@ def build_world():
 PARK_LEVEL = "/Game/Valhalla/Maps/L_GreyBox"
 
 
-def build_all():
+#: `(zone id, builder module)`, in build order. A new zone from the Blender
+#: kit is one more line here; it is not in `maps/handedited.json`, so it builds.
+ZONE_BUILDERS = [
+    ("grasslands", build_grasslands),
+    ("desert", build_desert),
+]
+
+
+def plan_rebuild(force=False, marker=None):
+    """What `build_all(force)` would build and skip. Pure: touches nothing.
+
+    B-05. A level or overlay listed in `maps/handedited.json` is skipped unless
+    `force`. A skipped zone level writes no overlay either (the overlay is a
+    by-product of building the level), and a built zone whose overlay is
+    listed is built without writing it.
+    """
+    marker = marker if marker is not None else level_protection.load_marker()
+    zone_levels = [module.LEVEL_PATH for _zone, module in ZONE_BUILDERS]
+    all_levels = zone_levels + [WORLD_PATH]
+    all_overlays = [zone for zone, _module in ZONE_BUILDERS]
+
+    if force:
+        skipped_levels, skipped_overlays = [], []
+    else:
+        skipped_levels = [p for p in all_levels if level_protection.is_level_protected(p, marker)]
+        skipped_overlays = [z for z in all_overlays
+                            if level_protection.is_overlay_protected(z, marker)]
+
+    zones = [(zone, module) for zone, module in ZONE_BUILDERS
+             if module.LEVEL_PATH not in skipped_levels]
+    return {
+        "zones": zones,
+        "buildWorld": WORLD_PATH not in skipped_levels,
+        "levels": [m.LEVEL_PATH for _z, m in zones]
+                  + ([WORLD_PATH] if WORLD_PATH not in skipped_levels else []),
+        "overlays": [z for z, _m in zones if z not in skipped_overlays],
+        "skipped": {"levels": skipped_levels, "overlays": skipped_overlays},
+        "marker": marker["path"],
+    }
+
+
+def build_all(force=False):
     """The sublevels first, then the level that references them.
+
+    **B-05: hand-edited levels are protected.** Any level or overlay listed in
+    `<repo>/maps/handedited.json` (today `L_World`, `L_Grasslands`,
+    `L_Desert` and both overlays) is skipped — not opened, not emptied, not
+    saved — unless `force=True`; the result's `skipped` names each one and
+    everything unlisted still builds. With nothing left to build this returns
+    before touching the editor at all. A forced run first copies every
+    existing target `.umap` / `_BuiltData.uasset` / overlay JSON to
+    `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/` (paths kept relative to
+    the repo root) and returns that folder as `backup`.
 
     Order matters: `add_level_to_world_with_transform` needs the sublevel asset
     to exist, and building a zone *after* attaching it would mean opening the
     sublevel on its own, which detaches it from the editor's idea of the world
     and is the usual way a streaming setup ends up with an empty sublevel.
     """
+    plan = plan_rebuild(force)
+    result = {"force": bool(force), "skipped": plan["skipped"],
+              "built": plan["levels"], "overlaysWritten": plan["overlays"]}
+    if plan["skipped"]["levels"] or plan["skipped"]["overlays"]:
+        result["message"] = level_protection.refusal_message(
+            plan["skipped"]["levels"], plan["skipped"]["overlays"],
+            level_protection.load_marker(plan["marker"]))
+        unreal.log_warning("VALHALLA_WORLD " + result["message"])
+
+    if not plan["levels"]:
+        _log("nothing to build; every target is hand-edited. Changed nothing.")
+        return result
+
     # Get off `L_World` first, or its two always-loaded sublevels are the two
     # levels this is about to replace. See `PARK_LEVEL`.
     _levels().load_level(PARK_LEVEL)
@@ -496,9 +573,9 @@ def build_all():
     # reaches the levels of the world that happens to be open and would
     # therefore silently skip the very level a failed earlier run left dirty.
     #
-    # Saving rather than refusing is safe here because all three levels this
-    # touches are generated and about to be overwritten; the only thing being
-    # committed is work this run is going to replace.
+    # Saving rather than refusing is safe: a level this run rebuilds is about
+    # to be replaced anyway, and a dirty hand-edited level it skips (B-05) is
+    # only saved, never emptied — committing Kevin's edit, not losing it.
     dirty = [p.get_name() for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()]
     if dirty:
         _log("committing {} unsaved level(s) before rebuilding: {}".format(
@@ -514,12 +591,17 @@ def build_all():
                 "are dirty. Restart the editor and run this again.".format(
                     ", ".join(still_dirty)))
 
-    result = {
-        "grasslands": build_zone_level(build_grasslands.LEVEL_PATH, build_grasslands),
-        "desert": build_zone_level(build_desert.LEVEL_PATH, build_desert),
-    }
+    # After the commit above, so the backup holds any unsaved edit too.
+    if force:
+        backup = level_protection.backup_targets(plan["levels"], plan["overlays"])
+        result["backup"] = backup["folder"]
+        _log("forced rebuild; previous files backed up to {}".format(backup["folder"]))
+
+    for zone, module in plan["zones"]:
+        result[zone] = build_zone_level(module.LEVEL_PATH, module, force=force)
     result["gameplayLevelsCreated"] = ensure_gameplay_levels()
-    result["world"] = build_world()
+    if plan["buildWorld"]:
+        result["world"] = build_world()
 
     _log("VALHALLA_WORLD_DONE " + str(result))
     return result

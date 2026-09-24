@@ -210,6 +210,80 @@ bool UValhallaZoneSubsystem::GetDefaultSpawn(FName InZoneId, FVector& OutLocatio
 	return false;
 }
 
+bool UValhallaZoneSubsystem::FindStandingZ(const UWorld* World, double X, double Y, double TopZ, double BottomZ,
+	float CapsuleRadius, float CapsuleHalfHeight, const AActor* IgnoreActor, double& OutCentreZ)
+{
+	if (!World || TopZ <= BottomZ || CapsuleRadius <= 0.f || CapsuleHalfHeight <= 0.f)
+	{
+		return false;
+	}
+
+	// The walkable-floor limit CharacterMovement uses by default (44.8 deg), and
+	// how far above the terrain a floor can be and still count as "the floor
+	// here": a tavern's ground floor (+6), a bridge deck (~+180 over the river
+	// bed) or the great hall over the undercroft pit (+306) are; a roof
+	// (+360 and up) or a wall top is not.
+	constexpr double MinWalkableNormalZ = 0.71;
+	constexpr double MaxAboveTerrainCm = 320.0;
+	constexpr double MaxBelowTerrainCm = 100.0;
+
+	// Landscape by class path, so this module does not have to link Landscape.
+	static const UClass* LandscapeCollisionClass =
+		FindObject<UClass>(nullptr, TEXT("/Script/Landscape.LandscapeHeightfieldCollisionComponent"));
+
+	// An object-type query returns every surface along the ray, not just the first.
+	FCollisionObjectQueryParams Objects;
+	Objects.AddObjectTypesToQuery(ECC_WorldStatic);
+	Objects.AddObjectTypesToQuery(ECC_WorldDynamic);
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ValhallaFindStandingZ), /*bTraceComplex*/ false, IgnoreActor);
+
+	TArray<FHitResult> Hits;
+	World->LineTraceMultiByObjectType(Hits, FVector(X, Y, TopZ), FVector(X, Y, BottomZ), Objects, Params);
+
+	double TerrainZ = 0.0;
+	bool bTerrain = false;
+	for (const FHitResult& Hit : Hits)
+	{
+		const UPrimitiveComponent* Component = Hit.GetComponent();
+		if (Component && LandscapeCollisionClass && Component->IsA(LandscapeCollisionClass))
+		{
+			TerrainZ = Hit.ImpactPoint.Z;
+			bTerrain = true;
+			break;
+		}
+	}
+	if (!bTerrain)
+	{
+		return false;   // a flat tile zone: the caller's own height is right
+	}
+
+	// The highest walkable surface near the terrain that the capsule fits on.
+	const FCollisionShape Capsule = FCollisionShape::MakeCapsule(CapsuleRadius, CapsuleHalfHeight);
+	FCollisionQueryParams OverlapParams(SCENE_QUERY_STAT(ValhallaFindStandingZOverlap), false, IgnoreActor);
+	double Best = TerrainZ;
+	bool bBest = false;
+	for (const FHitResult& Hit : Hits)
+	{
+		const double Z = Hit.ImpactPoint.Z;
+		if (Hit.ImpactNormal.Z < MinWalkableNormalZ || Z > TerrainZ + MaxAboveTerrainCm || Z < TerrainZ - MaxBelowTerrainCm)
+		{
+			continue;
+		}
+		const FVector Centre(X, Y, Z + CapsuleHalfHeight + 2.0);
+		if (World->OverlapBlockingTestByChannel(Centre, FQuat::Identity, ECC_Pawn, Capsule, OverlapParams))
+		{
+			continue;
+		}
+		if (!bBest || Z > Best)
+		{
+			Best = Z;
+			bBest = true;
+		}
+	}
+	OutCentreZ = (bBest ? Best : TerrainZ) + CapsuleHalfHeight;
+	return true;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  Zone tracking
 // ─────────────────────────────────────────────────────────────────────────────

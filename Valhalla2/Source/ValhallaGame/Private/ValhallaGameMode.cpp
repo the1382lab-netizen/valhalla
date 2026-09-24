@@ -834,6 +834,18 @@ void AValhallaGameMode::SpawnLoadedPawn(APlayerController* NewPlayer, const FVal
 				if (const UCapsuleComponent* Capsule = PawnDefaults->GetCapsuleComponent())
 				{
 					Candidate.Z += Capsule->GetScaledCapsuleHalfHeight();
+
+					// B-06: a saved position is 2D and a Landscape zone is not
+					// flat. Stand the capsule on the ground actually under the
+					// saved XY (the lowest walkable floor with room for it),
+					// searching the zone's whole height.
+					double StandZ = 0.0;
+					if (UValhallaZoneSubsystem::FindStandingZ(GetWorld(), Candidate.X, Candidate.Y,
+							Zone->Bounds.Max.Z + 500.0, Zone->Bounds.Min.Z - 1500.0,
+							Capsule->GetScaledCapsuleRadius(), Capsule->GetScaledCapsuleHalfHeight(), nullptr, StandZ))
+					{
+						Candidate.Z = StandZ + 2.0;
+					}
 				}
 			}
 

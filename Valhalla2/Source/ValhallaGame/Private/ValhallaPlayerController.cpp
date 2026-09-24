@@ -3,11 +3,13 @@
 #include "ValhallaPlayerController.h"
 
 #include "Camera/CameraComponent.h"
+#include "Components/CapsuleComponent.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "InputAction.h"
@@ -32,6 +34,7 @@
 #include "ValhallaBackendSubsystem.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaVisuals.h"
+#include "ValhallaZoneSubsystem.h"
 
 namespace
 {
@@ -1884,9 +1887,24 @@ namespace
 					return;
 				}
 
-				// Keep the existing Z: the grey-box floor is flat, and picking a
-				// new height would only risk dropping the capsule through it.
-				const FVector Destination(X, Y, Pawn->GetActorLocation().Z);
+				// B-06: stand on whatever is under (X, Y) - Eldmoor's Landscape is
+				// not flat. The lowest walkable floor with room for the capsule
+				// within 30 m above / 20 m below the pawn; the old height if
+				// there is none (the flat grey box keeps working either way).
+				FVector Destination(X, Y, Pawn->GetActorLocation().Z);
+				if (const ACharacter* Character = Cast<ACharacter>(Pawn))
+				{
+					if (const UCapsuleComponent* Capsule = Character->GetCapsuleComponent())
+					{
+						double StandZ = 0.0;
+						if (UValhallaZoneSubsystem::FindStandingZ(Pawn->GetWorld(), X, Y, Destination.Z + 3000.0,
+								Destination.Z - 2000.0, Capsule->GetScaledCapsuleRadius(),
+								Capsule->GetScaledCapsuleHalfHeight(), Pawn, StandZ))
+						{
+							Destination.Z = StandZ + 2.0;
+						}
+					}
+				}
 				Pawn->SetActorLocation(Destination, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
 
 				UE_LOG(LogValhallaGame, Log, TEXT("valhalla.DebugTeleport: %s -> %s"),

@@ -7,6 +7,7 @@
 #include "ValhallaZoneTypes.h"
 #include "ValhallaZoneSubsystem.generated.h"
 
+class AActor;
 class AValhallaPortal;
 class AValhallaZoneEntry;
 class AValhallaZoneVolume;
@@ -108,6 +109,23 @@ public:
 	 * the game mode falls back to the engine's own `ChoosePlayerStart`.
 	 */
 	bool GetDefaultSpawn(FName InZoneId, FVector& OutLocation, float& OutYaw) const;
+
+	/**
+	 * B-06: the height a capsule of this size stands at over world (X, Y).
+	 *
+	 * A saved position is 2D (`LastZoneLocalCm`), and a zone with a sculpted
+	 * Landscape is not flat, so "the zone floor plus a constant" puts a player
+	 * who logged out on Eldmoor's knoll four metres inside the hill. This
+	 * traces straight down from `TopZ` to `BottomZ`, finds the Landscape, and
+	 * returns the capsule-centre Z on the highest walkable surface within
+	 * +3.2 m / -1 m of it that the capsule fits on (a floor, a bridge deck, the
+	 * great hall over the undercroft) — so roofs, wall tops and the river bed
+	 * under a bridge are passed over — or on the Landscape itself. False when
+	 * there is no Landscape under the point (the flat tile zones), in which case
+	 * the caller keeps the height it had.
+	 */
+	static bool FindStandingZ(const UWorld* World, double X, double Y, double TopZ, double BottomZ,
+		float CapsuleRadius, float CapsuleHalfHeight, const AActor* IgnoreActor, double& OutCentreZ);
 
 	// ── Travel ──────────────────────────────────────────────────────────
 

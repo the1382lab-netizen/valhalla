@@ -1978,6 +1978,18 @@ per player drives everything:
   above; no roof-hide / hall-floor-hide exists in code yet (the design assumes it), so a player in
   the undercroft is under the hall floor.
 
+- [x] **Spawn height (C++):** `UValhallaZoneSubsystem::FindStandingZ` traces straight down, finds the
+      Landscape, and stands the capsule on the highest walkable surface within +3.2 m / -1 m of it that
+      the capsule fits on (a floor, a bridge deck, the great hall over the undercroft), else on the
+      Landscape; no Landscape under the point (the flat tile zones) changes nothing.
+      `InitializeJoiningPlayer`'s saved position (only 2D, so on Eldmoor's +4 m knoll "zone floor +
+      constant" was inside the hill) and `valhalla.DebugTeleport` (kept the old height) use it.
+      Verified with DebugTeleport in PIE: knoll 404, inside the Broken Spur 406 (not the roof at 762),
+      stone bridge deck 115 (not the river bed at -70), keep courtyard 400, scree 285, tor top 697.
+      The saved-position login was not re-run end to end (it needs a backend login); it calls the same
+      function. The admin teleport route still uses the default spawn's height. `Valhalla.` tests: all
+      pass except the known `MeshIdFallback`.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

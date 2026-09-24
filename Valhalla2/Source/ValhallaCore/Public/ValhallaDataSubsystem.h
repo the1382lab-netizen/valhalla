@@ -301,9 +301,6 @@ public:
 	/** When the last LoadAll ran (UTC). */
 	const FDateTime& GetLoadedAtUtc() const { return LoadedAtUtc; }
 
-	/** The absolute root the last LoadAll read from. */
-	const FString& GetLoadedDataRoot() const { return LoadedDataRoot; }
-
 private:
 	/** Decide between DataRoot and the downloaded copy, once, at Initialize. */
 	void ChooseDataSource();

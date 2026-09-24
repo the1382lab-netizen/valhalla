@@ -321,11 +321,24 @@ def cliff_cleft():
     crack above; the passage runs 1.1 m in and ends in a black shroud so the
     portal trigger inside is never seen. Walk-in: SM_ with per-triangle
     collision. Keep the landscape at cliff-foot height under its footprint."""
-    b = MB("SM_CliffCleft")
-    _cliff_mesh(b, 2.56, 7.0, 1.28, 14, 0.5, 0.3)
+    return _cleft("SM_CliffCleft", 7.0, 14, 3.7)
+
+
+def cliff_cleft_mid():
+    """The cleft in a 4 m module, flush with VB_CliffFace_Mid (the tor's step,
+    design review A2): the same 150 x 225 cm walk-in opening, shroud, floor
+    and collision as SM_CliffCleft; only the crack above is shorter (3.1 m).
+    Do not Z-scale SM_CliffCleft instead: the opening would drop to 128 cm."""
+    return _cleft("SM_CliffCleft_Mid", 4.0, 16, 3.1)
+
+
+def _cleft(name, h, seed, crack):
+    b = MB(name)
+    _cliff_mesh(b, 2.56, h, 1.28, seed, 0.5, 0.3)
     ob = b.finish()
-    outline = [(-0.75, 0.0), (-0.74, 0.7), (-0.66, 1.35), (-0.5, 1.8), (-0.3, 2.08), (-0.12, 2.24), (-0.07, 2.9),
-               (-0.035, 3.7), (0.015, 3.72), (0.05, 2.9), (0.12, 2.22), (0.33, 2.05), (0.53, 1.74), (0.68, 1.3),
+    c1 = round(2.24 + (crack - 2.24) * 0.45, 2)             # 2.9 for the 7 m module, as built
+    outline = [(-0.75, 0.0), (-0.74, 0.7), (-0.66, 1.35), (-0.5, 1.8), (-0.3, 2.08), (-0.12, 2.24), (-0.07, c1),
+               (-0.035, crack), (0.015, crack + 0.02), (0.05, c1), (0.12, 2.22), (0.33, 2.05), (0.53, 1.74), (0.68, 1.3),
                (0.75, 0.7), (0.75, 0.0)]
     rng = random.Random(7)
     g = MB("_cutter")
@@ -443,7 +456,7 @@ def rock_outcrop():
                                        ((-0.78, -0.25, 0.28), (0.48, 0.42, 0.38), 2)], 51, top=1.15)
 
 
-CLIFFS = [cliff_face_tall, cliff_face_mid, cliff_face_low, cliff_corner, cliff_cleft,
+CLIFFS = [cliff_face_tall, cliff_face_mid, cliff_face_low, cliff_corner, cliff_cleft, cliff_cleft_mid,
           boulder_large_a, boulder_large_b, rock_outcrop]
 
 

@@ -1152,9 +1152,61 @@ panel keys. The code-built panel shows them in the meantime.
         empty and resolves to the C++ HUD, the C++ class never lays out from
         a Blueprint, every panel name is a widget property with the right
         Bind meta and type, the bar clamps its fraction.
-- [ ] **Step 3 — Blueprints:** Widget Blueprints for the character /
-      inventory panel (uses `ClientStats`, `GetXpFraction`, the weapon fields
-      `minDamage` / `maxDamage` / `attackSpeedMs`), then the other panels.
+- [x] **Step 3 — Blueprints (2026-09-24):** the three Widget Blueprints
+      exist, are laid out, compile clean and drive the HUD in PIE through
+      `valhalla.HudClass` (the project setting is unchanged: step 4).
+      - Assets in `/Game/Valhalla/UI/HUD`: `WBP_GameHUD` (99 widgets, Canvas
+        Panel root `HUDRoot`, all 7 required and all 36 optional bindings,
+        no fallbacks), `WBP_HUDBar` (Frame > Background > Sizer > Layers:
+        FillSizer/Fill, OverlaySizer/OverlayFill, Label), `WBP_HUDSlot`
+        (Sizer > Frame > Fill > Stack: Icon, SkillTile, Abbrev,
+        CooldownSizer/CooldownFill, CooldownText, KeyLabel, QuantityText).
+        Made with `ValhallaUITools.create_hud_blueprints` and
+        `layout_hud_from_config` (now lays out all three, by parent class);
+        `CompileWidgetBlueprint` true for each, no compile errors in the log
+        after the final build.
+      - Layout: every panel at the code build's canvas anchor, alignment and
+        offset (vitals bottom left, action bar and cast bar bottom centre,
+        target top centre, party (12,12), invite, combat log 320x200 top
+        right, chat right of the vitals, loot (220,-40), skills (16,-40) 300
+        wide, character + inventory centred, tooltip on the root canvas,
+        240 max), from `ui-config.json`. Bars are `WBP_HUDBar` instances in a
+        Size Box of the code bar's framed size, `BarWidth` = the fill width.
+        The B-15 Wave 4 frame art (`T_UI_Panel` / `_Button` / `_BarFrame` /
+        `_BarFill` / `_Slot`) is baked into the designer brushes with the
+        code's margins and paddings (C++ gives a designer tree none); flat
+        ui-config colours if those textures are not imported.
+      - Character panel (new): "Character  (I)", `EquipmentPanel` (C++ adds
+        the 9 rows), `CharacterLevel`, a 200 x 10 `XpBar`, `CharacterStats`
+        (left-aligned, wrapping) in a box with room for 16 lines at 7 pt.
+      - PIE (L_World, offline copy, 2 clients) with `valhalla.HudClass
+        /Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C`: log `game HUD:
+        layout from the Widget Blueprint WBP_GameHUD_C.` and `HUD built
+        (WBP_GameHUD_C) ...` for both clients, no `has no '...' widget`
+        warnings. Vitals, action bar, combat log shown; the I and K keys
+        (SlateInspector key presses) open Character + Inventory with the
+        stats and XP bar, and Skills; Enter opens chat, a typed line is sent
+        (`chat send [general] ...`) and fades. Esc in PIE stops the session
+        (editor binding), so close was checked with `valhalla.UI close`
+        (`CloseTopmost`). Screenshots, code HUD and Blueprint HUD side by
+        side: `Saved/ClaudeOps/b07/`.
+      - Not wired: WBP_GameHUD's `SlotWidgetClass` / `BarWidgetClass` stay
+        the C++ classes. `Setup` does not size a designer tree, and C++ makes
+        cells at 44 / 48 / 26 px and bars at 160x8 (party) and 60x4
+        (nameplates), so one designer size would be wrong for most of them.
+        Follow-up (C++): let `Setup` size a designer `Sizer` (and set
+        `BarWidth`), then `hud_blueprints.wire_cell_classes(True, True)`.
+      - Known: the designer chat keeps its 360 px width (no `TickLayout`
+        narrowing), so on a viewport under ~1450 units it runs under the
+        action bar, and it grows to `chat.height` rather than jumping to it.
+      - Tools: `hud_blueprints.py` gains `layout_blueprint` (dispatch),
+        `layout_bar`, `layout_slot`, `wire_cell_classes`, the frame-art
+        brushes, and fixes (a replace now really removes the old root —
+        UMGToolSet reports BindWidget-named widgets as inherited; widget-less
+        GetWidgets entries are ignored; compile failures are reported, not
+        raised). `ui_tools.py` reloads `hud_blueprints` on every call (takes
+        effect at the next editor start). Console commands in PIE:
+        `ValhallaLevelTools.run_console_command` already existed.
 - [ ] **Step 4 — switch-over and cleanup:** the HUD creates the Blueprints,
       the code-built panels and their `ui-config.json` knobs go.
 

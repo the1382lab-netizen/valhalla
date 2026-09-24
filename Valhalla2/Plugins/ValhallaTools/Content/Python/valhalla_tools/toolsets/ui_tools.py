@@ -6,9 +6,12 @@ inspect the Blueprints step 3 lays out. The work is in
 ``valhalla_tools/hud_blueprints.py``; see its docstring for how the designer
 tree is built from Python (the engine's ``UMGToolSet``, no C++ editor module).
 
-Every tool returns a JSON *string*, matching data_tools.py.
+Every tool returns a JSON *string*, matching data_tools.py. Each call reloads
+``hud_blueprints`` first, so an edit to it takes effect without an editor
+restart (this file itself is only read at startup).
 """
 
+import importlib
 import json
 import traceback
 
@@ -26,6 +29,13 @@ def _fail(message: str, **kwargs) -> str:
     payload = {"ok": False, "error": message}
     payload.update(kwargs)
     return json.dumps(payload, indent=2)
+
+
+def _hud_blueprints():
+    """valhalla_tools.hud_blueprints, freshly reloaded."""
+    from valhalla_tools import hud_blueprints
+
+    return importlib.reload(hud_blueprints)
 
 
 @unreal.uclass()
@@ -48,9 +58,10 @@ class ValhallaUITools(unreal.ToolsetDefinition):
         Checks before creating (project rule: an "Overwrite?" modal freezes the
         editor): an existing asset is left alone and reported as ``existed``
         unless ``overwrite`` is true, which deletes it first (and fails if it
-        cannot). Then points WBP_GameHUD's SlotWidgetClass and BarWidgetClass
-        at the other two, compiles and saves. Does not change the project
-        setting.
+        cannot). Saves each. Does not change the project setting, and does
+        not make WBP_HUDSlot / WBP_HUDBar the classes C++ builds its cells and
+        bars from (``hud_blueprints.wire_cell_classes``; see that module for
+        why). An empty WBP_GameHUD does not compile until it is laid out.
 
         Args:
             overwrite: Delete and recreate Blueprints that already exist.
@@ -60,43 +71,50 @@ class ValhallaUITools(unreal.ToolsetDefinition):
             A JSON object as text: ``ok``, ``assets`` (per asset: ``existed`` /
             ``created`` / ``deleted``, ``widgets``) and ``wired``.
         """
-        from valhalla_tools import hud_blueprints
-
         try:
-            return _ok(**hud_blueprints.create_blueprints(bool(overwrite)))
+            return _ok(**_hud_blueprints().create_blueprints(bool(overwrite)))
         except Exception as exc:  # noqa: BLE001 - reported, never raised at MCP
             return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])
 
     @toolset_registry.tool_call
     @staticmethod
     def layout_hud_from_config(asset_path: str = "/Game/Valhalla/UI/HUD/WBP_GameHUD", replace: bool = False) -> str:
-        """Build WBP_GameHUD's designer tree from ui-config.json, named for the C++ bindings.
+        """Build a HUD Widget Blueprint's designer tree from ui-config.json, named for the C++ bindings.
 
-        A Canvas Panel root with every panel the code-built HUD has, placed
-        where ``ui-config.json`` places it, each widget named after its
-        ``UValhallaGameHUDWidget`` member (VitalsPanel, HpBar, ManaBar,
-        ActionBarRow, ChatPanel, ChatScroll, ChatInput required; the rest
-        optional) and marked as a variable. Containers C++ fills (ActionBarRow,
-        InventoryGrid, EquipmentPanel, PartyList, LootGrid, TargetBuffs,
-        SkillsList, the scroll boxes) are left empty. Buttons are
-        UValhallaHUDButton with their Action set. Bars are WBP_HUDBar when it
-        exists. Compiles and saves.
+        Which tree depends on the Blueprint's parent class:
 
-        Refuses a Blueprint that already has widgets unless ``replace``.
+        * WBP_GameHUD (UValhallaGameHUDWidget): a Canvas Panel root with every
+          panel the code-built HUD has, at the code build's anchors and
+          offsets, each widget named after its member (VitalsPanel, HpBar,
+          ManaBar, ActionBarRow, ChatPanel, ChatScroll, ChatInput required;
+          the rest optional) and marked as a variable. Containers C++ fills
+          (ActionBarRow, InventoryGrid, EquipmentPanel, PartyList, LootGrid,
+          TargetBuffs, SkillsList, the scroll boxes) are left empty. Buttons
+          are UValhallaHUDButton with their Action set. Bars are WBP_HUDBar
+          (lay it out first), each in a Size Box giving the code bar's size.
+          The B-15 frame art (T_UI_Panel / _Button / _BarFrame) is used when
+          imported, as the code build does.
+        * WBP_HUDBar (UValhallaHUDBarWidget): Frame > Background > Sizer >
+          FillSizer/Fill, OverlaySizer/OverlayFill, Label.
+        * WBP_HUDSlot (UValhallaHUDSlotWidget): Sizer > Frame > Fill > Stack
+          of Icon, SkillTile, Abbrev, CooldownSizer/CooldownFill,
+          CooldownText, KeyLabel, QuantityText.
+
+        Compiles and saves. Refuses a Blueprint that already has widgets
+        unless ``replace``.
 
         Args:
-            asset_path: The HUD Widget Blueprint.
+            asset_path: The Widget Blueprint (WBP_GameHUD, WBP_HUDBar or WBP_HUDSlot).
             replace: Remove the existing designer tree first (its edits are lost).
 
         Returns:
             A JSON object as text: ``ok``, ``widgets`` (count added),
-            ``panelsMissing`` (should be empty), ``buttonsWithoutAction``,
-            ``renamed``, ``compiled``; or ``refused``.
+            ``compiled`` (and ``compileError``), ``saved``, ``renamed``,
+            ``warnings``; for the HUD ``panelsMissing`` (should be empty) and
+            ``buttonsWithoutAction``; for a bar or cell ``parts``; or ``refused``.
         """
-        from valhalla_tools import hud_blueprints
-
         try:
-            result = hud_blueprints.layout_game_hud(asset_path, bool(replace))
+            result = _hud_blueprints().layout_blueprint(asset_path, bool(replace))
         except Exception as exc:  # noqa: BLE001
             return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])
         if "refused" in result:
@@ -106,7 +124,7 @@ class ValhallaUITools(unreal.ToolsetDefinition):
     @toolset_registry.tool_call
     @staticmethod
     def describe_hud_blueprint(asset_path: str) -> str:
-        """List a Widget Blueprint's designer widgets and, for a HUD, the panels it binds.
+        """List a Widget Blueprint's designer widgets and, for a HUD / bar / cell, the parts it binds.
 
         Args:
             asset_path: e.g. ``/Game/Valhalla/UI/HUD/WBP_GameHUD``.
@@ -117,11 +135,10 @@ class ValhallaUITools(unreal.ToolsetDefinition):
             UValhallaGameHUDWidget, ``requiredMissing``, ``optionalPresent``,
             ``optionalMissing`` and ``laysOutFromBlueprint`` (the tree is
             non-empty and every required panel is there; the root must also
-            be a Canvas Panel).
+            be a Canvas Panel) and the cell / bar classes; for a bar or cell
+            ``partsPresent`` / ``partsMissing``.
         """
-        from valhalla_tools import hud_blueprints
-
         try:
-            return _ok(**hud_blueprints.describe(asset_path))
+            return _ok(**_hud_blueprints().describe(asset_path))
         except Exception as exc:  # noqa: BLE001
             return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])

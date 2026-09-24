@@ -16,7 +16,70 @@
  * field, a mechanic that isn't built yet); `info` is about the check itself.
  */
 
-import { validateZoneAtmosphere } from './maps.js';
+// ── B-06: zone atmosphere ─────────────────────────────────────────────
+
+/** The numeric ZoneAtmosphere fields, for editors and validators. */
+export const ZONE_ATMOSPHERE_NUMBER_FIELDS = [
+  'visionClearRadiusCm',
+  'visionFadeWidthCm',
+  'heightFogDensity',
+  'heightFogStartCm',
+  'sunIntensityScale',
+  'skyLightIntensityScale',
+  'cameraMaxArmCm',
+  'netRelevancyRadiusCm',
+  'firelightGlow',
+  'firelightRangeCm',
+] as const;
+
+/** The colour ZoneAtmosphere fields (`#rrggbb`). */
+export const ZONE_ATMOSPHERE_COLOR_FIELDS = ['fogColor', 'gradeTint'] as const;
+
+/**
+ * B-06: check a zone's `atmosphere` object (the ZoneAtmosphere type is in
+ * maps.ts). The single source of these rules: validateGameData below, the
+ * shared loader and the web editor's Zones page all call it. Returns human-readable problems; an
+ * empty list means it is valid (a missing atmosphere is valid).
+ */
+export function validateZoneAtmosphere(atmosphere: unknown): string[] {
+  const errors: string[] = [];
+  if (atmosphere === undefined) return errors;
+  if (atmosphere === null || typeof atmosphere !== 'object' || Array.isArray(atmosphere)) {
+    return ['atmosphere must be an object'];
+  }
+  const a = atmosphere as Record<string, unknown>;
+  const known = new Set<string>(['notes', ...ZONE_ATMOSPHERE_NUMBER_FIELDS, ...ZONE_ATMOSPHERE_COLOR_FIELDS]);
+  for (const key of Object.keys(a)) {
+    if (!known.has(key)) errors.push(`atmosphere.${key} is not a known field`);
+  }
+  if (a.notes !== undefined && typeof a.notes !== 'string') {
+    errors.push('atmosphere.notes must be text');
+  }
+  for (const key of ZONE_ATMOSPHERE_NUMBER_FIELDS) {
+    const v = a[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
+      errors.push(`atmosphere.${key} must be a number >= 0`);
+    }
+  }
+  for (const key of ZONE_ATMOSPHERE_COLOR_FIELDS) {
+    const v = a[key];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) {
+      errors.push(`atmosphere.${key} must be a colour like #8a9486`);
+    }
+  }
+  const clear = a.visionClearRadiusCm;
+  const relevancy = a.netRelevancyRadiusCm;
+  if (typeof clear === 'number' && clear > 0 && typeof relevancy === 'number' && relevancy > 0) {
+    const fade = typeof a.visionFadeWidthCm === 'number' ? a.visionFadeWidthCm : 0;
+    if (relevancy < clear + fade) {
+      errors.push('atmosphere.netRelevancyRadiusCm is inside the vision fog: actors would pop in where the fog is still see-through');
+    }
+  }
+  return errors;
+}
+
 
 export type ValidationSeverity = 'error' | 'warning' | 'info';
 

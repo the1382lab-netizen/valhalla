@@ -27,7 +27,7 @@ class USkyLightComponent;
 namespace ValhallaAtmosphere
 {
 	/** The zone's atmosphere, or null when it has none (today's look) or the data is not loaded. */
-	VALHALLAGAME_API const FValhallaZoneAtmosphere* Find(const UObject* WorldContextObject, FName ZoneId);
+	VALHALLAGAME_API const FValhallaAtmosphereProfile* Find(const UObject* WorldContextObject, FName ZoneId);
 
 	/** The zone's server relevancy cap, cm. 0: no cap (class vision range only). */
 	VALHALLAGAME_API float GetRelevancyCapCm(const UObject* WorldContextObject, FName ZoneId);
@@ -59,6 +59,10 @@ struct FValhallaAtmosphereState
 	FLinearColor VisionFogColor = FLinearColor::Black;
 	/** 0 = no vision fog (PP_Fog's default), 1 = full. */
 	float VisionFogStrength = 0.f;
+
+	/** Firelight glow through the vision fog; see AValhallaFogRenderer::SetFirelight. */
+	float FirelightStrength = 0.f;
+	float FirelightRangeCm = 0.f;
 
 	float CameraMaxArmCm = 0.f;
 
@@ -128,6 +132,9 @@ public:
 	/** How often the hide-beyond-fog pass runs, seconds. */
 	static constexpr float HideIntervalSeconds = 0.1f;
 
+	/** Without `firelightRangeCm`, fire glows fade out at this many times the fully fogged distance. */
+	static constexpr float DefaultFirelightRangeScale = 1.5f;
+
 	/** The zone the profile currently comes from (the pawn's, by position). */
 	FName GetCurrentZoneId() const { return CurrentZoneId; }
 
@@ -143,7 +150,7 @@ private:
 	void CaptureBaseline();
 
 	/** The state a profile asks for. Null profile: the baseline. */
-	FValhallaAtmosphereState BuildTarget(const FValhallaZoneAtmosphere* Profile) const;
+	FValhallaAtmosphereState BuildTarget(const FValhallaAtmosphereProfile* Profile) const;
 
 	/** Push a state onto the world, the camera and PP_Fog. */
 	void ApplyState(const FValhallaAtmosphereState& State, AValhallaCharacter* Pawn, bool bBlendFinished);

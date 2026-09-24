@@ -848,7 +848,7 @@ struct VALHALLACORE_API FValhallaLootTable
  * UValhallaVisibilitySubsystem::GetVisionRangeFor (the relevancy cap).
  */
 USTRUCT(BlueprintType)
-struct VALHALLACORE_API FValhallaZoneAtmosphere
+struct VALHALLACORE_API FValhallaAtmosphereProfile
 {
 	GENERATED_BODY()
 
@@ -904,6 +904,20 @@ struct VALHALLACORE_API FValhallaZoneAtmosphere
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
 	float NetRelevancyRadiusCm = 0.f;
 
+	/**
+	 * JSON `firelightGlow` — how strongly fires, braziers and lamp posts glow
+	 * through the vision fog. 1: default, 0: off. Only matters with vision fog.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float FirelightGlow = 1.f;
+
+	/**
+	 * JSON `firelightRangeCm` — glows fade out beyond this ground distance from
+	 * the player. 0: 1.5 x the fully fogged distance.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
+	float FirelightRangeCm = 0.f;
+
 	bool HasVisionFog() const { return VisionClearRadiusCm > 0.f; }
 
 	/** Where the vision fog is fully opaque, cm. 0 when there is no vision fog. */
@@ -945,7 +959,7 @@ struct VALHALLACORE_API FValhallaZoneConfig
 
 	/** JSON `atmosphere` (B-06). All defaults when bHasAtmosphere is false. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Zones")
-	FValhallaZoneAtmosphere Atmosphere;
+	FValhallaAtmosphereProfile Atmosphere;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

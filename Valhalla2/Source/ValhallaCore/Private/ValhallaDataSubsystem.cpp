@@ -610,8 +610,8 @@ namespace
 		Out = Value;
 	}
 
-	/** maps.ts `ZoneAtmosphere` (B-06). Every field optional; see FValhallaZoneAtmosphere for the defaults. */
-	void ParseZoneAtmosphere(const TSharedPtr<FJsonObject>& Obj, FValhallaZoneAtmosphere& Out, const FString& Context)
+	/** maps.ts `ZoneAtmosphere` (B-06). Every field optional; see FValhallaAtmosphereProfile for the defaults. */
+	void ParseZoneAtmosphere(const TSharedPtr<FJsonObject>& Obj, FValhallaAtmosphereProfile& Out, const FString& Context)
 	{
 		OptNonNegative(Obj, TEXT("visionClearRadiusCm"), Out.VisionClearRadiusCm, Context);
 		OptNonNegative(Obj, TEXT("visionFadeWidthCm"), Out.VisionFadeWidthCm, Context);
@@ -623,6 +623,8 @@ namespace
 		Out.bHasGradeTint = OptHexColour(Obj, TEXT("gradeTint"), Out.GradeTint, Context);
 		OptNonNegative(Obj, TEXT("cameraMaxArmCm"), Out.CameraMaxArmCm, Context);
 		OptNonNegative(Obj, TEXT("netRelevancyRadiusCm"), Out.NetRelevancyRadiusCm, Context);
+		OptNonNegative(Obj, TEXT("firelightGlow"), Out.FirelightGlow, Context);
+		OptNonNegative(Obj, TEXT("firelightRangeCm"), Out.FirelightRangeCm, Context);
 
 		const float VisionLimit = Out.GetVisionLimitCm();
 		if (VisionLimit > 0.f && Out.NetRelevancyRadiusCm > 0.f && Out.NetRelevancyRadiusCm < VisionLimit)

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { validateZoneAtmosphere } from '@valhalla/shared';
 import { useEditorStore } from '../../../store/editorStore';
 
 /**
@@ -19,7 +20,9 @@ type AtmosphereNumberKey =
   | 'sunIntensityScale'
   | 'skyLightIntensityScale'
   | 'cameraMaxArmCm'
-  | 'netRelevancyRadiusCm';
+  | 'netRelevancyRadiusCm'
+  | 'firelightGlow'
+  | 'firelightRangeCm';
 
 type AtmosphereColorKey = 'fogColor' | 'gradeTint';
 
@@ -35,6 +38,8 @@ interface ZoneAtmosphere {
   gradeTint?: string;
   cameraMaxArmCm?: number;
   netRelevancyRadiusCm?: number;
+  firelightGlow?: number;
+  firelightRangeCm?: number;
 }
 
 interface ZoneConfig {
@@ -54,6 +59,8 @@ const NUMBER_FIELDS: { key: AtmosphereNumberKey; label: string; step: number; hi
   { key: 'skyLightIntensityScale', label: 'Sky light ×', step: 0.05, hint: 'Sky light and the cool fill light. 1 = today, 0 = off.' },
   { key: 'cameraMaxArmCm', label: 'Camera max zoom-out (cm)', step: 50, hint: 'Boom length. The default view is 1500; the normal limit is 2600.' },
   { key: 'netRelevancyRadiusCm', label: 'Relevancy radius (cm)', step: 50, hint: 'Server stops sending NPCs/players/loot beyond this. Caps the class vision range (1200–1800). Keep ≥ clear + fade.' },
+  { key: 'firelightGlow', label: 'Firelight glow ×', step: 0.1, hint: 'Fires, braziers and lamp posts glow through the vision fog. 1 = default, 0 = off.' },
+  { key: 'firelightRangeCm', label: 'Firelight range (cm)', step: 100, hint: 'Glows fade out beyond this distance. Empty = 1.5 × the fully fogged distance.' },
 ];
 
 const COLOR_FIELDS: { key: AtmosphereColorKey; label: string; fallback: string; hint: string }[] = [
@@ -62,30 +69,6 @@ const COLOR_FIELDS: { key: AtmosphereColorKey; label: string; fallback: string; 
 ];
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
-
-/** Mirrors validateZoneAtmosphere in shared/src/maps.ts. */
-function atmosphereProblems(a: ZoneAtmosphere | undefined): string[] {
-  if (!a) return [];
-  const problems: string[] = [];
-  for (const f of NUMBER_FIELDS) {
-    const v = a[f.key];
-    if (v !== undefined && (typeof v !== 'number' || !Number.isFinite(v) || v < 0)) {
-      problems.push(`${f.label} must be a number ≥ 0`);
-    }
-  }
-  for (const f of COLOR_FIELDS) {
-    const v = a[f.key];
-    if (v !== undefined && (typeof v !== 'string' || !HEX.test(v))) {
-      problems.push(`${f.label} must be a colour like #8a9486`);
-    }
-  }
-  const clear = a.visionClearRadiusCm ?? 0;
-  const fade = a.visionFadeWidthCm ?? 0;
-  if (clear > 0 && (a.netRelevancyRadiusCm ?? 0) > 0 && (a.netRelevancyRadiusCm as number) < clear + fade) {
-    problems.push('Relevancy radius is inside the vision fog: NPCs would pop in where the fog is still see-through.');
-  }
-  return problems;
-}
 
 const hint: React.CSSProperties = { fontSize: 12, color: 'var(--text-muted)', marginTop: 4 };
 
@@ -134,7 +117,7 @@ export const ZoneEditor: React.FC = () => {
   };
 
   const atmosphere = zone?.atmosphere;
-  const problems = atmosphereProblems(atmosphere);
+  const problems = validateZoneAtmosphere(atmosphere);
   const clear = atmosphere?.visionClearRadiusCm ?? 0;
   const fade = atmosphere?.visionFadeWidthCm ?? 0;
 

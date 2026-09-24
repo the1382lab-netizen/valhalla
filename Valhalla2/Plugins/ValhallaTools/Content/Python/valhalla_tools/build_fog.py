@@ -46,6 +46,12 @@ Per pixel:
    colour on screen whatever the auto exposure is doing. Sky pixels are "far
    away" and so fully fogged, which is what hides the horizon when the camera
    is tilted up.
+6. B-06 firelight: ``GlowMask`` is a third world-space mask, a soft disc per
+   beacon light (tagged fire and lamp lights, drawn by the renderer). Scaled
+   by ``FirelightStrength`` (default 0) and faded out beyond
+   ``FirelightRange``, it thins the vision fog over itself and adds its colour
+   on top — both multiplied by the vision fog's alpha, so a fire reads as a
+   warm glow through the mist and nothing changes inside the clear radius.
 
 Ordering against ``PP_Outline`` is ``blendable_priority``, not the order the two
 are added to the camera. Both sit at ``BL_SCENE_COLOR_BEFORE_DOF`` (they both
@@ -88,6 +94,16 @@ VISIBLE_BRIGHTNESS = 1.0
 VISION_STRENGTH_DEFAULT = 0.0
 VISION_CLEAR_DEFAULT = 1000.0
 VISION_FADE_DEFAULT = 600.0
+
+#: B-06 firelight. Strength 0 = off (the renderer sets the zone's value); the
+#: range is where glows fade out (ground distance from the player), over the
+#: last FIRELIGHT_RANGE_FADE of it. THINNING is how much a full-strength glow
+#: clears the fog over itself; BRIGHTNESS is its added colour, on screen.
+FIRELIGHT_STRENGTH_DEFAULT = 0.0
+FIRELIGHT_RANGE_DEFAULT = 2400.0
+FIRELIGHT_RANGE_FADE = 0.25
+FIRELIGHT_FOG_THINNING = 0.7
+FIRELIGHT_BRIGHTNESS = 0.9
 
 #: Candidates for the parameters' default texture. The renderer overrides both
 #: with its render targets at runtime; this only has to exist and compile, and
@@ -337,12 +353,84 @@ def build_fog(debug=""):
     _wire(fog_rgb, "", fog_scene, "A")
     _wire(safe_exposure, "", fog_scene, "B")
 
+    # ── B-06: firelight through the fog ────────────────────────────────
+    # GlowMask (AValhallaFogRenderer) holds a soft disc per beacon light in
+    # world space. Within FirelightRange of the player it thins the fog over
+    # itself and adds its own colour on top, both scaled by the fog's alpha,
+    # so it never changes anything inside the clear radius.
+    glow_tap = _sampler(material, -1050, 2800, "GlowMask", texture, base_uv)
+    glow_rgb = _expr(material, unreal.MaterialExpressionComponentMask, -800, 2800)
+    glow_rgb.set_editor_property("r", True)
+    glow_rgb.set_editor_property("g", True)
+    glow_rgb.set_editor_property("b", True)
+    glow_rgb.set_editor_property("a", False)
+    _wire(glow_tap, "", glow_rgb, "")
+
+    fire_range = _scalar(material, "FirelightRange", FIRELIGHT_RANGE_DEFAULT, -1900, 3000)
+    past_range = _expr(material, unreal.MaterialExpressionSubtract, -1650, 3000)
+    _wire(ground_distance, "", past_range, "A")
+    _wire(fire_range, "", past_range, "B")
+    range_band = _expr(material, unreal.MaterialExpressionMultiply, -1650, 3150)
+    _wire(fire_range, "", range_band, "A")
+    range_band.set_editor_property("const_b", FIRELIGHT_RANGE_FADE)
+    safe_band = _expr(material, unreal.MaterialExpressionMax, -1450, 3150)
+    _wire(range_band, "", safe_band, "A")
+    safe_band.set_editor_property("const_b", 1.0)
+    range_ratio = _expr(material, unreal.MaterialExpressionDivide, -1250, 3050)
+    _wire(past_range, "", range_ratio, "A")
+    _wire(safe_band, "", range_ratio, "B")
+    range_t = _expr(material, unreal.MaterialExpressionSaturate, -1050, 3050)
+    _wire(range_ratio, "", range_t, "")
+    range_fade = _expr(material, unreal.MaterialExpressionOneMinus, -850, 3050)
+    _wire(range_t, "", range_fade, "")
+
+    fire_strength = _scalar(material, "FirelightStrength", FIRELIGHT_STRENGTH_DEFAULT, -850, 3200)
+    fire_scale = _expr(material, unreal.MaterialExpressionMultiply, -650, 3100)
+    _wire(range_fade, "", fire_scale, "A")
+    _wire(fire_strength, "", fire_scale, "B")
+    glow = _expr(material, unreal.MaterialExpressionMultiply, -450, 2900)
+    _wire(glow_rgb, "", glow, "A")
+    _wire(fire_scale, "", glow, "B")
+
+    # How much the glow thins the fog: its brightness, capped.
+    luma_weights = _expr(material, unreal.MaterialExpressionConstant3Vector, -450, 3100)
+    luma_weights.set_editor_property("constant", unreal.LinearColor(0.3, 0.59, 0.11, 1.0))
+    glow_luma = _expr(material, unreal.MaterialExpressionDotProduct, -250, 3000)
+    _wire(glow, "", glow_luma, "A")
+    _wire(luma_weights, "", glow_luma, "B")
+    glow_amount = _expr(material, unreal.MaterialExpressionSaturate, -50, 3000)
+    _wire(glow_luma, "", glow_amount, "")
+    punch = _expr(material, unreal.MaterialExpressionMultiply, 150, 3000)
+    _wire(glow_amount, "", punch, "A")
+    punch.set_editor_property("const_b", FIRELIGHT_FOG_THINNING)
+    keep = _expr(material, unreal.MaterialExpressionOneMinus, 350, 3000)
+    _wire(punch, "", keep, "")
+    fog_alpha = _expr(material, unreal.MaterialExpressionMultiply, 350, 2200)
+    _wire(vision_alpha, "", fog_alpha, "A")
+    _wire(keep, "", fog_alpha, "B")
+
     fogged = _expr(material, unreal.MaterialExpressionLinearInterpolate, 600, 1900)
     _wire(dimmed, "", fogged, "A")
     _wire(fog_scene, "", fogged, "B")
-    _wire(vision_alpha, "", fogged, "Alpha")
+    _wire(fog_alpha, "", fogged, "Alpha")
 
-    output = fogged
+    # The glow's own colour, exposure-compensated like the fog colour, only
+    # where there is fog to glow through.
+    glow_bright = _expr(material, unreal.MaterialExpressionMultiply, -250, 2800)
+    _wire(glow, "", glow_bright, "A")
+    glow_bright.set_editor_property("const_b", FIRELIGHT_BRIGHTNESS)
+    glow_scene = _expr(material, unreal.MaterialExpressionDivide, -50, 2800)
+    _wire(glow_bright, "", glow_scene, "A")
+    _wire(safe_exposure, "", glow_scene, "B")
+    glow_in_fog = _expr(material, unreal.MaterialExpressionMultiply, 350, 2700)
+    _wire(glow_scene, "", glow_in_fog, "A")
+    _wire(vision_alpha, "", glow_in_fog, "B")
+
+    lit_fog = _expr(material, unreal.MaterialExpressionAdd, 850, 2000)
+    _wire(fogged, "", lit_fog, "A")
+    _wire(glow_in_fog, "", lit_fog, "B")
+
+    output = lit_fog
     if debug == "uv":
         # Red/green = the fog UV. A smooth gradient across the ground means the
         # world position really is being rebuilt from scene depth; a flat

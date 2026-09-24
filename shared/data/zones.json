@@ -38,7 +38,8 @@
         "skyLightIntensityScale": 0,
         "gradeTint": "#c8d2e6",
         "cameraMaxArmCm": 1500,
-        "netRelevancyRadiusCm": 800
+        "netRelevancyRadiusCm": 800,
+        "firelightGlow": 1
       }
     },
     "grasslands_v2": {
@@ -60,7 +61,8 @@
         "skyLightIntensityScale": 0.85,
         "gradeTint": "#eef3ee",
         "cameraMaxArmCm": 2400,
-        "netRelevancyRadiusCm": 1700
+        "netRelevancyRadiusCm": 1700,
+        "firelightGlow": 1
       }
     }
   }

@@ -29,7 +29,7 @@
 //  Lookups
 // ─────────────────────────────────────────────────────────────────────────────
 
-const FValhallaZoneAtmosphere* ValhallaAtmosphere::Find(const UObject* WorldContextObject, FName ZoneId)
+const FValhallaAtmosphereProfile* ValhallaAtmosphere::Find(const UObject* WorldContextObject, FName ZoneId)
 {
 	if (!WorldContextObject || ZoneId.IsNone())
 	{
@@ -45,13 +45,13 @@ const FValhallaZoneAtmosphere* ValhallaAtmosphere::Find(const UObject* WorldCont
 
 float ValhallaAtmosphere::GetRelevancyCapCm(const UObject* WorldContextObject, FName ZoneId)
 {
-	const FValhallaZoneAtmosphere* Atmosphere = Find(WorldContextObject, ZoneId);
+	const FValhallaAtmosphereProfile* Atmosphere = Find(WorldContextObject, ZoneId);
 	return Atmosphere ? Atmosphere->NetRelevancyRadiusCm : 0.f;
 }
 
 float ValhallaAtmosphere::GetVisionLimitCm(const UObject* WorldContextObject, FName ZoneId)
 {
-	const FValhallaZoneAtmosphere* Atmosphere = Find(WorldContextObject, ZoneId);
+	const FValhallaAtmosphereProfile* Atmosphere = Find(WorldContextObject, ZoneId);
 	return Atmosphere ? Atmosphere->GetVisionLimitCm() : 0.f;
 }
 
@@ -73,6 +73,8 @@ FValhallaAtmosphereState FValhallaAtmosphereState::Lerp(const FValhallaAtmospher
 	Out.VisionFadeWidthCm = FMath::Lerp(A.VisionFadeWidthCm, B.VisionFadeWidthCm, Alpha);
 	Out.VisionFogColor = FMath::Lerp(A.VisionFogColor, B.VisionFogColor, Alpha);
 	Out.VisionFogStrength = FMath::Lerp(A.VisionFogStrength, B.VisionFogStrength, Alpha);
+	Out.FirelightStrength = FMath::Lerp(A.FirelightStrength, B.FirelightStrength, Alpha);
+	Out.FirelightRangeCm = FMath::Lerp(A.FirelightRangeCm, B.FirelightRangeCm, Alpha);
 	Out.CameraMaxArmCm = FMath::Lerp(A.CameraMaxArmCm, B.CameraMaxArmCm, Alpha);
 	return Out;
 }
@@ -92,6 +94,8 @@ bool FValhallaAtmosphereState::Equals(const FValhallaAtmosphereState& Other) con
 		&& FMath::IsNearlyEqual(VisionFadeWidthCm, Other.VisionFadeWidthCm, Cm)
 		&& VisionFogColor.Equals(Other.VisionFogColor, Small)
 		&& FMath::IsNearlyEqual(VisionFogStrength, Other.VisionFogStrength, Small)
+		&& FMath::IsNearlyEqual(FirelightStrength, Other.FirelightStrength, Small)
+		&& FMath::IsNearlyEqual(FirelightRangeCm, Other.FirelightRangeCm, Cm)
 		&& FMath::IsNearlyEqual(CameraMaxArmCm, Other.CameraMaxArmCm, Cm);
 }
 
@@ -304,7 +308,7 @@ void AValhallaZoneAtmosphere::CaptureBaseline()
 		SkyLight.IsValid() ? TEXT("found") : TEXT("MISSING"), Baseline.SkyIntensity);
 }
 
-FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaZoneAtmosphere* Profile) const
+FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaAtmosphereProfile* Profile) const
 {
 	FValhallaAtmosphereState Out = Baseline;
 
@@ -316,6 +320,11 @@ FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaZon
 	Out.VisionFadeWidthCm = Target.VisionFadeWidthCm;
 	Out.VisionFogColor = Target.VisionFogColor;
 	Out.VisionFogStrength = 0.f;
+	// The firelight is only ever drawn through the vision fog (PP_Fog
+	// multiplies it by the fog's alpha), so it simply keeps its values and
+	// fades out with the fog.
+	Out.FirelightStrength = Target.FirelightStrength;
+	Out.FirelightRangeCm = Target.FirelightRangeCm;
 
 	if (!Profile)
 	{
@@ -350,6 +359,10 @@ FValhallaAtmosphereState AValhallaZoneAtmosphere::BuildTarget(const FValhallaZon
 		Out.VisionFadeWidthCm = FMath::Max(1.f, Profile->VisionFadeWidthCm);
 		Out.VisionFogColor = Profile->bHasFogColor ? Profile->FogColor : Baseline.HeightFogColor;
 		Out.VisionFogStrength = 1.f;
+		Out.FirelightStrength = Profile->FirelightGlow;
+		Out.FirelightRangeCm = Profile->FirelightRangeCm > 0.f
+			? Profile->FirelightRangeCm
+			: Profile->GetVisionLimitCm() * DefaultFirelightRangeScale;
 	}
 
 	if (Profile->CameraMaxArmCm > 0.f)
@@ -414,7 +427,7 @@ void AValhallaZoneAtmosphere::Tick(float DeltaSeconds)
 	// Looked up every frame rather than on the zone change alone: a data hot
 	// reload (the web editor's Zones page) changes the profile with no event,
 	// and this is one map lookup.
-	const FValhallaZoneAtmosphere* Profile = ValhallaAtmosphere::Find(this, CurrentZoneId);
+	const FValhallaAtmosphereProfile* Profile = ValhallaAtmosphere::Find(this, CurrentZoneId);
 	const FValhallaAtmosphereState NewTarget = BuildTarget(Profile);
 	HideLimitCm = Profile ? Profile->GetVisionLimitCm() : 0.f;
 
@@ -438,6 +451,8 @@ void AValhallaZoneAtmosphere::Tick(float DeltaSeconds)
 			BlendFrom.VisionClearRadiusCm = NewTarget.VisionClearRadiusCm;
 			BlendFrom.VisionFadeWidthCm = NewTarget.VisionFadeWidthCm;
 			BlendFrom.VisionFogColor = NewTarget.VisionFogColor;
+			BlendFrom.FirelightStrength = NewTarget.FirelightStrength;
+			BlendFrom.FirelightRangeCm = NewTarget.FirelightRangeCm;
 		}
 		Target = NewTarget;
 		BlendElapsed = 0.f;
@@ -539,6 +554,7 @@ void AValhallaZoneAtmosphere::ApplyState(const FValhallaAtmosphereState& State, 
 			State.VisionFadeWidthCm,
 			State.VisionFogColor,
 			Pawn ? State.VisionFogStrength : 0.f);
+		FogRenderer->SetFirelight(State.FirelightStrength, State.FirelightRangeCm);
 	}
 
 	// ── Camera zoom limit ───────────────────────────────────────────────

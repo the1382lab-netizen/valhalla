@@ -65,6 +65,14 @@ export interface ZoneAtmosphere {
    * (visionClearRadiusCm + visionFadeWidthCm). Aggro range is unaffected.
    */
   netRelevancyRadiusCm?: number;
+  /**
+   * How strongly fires, braziers and lamp posts (lights tagged by
+   * fire_lights.py / lamp_lights.py, or `ValhallaBeacon`) glow through the
+   * vision fog. 1 = default, 0 = off. Only matters with vision fog.
+   */
+  firelightGlow?: number;
+  /** Glows fade out beyond this ground distance from the player. Default 1.5 x the fully fogged distance. */
+  firelightRangeCm?: number;
 }
 
 export interface ZoneConfig {
@@ -74,64 +82,6 @@ export interface ZoneConfig {
   defaultSpawn: { x: number; y: number };
   /** B-06: optional per-zone fog, light and sight. See ZoneAtmosphere. */
   atmosphere?: ZoneAtmosphere;
-}
-
-/** The numeric ZoneAtmosphere fields, for editors and validators. */
-export const ZONE_ATMOSPHERE_NUMBER_FIELDS = [
-  'visionClearRadiusCm',
-  'visionFadeWidthCm',
-  'heightFogDensity',
-  'heightFogStartCm',
-  'sunIntensityScale',
-  'skyLightIntensityScale',
-  'cameraMaxArmCm',
-  'netRelevancyRadiusCm',
-] as const;
-
-/** The colour ZoneAtmosphere fields (`#rrggbb`). */
-export const ZONE_ATMOSPHERE_COLOR_FIELDS = ['fogColor', 'gradeTint'] as const;
-
-/**
- * Check a zone's `atmosphere` object. Returns human-readable problems; an
- * empty list means it is valid (a missing atmosphere is valid).
- */
-export function validateZoneAtmosphere(atmosphere: unknown): string[] {
-  const errors: string[] = [];
-  if (atmosphere === undefined) return errors;
-  if (atmosphere === null || typeof atmosphere !== 'object' || Array.isArray(atmosphere)) {
-    return ['atmosphere must be an object'];
-  }
-  const a = atmosphere as Record<string, unknown>;
-  const known = new Set<string>(['notes', ...ZONE_ATMOSPHERE_NUMBER_FIELDS, ...ZONE_ATMOSPHERE_COLOR_FIELDS]);
-  for (const key of Object.keys(a)) {
-    if (!known.has(key)) errors.push(`atmosphere.${key} is not a known field`);
-  }
-  if (a.notes !== undefined && typeof a.notes !== 'string') {
-    errors.push('atmosphere.notes must be text');
-  }
-  for (const key of ZONE_ATMOSPHERE_NUMBER_FIELDS) {
-    const v = a[key];
-    if (v === undefined) continue;
-    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) {
-      errors.push(`atmosphere.${key} must be a number >= 0`);
-    }
-  }
-  for (const key of ZONE_ATMOSPHERE_COLOR_FIELDS) {
-    const v = a[key];
-    if (v === undefined) continue;
-    if (typeof v !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(v)) {
-      errors.push(`atmosphere.${key} must be a colour like #8a9486`);
-    }
-  }
-  const clear = a.visionClearRadiusCm;
-  const relevancy = a.netRelevancyRadiusCm;
-  if (typeof clear === 'number' && clear > 0 && typeof relevancy === 'number' && relevancy > 0) {
-    const fade = typeof a.visionFadeWidthCm === 'number' ? a.visionFadeWidthCm : 0;
-    if (relevancy < clear + fade) {
-      errors.push('atmosphere.netRelevancyRadiusCm is inside the vision fog: actors would pop in where the fog is still see-through');
-    }
-  }
-  return errors;
 }
 
 /** Registry of all zones. */

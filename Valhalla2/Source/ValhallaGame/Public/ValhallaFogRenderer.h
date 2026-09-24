@@ -84,6 +84,38 @@ public:
 	 */
 	void SetVisionFog(const FVector2D& Centre, float ClearRadiusCm, float FadeWidthCm, const FLinearColor& Colour, float Strength);
 
+	/**
+	 * B-06: firelight through the vision fog. Strength multiplies the glow of
+	 * every beacon light (0 = off, PP_Fog's default); glows fade out beyond
+	 * RangeCm of ground distance from the player. Only ever visible where the
+	 * vision fog is, because PP_Fog multiplies it by the fog's own alpha.
+	 *
+	 * Beacons are the light actors tagged `ValhallaFireLight` (fire_lights.py:
+	 * campfires, cooking fires, braziers, fireplaces), `ValhallaLampLight`
+	 * (lamp_lights.py: lamp posts) or `ValhallaBeacon` (anything placed by hand,
+	 * e.g. a torch). Each is drawn once into a world-space glow mask — a soft
+	 * disc the size of its attenuation radius, in its own colour, weighted by
+	 * its intensity — which PP_Fog adds on top of the fog and uses to thin the
+	 * fog over it, so the flame and the lit ground show through as a glow.
+	 * The actor that carries a light (an NPC with a torch) is still hidden by
+	 * AValhallaZoneAtmosphere; only tagged level lights are beacons.
+	 */
+	void SetFirelight(float Strength, float RangeCm);
+
+	/** Actor tags that make a light a beacon. */
+	static constexpr const TCHAR* FireLightTag = TEXT("ValhallaFireLight");
+	static constexpr const TCHAR* LampLightTag = TEXT("ValhallaLampLight");
+	static constexpr const TCHAR* BeaconTag = TEXT("ValhallaBeacon");
+
+	/** A campfire's 70 cd is a beacon of weight 1; weight goes as sqrt(cd / this). */
+	static constexpr float BeaconReferenceCandelas = 70.f;
+
+	/** Lights lighter than this (candles, an altar) are not beacons. */
+	static constexpr float BeaconMinWeight = 0.3f;
+
+	/** How often the beacon list and the glow mask are rebuilt, seconds. */
+	static constexpr float BeaconRefreshSeconds = 2.f;
+
 	/** `/Game/Valhalla/Materials/PP_Fog`. Authored by `build_fog.py`. */
 	static constexpr const TCHAR* FogMaterialPath = TEXT("/Game/Valhalla/Materials/PP_Fog");
 
@@ -91,6 +123,13 @@ protected:
 	/** UCanvasRenderTarget2D's update hook. Draws PendingTriangles. */
 	UFUNCTION()
 	void DrawVisibleMask(UCanvas* Canvas, int32 Width, int32 Height);
+
+	/** GlowRT's update hook: one additive soft disc per beacon. */
+	UFUNCTION()
+	void DrawGlowMask(UCanvas* Canvas, int32 Width, int32 Height);
+
+	/** Rebuild Beacons from the tagged lights inside FogBounds. */
+	void GatherBeacons();
 
 	/**
 	 * Every VisionBlocker within Range of Centre, as 2D footprint edges.
@@ -150,6 +189,10 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UCanvasRenderTarget2D> VisibleRT;
 
+	/** B-06: the beacon glows, world space over FogBounds like the other masks. */
+	UPROPERTY(Transient)
+	TObjectPtr<UCanvasRenderTarget2D> GlowRT;
+
 	/**
 	 * The union of every frame's polygon so far.
 	 *
@@ -193,4 +236,24 @@ private:
 
 	/** Scratch, kept between frames so the per-frame pass does not allocate. */
 	TArray<FValhallaVisibilitySegment> SegmentScratch;
+
+	/** One beacon light, as the glow mask draws it. */
+	struct FBeacon
+	{
+		FVector2D Location = FVector2D::ZeroVector;
+		float RadiusCm = 0.f;
+		/** Light colour times the beacon's weight. */
+		FLinearColor Colour = FLinearColor::Black;
+	};
+
+	TArray<FBeacon> Beacons;
+
+	/** The last strength SetFirelight was given. 0: the glow mask is not maintained. */
+	float FirelightStrength = 0.f;
+
+	/** Seconds since the glow mask was last rebuilt. */
+	float BeaconRefreshAccumulator = 0.f;
+
+	/** The bounds the glow mask was drawn for; a zone change redraws it at once. */
+	FBox2D GlowBounds = FBox2D(ForceInit);
 };

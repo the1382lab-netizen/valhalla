@@ -1,8 +1,4 @@
-<!--
-  B-06 Phase 1 technical prerequisites. Written as a PLAN.md section, ready to
-  append to Valhalla2/PLAN.md above "## Backlog". It is a separate file only
-  because PLAN.md was being edited by the B-21 session at the time (2026-09-24).
--->
+<!-- Copy of the B-06 section of Valhalla2/PLAN.md. -->
 
 ## B-06 Phase 1 prerequisites — zone atmosphere, friendly NPCs, 160-tile scaffold (2026-09-24)
 
@@ -10,12 +6,14 @@ Technical groundwork for Eldmoor Grasslands (`grasslands_v2`) and, later,
 Greyfell Cave (`cave_dungeon`). No level work: the Eldmoor layout is separate.
 
 - [x] **Zone atmosphere as data.** Optional `atmosphere` object per zone in
-      `shared/data/zones.json` (`ZoneAtmosphere` in `shared/src/maps.ts`, with
-      `validateZoneAtmosphere`; `FValhallaZoneAtmosphere` in `ValhallaTypes.h`,
+      `shared/data/zones.json` (`ZoneAtmosphere` in `shared/src/maps.ts`; its rules in
+      `validateZoneAtmosphere` in `shared/src/validation.ts`, used by B-13's
+      `validateGameData`, the loader and the Zones page; `FValhallaAtmosphereProfile` in `ValhallaTypes.h`,
       parsed in `ValhallaDataSubsystem.cpp`). Fields: `visionClearRadiusCm`,
       `visionFadeWidthCm`, `fogColor` (#rrggbb), `heightFogDensity`,
       `heightFogStartCm`, `sunIntensityScale`, `skyLightIntensityScale`,
-      `gradeTint` (#rrggbb), `cameraMaxArmCm`, `netRelevancyRadiusCm`, `notes`.
+      `gradeTint` (#rrggbb), `cameraMaxArmCm`, `netRelevancyRadiusCm`,
+      `firelightGlow`, `firelightRangeCm`, `notes`.
       **A missing object or field means today's look exactly.** Grasslands and
       Desert have no profile and do not change.
 - [x] **Web editor:** new **World → Zones** page (`editor/src/components/editors/zones/ZoneEditor.tsx`):
@@ -41,6 +39,22 @@ Greyfell Cave (`cave_dungeon`). No level work: the Eldmoor layout is separate.
       what shows). `VisionFogStrength` defaults to 0, so the regenerated
       material is identical to today's until a zone asks for fog. The LOS fog of
       war stays underneath; walls still block sight.
+- [x] **Firelight through the fog.** Beacon lights — actors tagged
+      `ValhallaFireLight` (fire_lights.py: campfires, cooking fires, braziers,
+      fireplaces), `ValhallaLampLight` (lamp_lights.py: lamp posts) or
+      `ValhallaBeacon` (anything placed by hand, e.g. a torch) — are drawn by
+      `AValhallaFogRenderer` into a third world-space mask, `GlowMask`: one
+      additive soft disc per light, its attenuation radius wide, in its colour,
+      weighted by sqrt(candelas / 70) (candles and the altar fall under the 0.3
+      cut). Rebuilt on a zone change and every 2 s, only while a zone has the
+      firelight on. PP_Fog thins the vision fog over the glow (up to 70 %) and
+      adds the glow's colour on top, both scaled by the fog's alpha and faded
+      out beyond `FirelightRange` — so a camp reads as a warm glow through the
+      mist from a distance, and nothing changes inside the clear radius. Per
+      zone: `firelightGlow` (1 default, 0 off) and `firelightRangeCm` (default
+      1.5 x the fully fogged distance, 24 m in Eldmoor), both on the Zones page.
+      The actor carrying a light (an NPC) is still hidden; only tagged level
+      lights glow.
 - [x] **Camera:** a zone's `cameraMaxArmCm` clamps the boom (500–2600). No
       clamp in zones without one, so `valhalla.DebugCameraDistance` still works there.
 - [x] **Hide beyond the fog.** Client: NPCs, other players and loot bags
@@ -64,11 +78,9 @@ Greyfell Cave (`cave_dungeon`). No level work: the Eldmoor layout is separate.
       templates (TS, C++ `FValhallaNPCTemplate::Role`, NPC editor field shown
       for friendly NPCs); nothing reads it yet. The NPC editor's Type now reads
       "Enemy (hostile)" / "NPC (friendly)". Neutral NPCs are not supported.
-- [ ] **Friendly nameplate colour in the UMG HUD — not done.** The plates are
-      drawn by `UValhallaGameHUDWidget::TickWorldLayer`, which the B-21 session
-      was editing. The change: skip `It->IsHidden()` actors, and pass
-      `!It->bFriendly` instead of `true` as `bHostile` for NPC plates (and use
-      `AreHostile` instead of `IsNpcTarget` for the target-frame name colour).
+- [x] **Nameplates (UMG HUD):** friendly NPCs get a green name and bar; NPCs
+      and players hidden by the vision fog get no plate; the target frame no
+      longer shows a friendly NPC's name in enemy red.
 - [x] **scaffold_zone:** `MAX_TILES` 128 → 160 (Eldmoor is 143 tiles, 9152 cm;
       at 160 tiles the fog masks are 10 cm a texel).
 
@@ -103,10 +115,12 @@ Relevancy is capped by the class vision range as well (1200 most classes,
      relevancy 800; Save. Within about a second: mist closes in, light dims,
      the camera pulls in. Untick Custom atmosphere, Save: it blends back.
    - With that profile: an NPC further than 7 m is not drawn and cannot be
-     clicked, its nameplate goes within a few seconds (the UMG plates do not
-     check hidden yet, see above), a far bag's loot label is gone, and
+     clicked, its nameplate goes with it, a far bag's loot label is gone, and
      `valhalla.DebugListActors` on the client lists nothing beyond 8 m.
    - A friendly test NPC (`type: npc`, e.g. `merchant_bjorn`, optionally with
      `canAggro` ticked): walking up does not aggro it; auto-attack and a
      SingleEnemy spell on it say "Invalid target"; an AoE does not hurt it.
+   - Firelight: with that profile, walk 10-15 m from Bjorn's market lamp
+     posts or a campfire: a warm glow shows through the mist where the fire
+     is; set Firelight glow to 0 and Save: it goes; 2: brighter.
    - Leave the Grasslands profile off again before committing `zones.json`.

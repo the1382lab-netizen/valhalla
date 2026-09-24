@@ -8,7 +8,7 @@ import type { ItemTemplate } from './items.js';
 import type { SkillTemplate } from './skills.js';
 import type { ClassTemplate } from './classes.js';
 import type { ZoneConfig } from './maps.js';
-import { validateZoneAtmosphere } from './maps.js';
+import { validateZoneAtmosphere } from './validation.js';
 import type { UIConfig } from './ui-config.js';
 import type { NPCTemplate } from './npcs.js';
 import type { LootTable } from './loot-tables.js';

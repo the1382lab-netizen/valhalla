@@ -3,8 +3,12 @@
 #include "ValhallaFogRenderer.h"
 
 #include "Camera/CameraComponent.h"
+#include "CanvasItem.h"
+#include "Components/LightComponent.h"
+#include "Components/LocalLightComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CanvasRenderTarget2D.h"
+#include "Engine/Light.h"
 #include "Engine/OverlapResult.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/TextureRenderTarget2D.h"
@@ -13,6 +17,8 @@
 #include "Kismet/KismetRenderingLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "EngineUtils.h"
+#include "RenderUtils.h"
 #include "ValhallaCharacter.h"
 #include "ValhallaFogBounds.h"
 #include "ValhallaPlayerController.h"
@@ -34,6 +40,9 @@ namespace
 	const FName ParamVisionFadeWidth(TEXT("VisionFadeWidth"));
 	const FName ParamVisionFogColor(TEXT("VisionFogColor"));
 	const FName ParamVisionFogStrength(TEXT("VisionFogStrength"));
+	const FName ParamGlowMask(TEXT("GlowMask"));
+	const FName ParamFirelightStrength(TEXT("FirelightStrength"));
+	const FName ParamFirelightRange(TEXT("FirelightRange"));
 }
 
 AValhallaFogRenderer::AValhallaFogRenderer()
@@ -141,6 +150,17 @@ void AValhallaFogRenderer::BeginPlay()
 		VisibleRT->OnCanvasRenderTargetUpdate.AddDynamic(this, &AValhallaFogRenderer::DrawVisibleMask);
 	}
 
+	// B-06: the beacon glows. Black (nothing) until a zone with vision fog
+	// turns the firelight on; see SetFirelight.
+	GlowRT = UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(
+		World, UCanvasRenderTarget2D::StaticClass(), MaskResolution, MaskResolution);
+	if (GlowRT)
+	{
+		GlowRT->ClearColor = FLinearColor::Black;
+		GlowRT->OnCanvasRenderTargetUpdate.AddDynamic(this, &AValhallaFogRenderer::DrawGlowMask);
+		GlowRT->UpdateResource();
+	}
+
 	ExploredRT = UKismetRenderingLibrary::CreateRenderTarget2D(
 		World, MaskResolution, MaskResolution, RTF_RGBA8_SRGB, FLinearColor::Black, /*bAutoGenerateMipMaps*/ false);
 	if (ExploredRT)
@@ -164,6 +184,10 @@ void AValhallaFogRenderer::BeginPlay()
 
 	FogMaterial->SetTextureParameterValue(ParamVisibleMask, VisibleRT);
 	FogMaterial->SetTextureParameterValue(ParamExploredMask, ExploredRT);
+	if (GlowRT)
+	{
+		FogMaterial->SetTextureParameterValue(ParamGlowMask, GlowRT);
+	}
 	ApplyBoundsToMaterial();
 
 	const FVector2D Size = FogBounds.GetSize();
@@ -278,11 +302,134 @@ void AValhallaFogRenderer::SetVisionFog(const FVector2D& Centre, float ClearRadi
 	FogMaterial->SetScalarParameterValue(ParamVisionFogStrength, FMath::Clamp(Strength, 0.f, 1.f));
 }
 
+void AValhallaFogRenderer::SetFirelight(float Strength, float RangeCm)
+{
+	const float NewStrength = FMath::Max(0.f, Strength);
+	if (FirelightStrength <= 0.f && NewStrength > 0.f)
+	{
+		// Switching on: redraw the glow mask on the next tick rather than up
+		// to BeaconRefreshSeconds later.
+		GlowBounds = FBox2D(ForceInit);
+	}
+	FirelightStrength = NewStrength;
+
+	if (!FogMaterial)
+	{
+		return;
+	}
+	FogMaterial->SetScalarParameterValue(ParamFirelightStrength, FirelightStrength);
+	FogMaterial->SetScalarParameterValue(ParamFirelightRange, FMath::Max(1.f, RangeCm));
+}
+
+void AValhallaFogRenderer::GatherBeacons()
+{
+	Beacons.Reset();
+
+	UWorld* World = GetWorld();
+	if (!World || !FogBounds.bIsValid)
+	{
+		return;
+	}
+
+	const FName FireTag(FireLightTag);
+	const FName LampTag(LampLightTag);
+	const FName HandTag(BeaconTag);
+
+	for (TActorIterator<ALight> It(World); It; ++It)
+	{
+		const ALight* LightActor = *It;
+		if (LightActor->IsHidden()
+			|| !(LightActor->ActorHasTag(FireTag) || LightActor->ActorHasTag(LampTag) || LightActor->ActorHasTag(HandTag)))
+		{
+			continue;
+		}
+
+		// Point and spot lights; a directional light has no position to glow at.
+		const ULocalLightComponent* Light = Cast<ULocalLightComponent>(LightActor->GetLightComponent());
+		if (!Light || !Light->IsVisible() || !Light->bAffectsWorld || Light->Intensity <= 0.f)
+		{
+			continue;
+		}
+
+		const FVector Location = Light->GetComponentLocation();
+		const FVector2D LocationXY(Location.X, Location.Y);
+		const float Radius = FMath::Max(50.f, Light->AttenuationRadius);
+		if (!FogBounds.ExpandBy(Radius).IsInside(LocationXY))
+		{
+			continue;
+		}
+
+		// fire_lights.py and lamp_lights.py author candelas; convert anything
+		// else so a hand-placed torch in lumens weighs the same.
+		const float Candelas = Light->Intensity
+			* ULocalLightComponent::GetUnitsConversionFactor(Light->IntensityUnits, ELightUnits::Candelas);
+		const float Weight = FMath::Sqrt(FMath::Max(0.f, Candelas) / BeaconReferenceCandelas);
+		if (Weight < BeaconMinWeight)
+		{
+			continue;
+		}
+
+		FBeacon& Beacon = Beacons.AddDefaulted_GetRef();
+		Beacon.Location = LocationXY;
+		Beacon.RadiusCm = Radius;
+		Beacon.Colour = Light->GetLightColor() * FMath::Min(Weight, 1.5f);
+	}
+}
+
+void AValhallaFogRenderer::DrawGlowMask(UCanvas* Canvas, int32 /*Width*/, int32 /*Height*/)
+{
+	if (!Canvas || Beacons.Num() == 0 || !FogBounds.bIsValid)
+	{
+		return;
+	}
+
+	// A fan per beacon: its colour at the centre, black at the rim, so the
+	// vertex interpolation is the soft falloff. Additive, so the fires of one
+	// camp add up instead of cutting each other's discs off.
+	constexpr int32 Segments = 24;
+	TArray<FCanvasUVTri> Triangles;
+	Triangles.Reserve(Beacons.Num() * Segments);
+
+	for (const FBeacon& Beacon : Beacons)
+	{
+		const FVector2D Centre = WorldToMask(Beacon.Location);
+		FLinearColor Core = Beacon.Colour;
+		Core.A = 1.f;
+
+		for (int32 Index = 0; Index < Segments; ++Index)
+		{
+			const double A0 = (2.0 * UE_DOUBLE_PI * Index) / Segments;
+			const double A1 = (2.0 * UE_DOUBLE_PI * (Index + 1)) / Segments;
+
+			FCanvasUVTri Tri;
+			Tri.V0_Pos = Centre;
+			Tri.V1_Pos = WorldToMask(Beacon.Location + FVector2D(FMath::Cos(A0), FMath::Sin(A0)) * Beacon.RadiusCm);
+			Tri.V2_Pos = WorldToMask(Beacon.Location + FVector2D(FMath::Cos(A1), FMath::Sin(A1)) * Beacon.RadiusCm);
+			Tri.V0_UV = FVector2D::ZeroVector;
+			Tri.V1_UV = FVector2D::ZeroVector;
+			Tri.V2_UV = FVector2D::ZeroVector;
+			Tri.V0_Color = Core;
+			Tri.V1_Color = FLinearColor::Black;
+			Tri.V2_Color = FLinearColor::Black;
+			Triangles.Add(Tri);
+		}
+	}
+
+	FCanvasTriangleItem Item(FVector2D::ZeroVector, FVector2D::ZeroVector, FVector2D::ZeroVector, GWhiteTexture);
+	Item.TriangleList = MoveTemp(Triangles);
+	Item.BlendMode = SE_BLEND_Additive;
+	Canvas->DrawItem(Item);
+}
+
 void AValhallaFogRenderer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	if (VisibleRT)
 	{
 		VisibleRT->OnCanvasRenderTargetUpdate.RemoveDynamic(this, &AValhallaFogRenderer::DrawVisibleMask);
+	}
+	if (GlowRT)
+	{
+		GlowRT->OnCanvasRenderTargetUpdate.RemoveDynamic(this, &AValhallaFogRenderer::DrawGlowMask);
 	}
 	Super::EndPlay(EndPlayReason);
 }
@@ -439,6 +586,24 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	if (!ResolveBoundsForPawn(Pawn))
 	{
 		return;
+	}
+
+	// ── B-06: the beacon glow mask ──────────────────────────────────────
+	//
+	// Only while a zone's vision fog has the firelight on. Rebuilt on a zone
+	// change and every BeaconRefreshSeconds, so a fire lit or put out, or a
+	// light streamed in, shows up within a couple of seconds. A few dozen
+	// soft discs, drawn once; nothing per frame.
+	if (FirelightStrength > 0.f && GlowRT)
+	{
+		BeaconRefreshAccumulator += DeltaSeconds;
+		if (!(GlowBounds == FogBounds) || BeaconRefreshAccumulator >= BeaconRefreshSeconds)
+		{
+			BeaconRefreshAccumulator = 0.f;
+			GlowBounds = FogBounds;
+			GatherBeacons();
+			GlowRT->UpdateResource();
+		}
 	}
 
 	const FVector Location = Pawn->GetActorLocation();

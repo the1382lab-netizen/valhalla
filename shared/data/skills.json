@@ -210,8 +210,8 @@
       "iconAbbrev": "SM",
       "scalingStat": "wisdom",
       "baseDamage": [
-        25,
-        24
+        24,
+        25
       ],
       "effectNotes": "Holy damage to single target"
     },
@@ -835,8 +835,8 @@
       "iconAbbrev": "MM",
       "scalingStat": "intelligence",
       "baseDamage": [
-        25,
-        5
+        5,
+        25
       ],
       "effectNotes": "Guaranteed hit — no dodge or miss possible"
     },

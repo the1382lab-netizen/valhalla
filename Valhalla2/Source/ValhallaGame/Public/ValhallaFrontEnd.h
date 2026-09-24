@@ -198,6 +198,12 @@ public:
 	/** Called by a row button. */
 	void HandleRowClicked(int32 RowIndex);
 
+	/** B-12: the Account panel's result line (errors still go to SetError). */
+	void SetAccountStatus(const FString& Message);
+
+	/** B-12: empty the Account panel's password and confirmation boxes. */
+	void ClearAccountFields();
+
 protected:
 	UFUNCTION() void HandleEnterWorldClicked();
 	UFUNCTION() void HandleCreateClicked();
@@ -207,6 +213,10 @@ protected:
 	UFUNCTION() void HandleDeleteConfirmClicked();
 	UFUNCTION() void HandleDeleteCancelClicked();
 	UFUNCTION() void HandleLogOutClicked();
+	UFUNCTION() void HandleAccountClicked();
+	UFUNCTION() void HandleAccountCloseClicked();
+	UFUNCTION() void HandleChangePasswordClicked();
+	UFUNCTION() void HandleDeleteAccountClicked();
 
 	void BuildUi();
 	void RefreshRows();
@@ -244,6 +254,29 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UButton> DeleteButton;
+
+	// ── B-12: account panel (change password, delete account) ──────────
+
+	UPROPERTY(Transient)
+	TObjectPtr<UVerticalBox> AccountPanel;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> CurrentPasswordBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> NewPasswordBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> RepeatPasswordBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> DeleteAccountPasswordBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UEditableTextBox> DeleteAccountConfirmBox;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> AccountStatusText;
 
 	/** What the last list call returned, in the backend's order. */
 	TArray<FValhallaCharacterSummary> Characters;
@@ -318,6 +351,12 @@ public:
 	void SubmitCreateCharacter(const FString& Name, FName ClassId);
 	void SubmitDeleteCharacter(int32 CharacterId);
 	void EnterWorld(int32 CharacterId);
+
+	/** B-12: change this account's password; the session keeps working on the new token. */
+	void SubmitChangePassword(const FString& CurrentPassword, const FString& NewPassword);
+
+	/** B-12: delete this account and every character on it, then return to the login screen. */
+	void SubmitDeleteAccount(const FString& Password, const FString& Confirm);
 	void LogOut();
 
 	/** The session, or an empty one before a login. */

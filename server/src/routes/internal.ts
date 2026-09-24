@@ -47,6 +47,14 @@ import {
   type ItemTemplate,
 } from '@valhalla/shared';
 import { DataManager } from '../systems/DataManager.js';
+import {
+  AccountError,
+  adminDeleteAccount,
+  adminRenameCharacter,
+  adminResetPassword,
+  getAccountDetail,
+  searchAccounts,
+} from '../services/AccountService.js';
 
 export const internalRouter = Router();
 
@@ -355,4 +363,116 @@ internalRouter.post('/accounts/unban', requireServerSecret, (req, res) => {
   clearBan(account.userId);
   console.log(`[internal] unban ${account.username} (#${account.userId})`);
   res.json({ ok: true, ...account });
+});
+
+// ── Account management (B-12; admin, via the web editor) ────────────────
+// Called by the web editor's server (editor/src/server.ts) with the server
+// secret, so these work whether or not the game server is running. Kicking an
+// online player after a reset or deletion is the editor's job (it asks the
+// game server's admin API when it is up).
+
+function sendAccountError(res: import('express').Response, err: unknown, fallback: string): void {
+  if (err instanceof AccountError) {
+    res.status(err.status).json({ error: err.message });
+    return;
+  }
+  console.error(`[internal] ${fallback}:`, err);
+  res.status(500).json({ error: fallback });
+}
+
+/**
+ * GET /api/accounts/search?q=<text>&limit=<n>&banned=1
+ * Matches part of an account name or of one of its character names; an empty
+ * q lists the newest accounts. banned=1 keeps only accounts banned right now.
+ * -> 200 { accounts: [{ userId, username, createdAt, lastLoginAt, characterCount, ban }] }
+ */
+internalRouter.get('/accounts/search', requireServerSecret, (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const limit = Number.parseInt(String(req.query.limit ?? '50'), 10);
+  const bannedOnly = req.query.banned === '1' || req.query.banned === 'true';
+  res.json({ accounts: searchAccounts(q, Number.isFinite(limit) ? limit : 50, bannedOnly) });
+});
+
+/**
+ * GET /api/accounts/detail?userId=<n>  (or ?username=<name>)
+ * -> 200 { account: { ...summary, characters: [{ id, name, classId, level, zoneId, updatedAt }] } }
+ */
+internalRouter.get('/accounts/detail', requireServerSecret, (req, res) => {
+  const account = resolveAccount({
+    userId: req.query.userId !== undefined ? Number(req.query.userId) : undefined,
+    username: typeof req.query.username === 'string' ? req.query.username : undefined,
+  });
+  const detail = account ? getAccountDetail(account.userId) : null;
+  if (!detail) {
+    res.status(404).json({ error: 'Account not found (send userId or username).' });
+    return;
+  }
+  res.json({ account: detail });
+});
+
+/**
+ * POST /api/accounts/reset-password
+ * Body: { userId | username }
+ * -> 200 { ok, userId, username, temporaryPassword }   shown once; every
+ *    existing session on the account stops working.
+ */
+internalRouter.post('/accounts/reset-password', requireServerSecret, async (req, res) => {
+  const account = resolveAccount(req.body);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found (send userId or username).' });
+    return;
+  }
+  try {
+    const { temporaryPassword } = await adminResetPassword(account.userId);
+    console.log(`[internal] password reset by admin: ${account.username} (#${account.userId})`);
+    res.json({ ok: true, ...account, temporaryPassword });
+  } catch (err) {
+    sendAccountError(res, err, 'Password reset failed.');
+  }
+});
+
+/**
+ * POST /api/accounts/delete
+ * Body: { userId | username, confirm: string (the account name) }
+ * -> 200 { ok, userId, username, characters }
+ */
+internalRouter.post('/accounts/delete', requireServerSecret, (req, res) => {
+  const account = resolveAccount(req.body);
+  if (!account) {
+    res.status(404).json({ error: 'Account not found (send userId or username).' });
+    return;
+  }
+  const confirm = (req.body ?? {}).confirm;
+  if (typeof confirm !== 'string' || confirm.trim().toLowerCase() !== account.username) {
+    res.status(400).json({ error: 'Send the account name as "confirm" to delete it.' });
+    return;
+  }
+  try {
+    const { characters } = adminDeleteAccount(account.userId);
+    console.log(`[internal] account deleted by admin: ${account.username} (#${account.userId}), ${characters} character(s)`);
+    res.json({ ok: true, ...account, characters });
+  } catch (err) {
+    sendAccountError(res, err, 'Account deletion failed.');
+  }
+});
+
+/**
+ * POST /api/accounts/rename-character
+ * Body: { characterId: number, name: string }
+ * -> 200 { ok, characterId, oldName, name, userId }   400/409 on a bad or taken name.
+ */
+internalRouter.post('/accounts/rename-character', requireServerSecret, (req, res) => {
+  const b = (req.body ?? {}) as Record<string, unknown>;
+  const characterId = typeof b.characterId === 'number' && Number.isInteger(b.characterId) ? b.characterId : 0;
+  if (characterId <= 0) {
+    res.status(400).json({ error: 'characterId (a positive integer) is required.' });
+    return;
+  }
+  try {
+    const result = adminRenameCharacter(characterId, b.name);
+    console.log(`[internal] character renamed by admin: #${characterId} ${result.oldName} -> ${result.name}`);
+    res.json({ ok: true, characterId, ...result });
+  } catch (err) {
+    sendAccountError(res, err, 'Rename failed.');
+  }
 });

@@ -201,6 +201,30 @@ PUT together.
 stored verbatim; the backend never reads inside it. `updatedAt` (ISO 8601) is
 stamped by the backend on every PUT. Deleting the character deletes the row.
 
+## Account management (B-12)
+
+Player routes (`Authorization: Bearer <token>`, rate limited with the login budget):
+
+| Route | Body | Result |
+| --- | --- | --- |
+| `POST /api/auth/password` | `{ currentPassword, newPassword }` | `{ ok, token }`: the new token replaces the caller's; every other session on the account stops working |
+| `POST /api/auth/account/delete` (or `DELETE /api/auth/account`) | `{ password, confirm }` (confirm = account name) | `{ ok, username, characters }`: account, characters, items and action bars removed |
+
+Admin routes (`X-Server-Secret`; the web editor's Accounts dialog calls them through `editor/src/server.ts`):
+
+| Route | Body / query | Result |
+| --- | --- | --- |
+| `GET /api/accounts/search` | `?q=<account or character name>&banned=1&limit=` | `{ accounts: [{ userId, username, createdAt, lastLoginAt, characterCount, ban }] }` |
+| `GET /api/accounts/detail` | `?userId=` or `?username=` | `{ account: { ...summary, characters: [...] } }` |
+| `POST /api/accounts/reset-password` | `{ userId \| username }` | `{ ok, temporaryPassword }` (shown once; sessions end) |
+| `POST /api/accounts/delete` | `{ userId \| username, confirm }` | `{ ok, characters }` |
+| `POST /api/accounts/rename-character` | `{ characterId, name }` | `{ ok, oldName, name }` (400 invalid, 409 taken) |
+
+Sessions end through `users.token_version`: every login token carries it (`tv`)
+and a password change or reset bumps it, so `verifyToken` (players and the game
+server's join check alike) refuses anything issued before. No email addresses
+are stored; a forgotten password is an admin reset.
+
 ## Smoke test
 
 ```bash

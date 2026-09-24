@@ -118,10 +118,11 @@ double UValhallaSkillHandler::RollBaseDamage(const FValhallaSkillTemplate& Skill
 		return 0.0;
 	}
 
-	// skills.json has at least one entry with baseDamage [25, 5] — max below min
-	// (wizard_magic_missile). 1.0's `min + rand * (max - min)` quietly produced a
-	// value in [5, 25] for it, so the same expression is used rather than a
-	// "corrected" Min/Max: the goal is the 1.0 number, not the tidy one.
+	// skills.json used to have baseDamage [25, 5] (wizard_magic_missile) and
+	// [25, 24] (cleric_smite), max below min. 1.0's `min + rand * (max - min)`
+	// rolls inside the range either way round, so the same expression is kept.
+	// B-13 swapped both to min-first (the same rolls) and `npm run validate`
+	// now refuses an inverted range.
 	const double Min = Skill.BaseDamageMin;
 	const double Max = Skill.BaseDamageMax;
 	return Min + FMath::FRand() * (Max - Min);

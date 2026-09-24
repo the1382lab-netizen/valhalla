@@ -12,6 +12,12 @@ export const StatusBar: React.FC = () => {
   const uiConfig = useEditorStore(s => s.uiConfig);
 
   const undoStackDepth = useUndoRedoStore(s => s.getUndoCount());
+  const savedValidation = useEditorStore(s => s.savedValidation);
+  const validateSaved = useEditorStore(s => s.validateSaved);
+  const setActiveSection = useEditorStore(s => s.setActiveSection);
+
+  // B-13: check the files once when the editor opens; every Save re-checks.
+  React.useEffect(() => { void validateSaved(); }, [validateSaved]);
 
   // Check if any section is dirty
   const anyDirty = items.isDirty || skills.isDirty || classes.isDirty ||
@@ -59,6 +65,24 @@ export const StatusBar: React.FC = () => {
         </span>
       )}
       <span>Undo stack: {undoStackDepth}</span>
+      {savedValidation && (
+        <span
+          onClick={() => setActiveSection('validation')}
+          style={{
+            cursor: 'pointer',
+            color: savedValidation.error ? '#e66' : savedValidation.errors ? '#ff6666' : savedValidation.warnings ? '#ffdd88' : '#8fd18f',
+          }}
+          title={`Saved files checked at ${formatTime(savedValidation.checkedAt)} (same rules as npm run validate). Click for details.`}
+        >
+          {savedValidation.error
+            ? '⚠ validation did not run'
+            : savedValidation.errors
+              ? `✗ ${savedValidation.errors} data error${savedValidation.errors === 1 ? '' : 's'}${savedValidation.warnings ? `, ${savedValidation.warnings} warnings` : ''}`
+              : savedValidation.warnings
+                ? `! ${savedValidation.warnings} data warnings`
+                : '✓ data checks pass'}
+        </span>
+      )}
     </div>
   );
 };

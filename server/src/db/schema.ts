@@ -12,6 +12,8 @@
  * banned_until INTEGER NULL (unix ms; NULL = not banned; 8.64e15 = permanent)
  * ban_reason TEXT NOT NULL DEFAULT ''
  * banned_by TEXT NOT NULL DEFAULT ''
+ * token_version INTEGER NOT NULL DEFAULT 0 (copied into login tokens as "tv"; bumped to end all sessions)
+ * last_login_at INTEGER NULL (unix ms)
  *
  * -- characters --
  * id INTEGER PRIMARY KEY AUTOINCREMENT

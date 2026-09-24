@@ -14,6 +14,15 @@ interface DataSection<T> {
   lastSaved: number | null;
 }
 
+/** B-13: the result of checking the saved files after a Save (shown in the status bar). */
+export interface SavedValidation {
+  errors: number;
+  warnings: number;
+  checkedAt: number;
+  /** Set when the check itself could not run. */
+  error?: string;
+}
+
 interface EditorState {
   // Navigation
   activeSection: EditorSection;
@@ -27,6 +36,10 @@ interface EditorState {
   npcTemplates: DataSection<Record<string, any>>;
   lootTables: DataSection<Record<string, any>>;
   uiConfig: DataSection<any>;
+
+  /** B-13: the last check of the saved files, run after every Save. */
+  savedValidation: SavedValidation | null;
+  validateSaved: () => Promise<void>;
 
   // Actions
   loadAll: () => Promise<void>;
@@ -73,7 +86,22 @@ async function putJson(url: string, data: any) {
   return res.json();
 }
 
+/** Set while saveAll runs, so its sections are checked once at the end rather than after each file. */
+let batchingSaves = false;
+
 export const useEditorStore = create<EditorState>((set, get) => ({
+  savedValidation: null,
+  validateSaved: async () => {
+    try {
+      const res = await fetch('/api/validate');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
+      set({ savedValidation: { errors: json.summary.errors, warnings: json.summary.warnings, checkedAt: Date.now() } });
+    } catch (err: any) {
+      set({ savedValidation: { errors: 0, warnings: 0, checkedAt: Date.now(), error: err?.message || 'request failed' } });
+    }
+  },
+
   activeSection: 'items',
   setActiveSection: (section) => set({ activeSection: section }),
 
@@ -172,16 +200,24 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       [section]: { ...s[section as keyof EditorState] as DataSection<any>, isDirty: false, lastSaved: Date.now() },
     } as any));
+    // B-13: every Save re-checks the files on disk (no need to await it).
+    if (!batchingSaves) void get().validateSaved();
   },
 
   saveAll: async () => {
     const state = get();
     const sections = ['items', 'skills', 'classes', 'zones', 'npcTemplates', 'lootTables', 'uiConfig'];
-    for (const section of sections) {
-      if ((state[section as keyof EditorState] as DataSection<any>).isDirty) {
-        await state.saveSection(section);
+    batchingSaves = true;
+    try {
+      for (const section of sections) {
+        if ((state[section as keyof EditorState] as DataSection<any>).isDirty) {
+          await state.saveSection(section);
+        }
       }
+    } finally {
+      batchingSaves = false;
     }
+    void get().validateSaved();
   },
 
   importAll: (data) => {

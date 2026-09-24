@@ -140,6 +140,18 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
     db.run("ALTER TABLE users ADD COLUMN banned_by TEXT NOT NULL DEFAULT '';");
     console.log('[db] migrated: users.banned_by');
   }
+  // B-12 account management. token_version is copied into every login token
+  // ("tv") and bumped by a password change or reset, so a token issued before
+  // it no longer verifies and every session that was already logged in ends.
+  // last_login_at (unix ms, NULL = never) is shown by the admin account lookup.
+  if (!userColNames.includes('token_version')) {
+    db.run('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0;');
+    console.log('[db] migrated: users.token_version');
+  }
+  if (!userColNames.includes('last_login_at')) {
+    db.run('ALTER TABLE users ADD COLUMN last_login_at INTEGER;');
+    console.log('[db] migrated: users.last_login_at');
+  }
 
   // Create indexes
   db.run('CREATE INDEX IF NOT EXISTS idx_characters_user_id ON characters(user_id);');

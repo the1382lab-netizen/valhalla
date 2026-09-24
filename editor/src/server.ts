@@ -6,6 +6,12 @@
  *   - /api/assets/mesh-ids   art ids from the UE import directory
  *   - /api/assets/icons      item icon PNGs from Import/UI/Icons (served at /assets/icons/)
  *   - /api/admin/*           proxied to the UE admin HTTP API (VALHALLA_ADMIN_URL)
+ *   - /api/accounts/*        account management (B-12), straight to the account backend
+ *   - /api/validate          B-13 cross-reference check of the saved files (shared validator)
+ *   - /api/validate/context  the on-disk context (meshes, icons, overlays, Unreal refs) the
+ *                            Validation page needs to check unsaved edits in the browser
+ *   - /api/data-sync         B-13 live-vs-disk: the game server's loaded data hashes vs the files
+ *                            (VALHALLA_BACKEND_URL), so it works with the game server down
  *
  * The 1.0 Tiled map, 1.0 overlay and sprite routes were retired with the 1.0
  * client (git tag archive/1.0-final).
@@ -14,8 +20,11 @@
 import { SECRETS_FILE, loadedFromSecretsFile } from './loadEnv.js';
 import express from 'express';
 import cors from 'cors';
+import { summarizeIssues, validateGameData } from '@valhalla/shared';
+import { loadValidationInput } from '../../shared/src/validation-load.js';
 import fs from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +38,9 @@ const THUMBS_DIR = path.join(MAPS_DIR, 'thumbs');
 // ── Valhalla 2.0 (Unreal) configuration ──────────────────────────────────
 /** Admin HTTP API of the UE dedicated server. Same contract as server/src/routes/admin.ts. */
 const ADMIN_URL = (process.env.VALHALLA_ADMIN_URL || 'http://localhost:2568').replace(/\/+$/, '');
+
+/** The account backend (server/), for the Accounts dialog. Loopback, like the game server's own BackendUrl. */
+const BACKEND_URL = (process.env.VALHALLA_BACKEND_URL || 'http://127.0.0.1:2567').replace(/\/+$/, '');
 
 /**
  * Shared secret the UE admin API checks (`Authorization: Bearer <secret>`,
@@ -336,6 +348,160 @@ app.all('/api/admin/:action', async (req, res) => {
   }
 });
 
+// ── Validation and live-vs-disk (B-13) ───────────────────────────────────
+
+/** GET /api/validate — the saved files, checked by the same rules as `npm run validate`. */
+app.get('/api/validate', (_req, res) => {
+  try {
+    const { input, problems } = loadValidationInput(PROJECT_ROOT);
+    const issues = [
+      ...problems.map(p => ({ severity: 'error' as const, category: 'items' as const, id: p.file, message: p.message })),
+      ...validateGameData(input),
+    ];
+    res.json({ summary: summarizeIssues(issues), issues, checkedAt: Date.now() });
+  } catch (e: any) {
+    res.status(500).json({ error: `Validation failed to run: ${e.message}` });
+  }
+});
+
+/** GET /api/validate/context — everything but the data itself, for checking unsaved edits in the browser. */
+app.get('/api/validate/context', (_req, res) => {
+  try {
+    const { input, problems } = loadValidationInput(PROJECT_ROOT);
+    res.json({
+      overlays: input.overlays ?? null,
+      meshFiles: input.meshFiles ?? null,
+      iconFiles: input.iconFiles ?? null,
+      unrealRefs: input.unrealRefs ?? null,
+      problems,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: `Could not read the validation context: ${e.message}` });
+  }
+});
+
+/** The data files the game server loads (UValhallaDataSubsystem::GetDataFilenames). */
+const DATA_FILES = ['classes.json', 'items.json', 'skills.json', 'npc-templates.json', 'loot-tables.json', 'zones.json', 'ui-config.json'];
+
+/**
+ * GET /api/data-sync — compare what the running game server loaded (SHA-1 per
+ * file, from its admin state) with the files on disk now.
+ * -> { online, supported, loadedAt, allMatch, files: [{ name, disk, live, match }] }
+ */
+app.get('/api/data-sync', async (_req, res) => {
+  const disk: Record<string, string | null> = {};
+  for (const name of DATA_FILES) {
+    try { disk[name] = createHash('sha1').update(fs.readFileSync(path.join(DATA_DIR, name))).digest('hex'); }
+    catch { disk[name] = null; }
+  }
+  let state: any;
+  try {
+    const upstream = await fetch(`${ADMIN_URL}/api/admin/state`, { headers: { Authorization: `Bearer ${ADMIN_SECRET}` } });
+    if (!upstream.ok) return res.json({ online: false, supported: false, error: `admin API answered HTTP ${upstream.status}` });
+    state = await upstream.json();
+  } catch {
+    return res.json({ online: false, supported: false });
+  }
+  const live: Record<string, string> | undefined = state?.data?.files;
+  if (!live) return res.json({ online: true, supported: false });
+  const files = DATA_FILES.map(name => ({
+    name,
+    disk: disk[name],
+    live: live[name] ?? null,
+    match: !!disk[name] && disk[name] === live[name],
+  }));
+  res.json({
+    online: true,
+    supported: true,
+    loadedAt: state.data.loadedAt ?? null,
+    downloadedCopy: !!state.data.downloadedCopy,
+    allMatch: files.every(f => f.match),
+    files,
+  });
+});
+
+// ── Account management (B-12) ─────────────────────────────────────────────
+// The Live Dashboard's Accounts dialog. These go straight to the account
+// backend's server-to-server routes with the server secret, so accounts can be
+// looked up, reset, banned or deleted whether or not the game server runs.
+// After a ban, password reset or deletion the game server (when it is up) is
+// asked to kick that account's live sessions; it's best-effort and reported.
+
+async function backendCall(method: 'GET' | 'POST', pathAndQuery: string, body?: unknown): Promise<{ status: number; data: any }> {
+  try {
+    const upstream = await fetch(`${BACKEND_URL}${pathAndQuery}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Server-Secret': ADMIN_SECRET },
+      body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
+    });
+    const text = await upstream.text();
+    let data: any;
+    try { data = text ? JSON.parse(text) : {}; } catch { data = { error: 'Backend returned non-JSON', body: text.slice(0, 500) }; }
+    return { status: upstream.status, data };
+  } catch (err: any) {
+    return { status: 502, data: { error: `Account backend unreachable at ${BACKEND_URL}: ${err.message}`, backendUrl: BACKEND_URL } };
+  }
+}
+
+/** Ask the game server to disconnect every session of an account. Never throws. */
+async function kickAccount(userId: number, message: string): Promise<string> {
+  try {
+    const upstream = await fetch(`${ADMIN_URL}/api/admin/account-action`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_SECRET}` },
+      body: JSON.stringify({ action: 'kick', userId, message }),
+    });
+    const data: any = await upstream.json().catch(() => ({}));
+    if (upstream.ok) return data?.message || 'kicked';
+    return `game server did not kick: ${data?.error || `HTTP ${upstream.status}`}`;
+  } catch {
+    return 'game server offline, nobody to kick';
+  }
+}
+
+app.get('/api/accounts/search', async (req, res) => {
+  const q = typeof req.query.q === 'string' ? req.query.q : '';
+  const banned = req.query.banned === '1' ? '&banned=1' : '';
+  const r = await backendCall('GET', `/api/accounts/search?q=${encodeURIComponent(q)}&limit=100${banned}`);
+  res.status(r.status).json(r.data);
+});
+
+app.get('/api/accounts/detail', async (req, res) => {
+  const userId = Number(req.query.userId);
+  if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ error: 'userId required' });
+  const r = await backendCall('GET', `/api/accounts/detail?userId=${userId}`);
+  res.status(r.status).json(r.data);
+});
+
+app.get('/api/accounts/bans', async (_req, res) => {
+  const r = await backendCall('GET', '/api/accounts/bans');
+  res.status(r.status).json(r.data);
+});
+
+const ACCOUNT_POSTS: Record<string, { kick?: (data: any, body: any) => string | null }> = {
+  ban: { kick: data => data?.ban?.banned ? (data.message || 'This account has been banned.') : null },
+  unban: {},
+  'reset-password': { kick: () => 'Your password was reset by an administrator. Log in with the temporary password you were given.' },
+  delete: { kick: () => 'This account has been deleted.' },
+  'rename-character': { kick: () => 'One of your characters was renamed by an administrator. Please log in again.' },
+};
+
+app.post('/api/accounts/:action', async (req, res) => {
+  const action = req.params.action;
+  const spec = ACCOUNT_POSTS[action];
+  if (!spec) return res.status(404).json({ error: `Unknown account action: ${action}`, allowed: Object.keys(ACCOUNT_POSTS) });
+  const body = { ...(req.body ?? {}), by: 'web editor' };
+  const r = await backendCall('POST', `/api/accounts/${action}`, body);
+  if (r.status === 200 && spec.kick) {
+    const message = spec.kick(r.data, body);
+    const userId = Number(r.data?.userId);
+    if (message && Number.isInteger(userId) && userId > 0) {
+      r.data.kick = await kickAccount(userId, message);
+    }
+  }
+  res.status(r.status).json(r.data);
+});
+
 const PORT = Number(process.env.EDITOR_PORT || 5181);
 // Loopback only: this server writes game data with no login and attaches the
 // admin secret to whatever it proxies, so nothing off this machine may reach it.
@@ -349,5 +515,6 @@ app.listen(PORT, HOST, () => {
   console.log(`  Zone thumbs:     ${THUMBS_DIR}`);
   console.log(`  UE import dir:   ${IMPORT_DIR}${IMPORT.found ? '' : '  (NOT FOUND — set VALHALLA2_IMPORT_DIR)'}`);
   console.log(`  UE admin API:    ${ADMIN_URL}  (VALHALLA_ADMIN_URL)`);
+  console.log(`  Account backend: ${BACKEND_URL}  (VALHALLA_BACKEND_URL)`);
   console.log(`  Admin secret:    ${loadedFromSecretsFile.includes('VALHALLA_SERVER_SECRET') ? `from ${SECRETS_FILE}` : process.env.VALHALLA_SERVER_SECRET ? 'from VALHALLA_SERVER_SECRET' : 'dev default (no secrets.local.env)'}\n`);
 });

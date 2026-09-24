@@ -22,6 +22,8 @@ npm install            # once, at the repo root
 npm run dev:server     # account backend on :2567
 npm run dev:editor     # web editor on :5180 (API :5181)
 npm run smoke          # backend smoke test (throwaway database)
+npm run validate       # cross-reference check of shared/data, overlays and Unreal refs
+npm run hooks:install  # once per clone: run that check on every commit touching game data
 ```
 
 Then open `Valhalla2/Valhalla2.uproject` and press Play from `L_FrontEnd`.

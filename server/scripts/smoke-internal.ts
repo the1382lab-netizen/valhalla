@@ -335,6 +335,8 @@ async function run(): Promise<void> {
     assert(ban.body.ban.banned === true && ban.body.ban.permanent === false, 'ban is temporary');
     const bans = await http('GET', '/api/accounts/bans', { secret: SECRET });
     assert(bans.body.bans.some((b: any) => b.userId === userId && b.reason === 'smoke test'), 'ban listed');
+    const bannedSearch = await http('GET', '/api/accounts/search?banned=1', { secret: SECRET });
+    assert(bannedSearch.body.accounts.some((a: any) => a.userId === userId && a.ban.banned), 'banned-only search lists it');
     const bannedVerify = await http('POST', '/api/auth/verify', { body: { token }, secret: SECRET });
     assertEq(bannedVerify.status, 403, 'verify existing token of banned account -> 403');
     assert(String(bannedVerify.body.error).includes('suspended'), 'verify says suspended', bannedVerify.body.error);
@@ -350,6 +352,104 @@ async function run(): Promise<void> {
     assertEq(afterUnban.status, 200, 'verify after unban -> 200');
     const bansAfter = await http('GET', '/api/accounts/bans', { secret: SECRET });
     assert(!bansAfter.body.bans.some((b: any) => b.userId === userId), 'unbanned account not listed');
+    const bannedSearchAfter = await http('GET', '/api/accounts/search?banned=1', { secret: SECRET });
+    assert(!bannedSearchAfter.body.accounts.some((a: any) => a.userId === userId), 'banned-only search drops it after unban');
+
+    // 12. account management (B-12), on two throwaway accounts
+    console.log('\n[9c] Account management');
+    const userB = `ue_acct_${String(Date.now()).slice(-8)}`;
+    const passB = 'first-pass-1';
+    const regB = await http('POST', '/api/auth/register', { body: { username: userB, password: passB } });
+    assertEq(regB.status, 200, 'register second account');
+    const tokenB0: string = regB.body.token;
+    const userIdB: number = regB.body.userId;
+    const charNameB = `Acct${String(Date.now()).slice(-6)}`;
+    const charB = await http('POST', '/api/characters', { body: { name: charNameB, classId: 'warrior' }, token: tokenB0 });
+    assertEq(charB.status, 201, 'second account creates a character');
+    const charIdB: number = charB.body.character?.id ?? charB.body.id;
+    assert(typeof charIdB === 'number' && charIdB > 0, 'character id', String(charIdB));
+
+    // change password
+    const noAuthPw = await http('POST', '/api/auth/password', { body: { currentPassword: passB, newPassword: 'x-new-pass-2' } });
+    assertEq(noAuthPw.status, 401, 'change password without a token -> 401');
+    const wrongPw = await http('POST', '/api/auth/password', { body: { currentPassword: 'nope', newPassword: 'x-new-pass-2' }, token: tokenB0 });
+    assertEq(wrongPw.status, 401, 'change password with wrong current -> 401');
+    const shortPw = await http('POST', '/api/auth/password', { body: { currentPassword: passB, newPassword: '123' }, token: tokenB0 });
+    assertEq(shortPw.status, 400, 'change password to a too-short one -> 400');
+    const passB2 = 'second-pass-2';
+    const changed = await http('POST', '/api/auth/password', { body: { currentPassword: passB, newPassword: passB2 }, token: tokenB0 });
+    assertEq(changed.status, 200, 'change password -> 200');
+    const tokenB1: string = changed.body.token;
+    assert(typeof tokenB1 === 'string' && tokenB1 !== tokenB0, 'change password returns a new token');
+    assertEq((await http('GET', '/api/characters', { token: tokenB0 })).status, 401, 'old token refused after password change');
+    assertEq((await http('POST', '/api/auth/verify', { body: { token: tokenB0 }, secret: SECRET })).status, 401, 'game server verify refuses the old token');
+    assertEq((await http('GET', '/api/characters', { token: tokenB1 })).status, 200, 'new token works');
+    assertEq((await http('POST', '/api/auth/login', { body: { username: userB, password: passB } })).status, 401, 'old password no longer logs in');
+    assertEq((await http('POST', '/api/auth/login', { body: { username: userB, password: passB2 } })).status, 200, 'new password logs in');
+
+    // admin lookup
+    const noSecretSearch = await http('GET', `/api/accounts/search?q=${userB}`);
+    assertEq(noSecretSearch.status, 401, 'account search without secret -> 401');
+    const byName = await http('GET', `/api/accounts/search?q=${userB}`, { secret: SECRET });
+    assert(byName.body.accounts.some((a: any) => a.userId === userIdB && a.characterCount === 1 && typeof a.lastLoginAt === 'number'),
+      'search by account name finds it, with character count and last login');
+    const byChar = await http('GET', `/api/accounts/search?q=${charNameB.toLowerCase()}`, { secret: SECRET });
+    assert(byChar.body.accounts.some((a: any) => a.userId === userIdB), 'search by character name finds the account');
+    const detail = await http('GET', `/api/accounts/detail?userId=${userIdB}`, { secret: SECRET });
+    assertEq(detail.status, 200, 'account detail -> 200');
+    assertEq(detail.body.account.characters.map((c: any) => c.name), [charNameB], 'detail lists the character');
+    assertEq((await http('GET', '/api/accounts/detail?userId=999999', { secret: SECRET })).status, 404, 'detail of unknown account -> 404');
+
+    // rename character
+    const badRename = await http('POST', '/api/accounts/rename-character', { body: { characterId: charIdB, name: '9bad' }, secret: SECRET });
+    assertEq(badRename.status, 400, 'rename to an invalid name -> 400');
+    if (characterId) {
+      const mainName = (await http('GET', `/api/accounts/detail?userId=${userId}`, { secret: SECRET })).body.account.characters[0]?.name;
+      const takenRename = await http('POST', '/api/accounts/rename-character', { body: { characterId: charIdB, name: mainName }, secret: SECRET });
+      assertEq(takenRename.status, 409, 'rename to a taken name -> 409');
+    }
+    const renamedTo = `${charNameB}x`;
+    const rename = await http('POST', '/api/accounts/rename-character', { body: { characterId: charIdB, name: renamedTo }, secret: SECRET });
+    assertEq(rename.status, 200, 'rename character -> 200');
+    assertEq(rename.body.oldName, charNameB, 'rename reports the old name');
+    const listAfterRename = await http('GET', '/api/characters', { token: tokenB1 });
+    assert(listAfterRename.body.characters.some((c: any) => c.name === renamedTo), 'player sees the new name');
+
+    // admin password reset
+    const reset = await http('POST', '/api/accounts/reset-password', { body: { username: userB }, secret: SECRET });
+    assertEq(reset.status, 200, 'admin reset password -> 200');
+    const temp: string = reset.body.temporaryPassword;
+    assert(typeof temp === 'string' && temp.length >= 10, 'reset returns a temporary password');
+    assertEq((await http('GET', '/api/characters', { token: tokenB1 })).status, 401, 'sessions end after a reset');
+    assertEq((await http('POST', '/api/auth/login', { body: { username: userB, password: passB2 } })).status, 401, 'previous password no longer works');
+    const tempLogin = await http('POST', '/api/auth/login', { body: { username: userB, password: temp } });
+    assertEq(tempLogin.status, 200, 'temporary password logs in');
+    const tokenB2: string = tempLogin.body.token;
+
+    // player deletes their own account
+    const delNoConfirm = await http('DELETE', '/api/auth/account', { body: { password: temp, confirm: 'someone_else' }, token: tokenB2 });
+    assertEq(delNoConfirm.status, 400, 'delete account with wrong confirmation -> 400');
+    const delWrongPw = await http('POST', '/api/auth/account/delete', { body: { password: 'nope', confirm: userB }, token: tokenB2 });
+    assertEq(delWrongPw.status, 401, 'delete account with wrong password -> 401');
+    const delOwn = await http('DELETE', '/api/auth/account', { body: { password: temp, confirm: userB.toUpperCase() }, token: tokenB2 });
+    assertEq(delOwn.status, 200, 'player deletes own account -> 200');
+    assertEq(delOwn.body.characters, 1, 'its character went with it');
+    assertEq((await http('POST', '/api/auth/login', { body: { username: userB, password: temp } })).status, 401, 'deleted account cannot log in');
+    assertEq((await http('POST', '/api/auth/verify', { body: { token: tokenB2 }, secret: SECRET })).status, 401, 'deleted account token refused by verify');
+    assertEq((await http('GET', `/api/characters/${charIdB}/load?userId=${userIdB}`, { secret: SECRET })).status, 404, 'deleted account character gone');
+    assertEq((await http('GET', `/api/accounts/detail?userId=${userIdB}`, { secret: SECRET })).status, 404, 'deleted account not found by lookup');
+
+    // admin deletes an account
+    const userC = `ue_del_${String(Date.now()).slice(-8)}`;
+    const regC = await http('POST', '/api/auth/register', { body: { username: userC, password: 'third-pass-3' } });
+    assertEq(regC.status, 200, 'register third account');
+    const adminDelNoConfirm = await http('POST', '/api/accounts/delete', { body: { username: userC }, secret: SECRET });
+    assertEq(adminDelNoConfirm.status, 400, 'admin delete without confirmation -> 400');
+    const adminDel = await http('POST', '/api/accounts/delete', { body: { username: userC, confirm: userC }, secret: SECRET });
+    assertEq(adminDel.status, 200, 'admin delete account -> 200');
+    assertEq((await http('POST', '/api/auth/verify', { body: { token: regC.body.token }, secret: SECRET })).status, 401, 'admin-deleted account token refused');
+    const searchGone = await http('GET', `/api/accounts/search?q=${userC}`, { secret: SECRET });
+    assert(!searchGone.body.accounts.some((a: any) => a.username === userC), 'admin-deleted account no longer found');
   } finally {
     // 11. cleanup
     if (characterId) {
@@ -361,9 +461,10 @@ async function run(): Promise<void> {
         const gone = await http('GET', `/api/characters/${characterId}/load?userId=${userId}`, { secret: SECRET });
         assertEq(gone.status, 404, 'deleted character -> 404 on load');
       }
-      if (EXTERNAL_BASE_URL) {
-        console.log(`    NOTE: user '${username}' remains in that server's database — there is no API to delete a user row.`);
-      }
+    }
+    if (userId) {
+      const delUser = await http('POST', '/api/accounts/delete', { body: { userId, confirm: username }, secret: SECRET });
+      assertEq(delUser.status, 200, 'delete the smoke account');
     }
   }
 

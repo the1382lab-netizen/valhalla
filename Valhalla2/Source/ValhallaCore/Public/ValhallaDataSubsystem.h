@@ -287,6 +287,23 @@ public:
 	/** True when every file in GetDataFilenames() exists in `Dir`. */
 	static bool HasAllDataFiles(const FString& Dir);
 
+	// ── B-13: what was loaded ───────────────────────────────────────────
+
+	/**
+	 * Lower-case hex SHA-1 of each data file's bytes as of the last LoadAll,
+	 * keyed by file name (GetDataFilenames). The backend's /api/data manifest
+	 * hashes the same way, and the web editor compares these with the files
+	 * on disk to answer "did my reload actually apply?". A file that could not
+	 * be read is absent.
+	 */
+	const TMap<FString, FString>& GetLoadedFileHashes() const { return LoadedFileHashes; }
+
+	/** When the last LoadAll ran (UTC). */
+	const FDateTime& GetLoadedAtUtc() const { return LoadedAtUtc; }
+
+	/** The absolute root the last LoadAll read from. */
+	const FString& GetLoadedDataRoot() const { return LoadedDataRoot; }
+
 private:
 	/** Decide between DataRoot and the downloaded copy, once, at Initialize. */
 	void ChooseDataSource();
@@ -302,4 +319,10 @@ private:
 
 	/** Set by a successful LoadAll. */
 	bool bLoaded = false;
+
+	/** See GetLoadedFileHashes. */
+	TMap<FString, FString> LoadedFileHashes;
+
+	/** See GetLoadedAtUtc. */
+	FDateTime LoadedAtUtc;
 };

@@ -360,15 +360,18 @@ void UValhallaCharacterSelectWidget::BuildUi()
 	};
 
 	TObjectPtr<UButton> LogOutButton = nullptr;
+	TObjectPtr<UButton> AccountButton = nullptr;
 	AddAction(TEXT("Enter World"), ValhallaUI::Accent, EnterWorldButton);
 	AddAction(TEXT("Create"), ValhallaUI::InkDim, CreateButton);
 	AddAction(TEXT("Delete"), ValhallaUI::Error, DeleteButton);
+	AddAction(TEXT("Account"), ValhallaUI::InkDim, AccountButton);
 	AddAction(TEXT("Log Out"), ValhallaUI::InkDim, LogOutButton);
 
 	EnterWorldButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleEnterWorldClicked);
 	CreateButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleCreateClicked);
 	DeleteButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleDeleteClicked);
 	LogOutButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleLogOutClicked);
+	AccountButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleAccountClicked);
 
 	// ── create panel, collapsed until Create is pressed ─────────────────
 	CreatePanel = Tree.ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
@@ -442,6 +445,66 @@ void UValhallaCharacterSelectWidget::BuildUi()
 		Cancel->AddChild(MakeText(Tree, TEXT("Keep"), 13, FLinearColor::Black));
 		DeleteActions->AddChildToHorizontalBox(Cancel)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		Cancel->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleDeleteCancelClicked);
+	}
+
+	// ── account panel (B-12), collapsed until Account is pressed ────────
+	AccountPanel = Tree.ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+	AccountPanel->SetVisibility(ESlateVisibility::Collapsed);
+	AddRow(AccountPanel, 14.f);
+
+	{
+		UVerticalBox* Panel = AccountPanel;
+		auto AddBox = [&Tree, Panel](const FString& Hint, bool bPassword) -> UEditableTextBox*
+		{
+			UEditableTextBox* Box = Tree.ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass());
+			Box->SetHintText(AsText(Hint));
+			Box->SetIsPassword(bPassword);
+			Panel->AddChildToVerticalBox(Box)->SetPadding(FMargin(0.f, 2.f));
+			return Box;
+		};
+		auto AddHeading = [&Tree, Panel](const FString& Heading, float TopPad)
+		{
+			UVerticalBoxSlot* HeadingSlot = Panel->AddChildToVerticalBox(MakeText(Tree, Heading, 13, ValhallaUI::Ink, TEXT("Bold")));
+			HeadingSlot->SetPadding(FMargin(0.f, TopPad, 0.f, 4.f));
+		};
+
+		AddHeading(TEXT("Change password"), 0.f);
+		CurrentPasswordBox = AddBox(TEXT("Current password"), true);
+		NewPasswordBox = AddBox(FString::Printf(TEXT("New password (at least %d characters)"), Valhalla::MinPasswordLength), true);
+		RepeatPasswordBox = AddBox(TEXT("New password again"), true);
+
+		UButton* ChangeButton = Tree.ConstructWidget<UButton>(UButton::StaticClass());
+		ChangeButton->SetBackgroundColor(ValhallaUI::Accent);
+		ChangeButton->AddChild(MakeText(Tree, TEXT("Change Password"), 13, FLinearColor::Black, TEXT("Bold")));
+		Panel->AddChildToVerticalBox(ChangeButton)->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+		ChangeButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleChangePasswordClicked);
+
+		AddHeading(TEXT("Delete account"), 16.f);
+		UTextBlock* Warning = MakeText(Tree,
+			TEXT("Deletes the account and every character on it, with their items. This cannot be undone."), 12, ValhallaUI::Error);
+		Warning->SetAutoWrapText(true);
+		Panel->AddChildToVerticalBox(Warning);
+		DeleteAccountPasswordBox = AddBox(TEXT("Password"), true);
+		DeleteAccountConfirmBox = AddBox(TEXT("Type your account name to confirm"), false);
+
+		UHorizontalBox* AccountActions = Tree.ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		Panel->AddChildToVerticalBox(AccountActions)->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+
+		UButton* DeleteAccountButton = Tree.ConstructWidget<UButton>(UButton::StaticClass());
+		DeleteAccountButton->SetBackgroundColor(ValhallaUI::Error);
+		DeleteAccountButton->AddChild(MakeText(Tree, TEXT("Delete Account"), 13, FLinearColor::Black, TEXT("Bold")));
+		AccountActions->AddChildToHorizontalBox(DeleteAccountButton)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		DeleteAccountButton->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleDeleteAccountClicked);
+
+		UButton* Close = Tree.ConstructWidget<UButton>(UButton::StaticClass());
+		Close->SetBackgroundColor(ValhallaUI::InkDim);
+		Close->AddChild(MakeText(Tree, TEXT("Close"), 13, FLinearColor::Black));
+		AccountActions->AddChildToHorizontalBox(Close)->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
+		Close->OnClicked.AddDynamic(this, &UValhallaCharacterSelectWidget::HandleAccountCloseClicked);
+
+		AccountStatusText = MakeText(Tree, FString(), 12, ValhallaUI::Accent);
+		AccountStatusText->SetAutoWrapText(true);
+		Panel->AddChildToVerticalBox(AccountStatusText)->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
 	}
 
 	ErrorText = MakeText(Tree, FString(), 12, ValhallaUI::Error);
@@ -684,6 +747,112 @@ void UValhallaCharacterSelectWidget::HandleLogOutClicked()
 	{
 		Controller->LogOut();
 	}
+}
+
+// ── B-12: account panel ─────────────────────────────────────────────────
+
+void UValhallaCharacterSelectWidget::SetAccountStatus(const FString& Message)
+{
+	if (AccountStatusText)
+	{
+		AccountStatusText->SetText(AsText(Message));
+	}
+}
+
+void UValhallaCharacterSelectWidget::ClearAccountFields()
+{
+	for (UEditableTextBox* Box : { CurrentPasswordBox.Get(), NewPasswordBox.Get(), RepeatPasswordBox.Get(),
+		DeleteAccountPasswordBox.Get(), DeleteAccountConfirmBox.Get() })
+	{
+		if (Box)
+		{
+			Box->SetText(FText::GetEmpty());
+		}
+	}
+}
+
+void UValhallaCharacterSelectWidget::HandleAccountClicked()
+{
+	SetError(FString());
+	SetAccountStatus(FString());
+	CreatePanel->SetVisibility(ESlateVisibility::Collapsed);
+	DeletePanel->SetVisibility(ESlateVisibility::Collapsed);
+
+	const bool bOpen = AccountPanel->GetVisibility() == ESlateVisibility::Visible;
+	if (bOpen)
+	{
+		ClearAccountFields();
+	}
+	AccountPanel->SetVisibility(bOpen ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+}
+
+void UValhallaCharacterSelectWidget::HandleAccountCloseClicked()
+{
+	ClearAccountFields();
+	SetAccountStatus(FString());
+	AccountPanel->SetVisibility(ESlateVisibility::Collapsed);
+}
+
+void UValhallaCharacterSelectWidget::HandleChangePasswordClicked()
+{
+	const FString Current = CurrentPasswordBox ? CurrentPasswordBox->GetText().ToString() : FString();
+	const FString NewPassword = NewPasswordBox ? NewPasswordBox->GetText().ToString() : FString();
+	const FString Repeat = RepeatPasswordBox ? RepeatPasswordBox->GetText().ToString() : FString();
+
+	SetError(FString());
+	SetAccountStatus(FString());
+
+	// The backend checks all of this too; these just save a round trip.
+	if (Current.IsEmpty())
+	{
+		SetError(TEXT("Enter your current password."));
+		return;
+	}
+	if (NewPassword.Len() < Valhalla::MinPasswordLength)
+	{
+		SetError(FString::Printf(TEXT("The new password must be at least %d characters."), Valhalla::MinPasswordLength));
+		return;
+	}
+	// FString's == ignores case; passwords must not.
+	if (!NewPassword.Equals(Repeat, ESearchCase::CaseSensitive))
+	{
+		SetError(TEXT("The two new passwords don't match."));
+		return;
+	}
+
+	if (AValhallaFrontEndController* Controller = Owner.Get())
+	{
+		Controller->SubmitChangePassword(Current, NewPassword);
+	}
+}
+
+void UValhallaCharacterSelectWidget::HandleDeleteAccountClicked()
+{
+	AValhallaFrontEndController* Controller = Owner.Get();
+	if (!Controller)
+	{
+		return;
+	}
+
+	const FString Password = DeleteAccountPasswordBox ? DeleteAccountPasswordBox->GetText().ToString() : FString();
+	const FString Confirm = DeleteAccountConfirmBox ? DeleteAccountConfirmBox->GetText().ToString().TrimStartAndEnd() : FString();
+	const FString& Username = Controller->GetSession().Username;
+
+	SetError(FString());
+	SetAccountStatus(FString());
+
+	if (Password.IsEmpty())
+	{
+		SetError(TEXT("Enter your password to delete the account."));
+		return;
+	}
+	if (!Confirm.Equals(Username, ESearchCase::IgnoreCase))
+	{
+		SetError(FString::Printf(TEXT("Type your account name (%s) to confirm."), *Username));
+		return;
+	}
+
+	Controller->SubmitDeleteAccount(Password, Confirm);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1111,6 +1280,104 @@ void AValhallaFrontEndController::SubmitDeleteCharacter(int32 CharacterId)
 			}
 
 			Self->RefreshCharacters();
+		});
+}
+
+void AValhallaFrontEndController::SubmitChangePassword(const FString& CurrentPassword, const FString& NewPassword)
+{
+	UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this);
+	if (!Backend || !Session.IsValid())
+	{
+		return;
+	}
+
+	if (SelectScreen)
+	{
+		SelectScreen->SetError(FString());
+		SelectScreen->SetBusy(true);
+	}
+
+	TWeakObjectPtr<AValhallaFrontEndController> WeakThis(this);
+	Backend->ChangePassword(Session.Token, CurrentPassword, NewPassword,
+		[WeakThis](bool bSuccess, const FString& NewToken, const FString& Error)
+		{
+			AValhallaFrontEndController* Self = WeakThis.Get();
+			if (!Self)
+			{
+				return;
+			}
+
+			if (Self->SelectScreen)
+			{
+				Self->SelectScreen->SetBusy(false);
+			}
+
+			if (!bSuccess)
+			{
+				Self->ReportError(Error);
+				return;
+			}
+
+			// The old token stopped working the moment the password changed.
+			Self->Session.Token = NewToken;
+			UE_LOG(LogValhallaFrontEnd, Log, TEXT("password changed for '%s'."), *Self->Session.Username);
+
+			if (Self->SelectScreen)
+			{
+				Self->SelectScreen->ClearAccountFields();
+				Self->SelectScreen->SetAccountStatus(TEXT("Password changed. Any other session on this account was logged out."));
+			}
+		});
+}
+
+void AValhallaFrontEndController::SubmitDeleteAccount(const FString& Password, const FString& Confirm)
+{
+	UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this);
+	if (!Backend || !Session.IsValid())
+	{
+		return;
+	}
+
+	if (SelectScreen)
+	{
+		SelectScreen->SetError(FString());
+		SelectScreen->SetBusy(true);
+	}
+
+	TWeakObjectPtr<AValhallaFrontEndController> WeakThis(this);
+	Backend->DeleteAccount(Session.Token, Password, Confirm,
+		[WeakThis](bool bSuccess, const FString& Error)
+		{
+			AValhallaFrontEndController* Self = WeakThis.Get();
+			if (!Self)
+			{
+				return;
+			}
+
+			if (!bSuccess)
+			{
+				if (Self->SelectScreen)
+				{
+					Self->SelectScreen->SetBusy(false);
+				}
+				Self->ReportError(Error);
+				return;
+			}
+
+			const FString Deleted = Self->Session.Username;
+			UE_LOG(LogValhallaFrontEnd, Log, TEXT("account '%s' deleted by its owner."), *Deleted);
+
+			if (Self->SelectScreen)
+			{
+				Self->SelectScreen->ClearAccountFields();
+			}
+			Self->LogOut();
+
+			if (Self->LoginScreen)
+			{
+				Self->LoginScreen->SetCredentials(FString(), FString());
+				Self->LoginScreen->SetError(FString::Printf(TEXT("Account %s was deleted."), *Deleted));
+			}
 		});
 }
 

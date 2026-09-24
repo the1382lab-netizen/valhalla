@@ -404,6 +404,21 @@ public:
 	int32 GetPlayerCharacterId() const { return PlayerCharacterId; }
 	int32 GetPlayerUserId() const { return PlayerUserId; }
 
+	// ── Account (B-12) ─────────────────────────────────────────────────
+
+	/**
+	 * B-12 `POST /api/auth/password`. On success `OnDone` gets the replacement
+	 * token; the old one, and every other session on the account, stops working.
+	 */
+	void ChangePassword(const FString& Token, const FString& CurrentPassword, const FString& NewPassword,
+		TFunction<void(bool /*bSuccess*/, const FString& /*NewToken*/, const FString& /*Error*/)> OnDone);
+
+	/**
+	 * B-12 `POST /api/auth/account/delete`: the account, its characters and their
+	 * items, permanently. `Confirm` is the account name typed out by the player.
+	 */
+	void DeleteAccount(const FString& Token, const FString& Password, const FString& Confirm, FValhallaSimpleCallback OnDone);
+
 	// ── Server routes (X-Server-Secret) ─────────────────────────────────
 
 	/** `POST /api/auth/verify` — is this token a real, unexpired session, and whose. */

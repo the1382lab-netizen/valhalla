@@ -23,6 +23,8 @@ FIRES = {
     "SM_Fireplace": ((0.0, 35.0, 35.0), 45.0, 500.0, True),
     "SM_Candle": ((0.0, 0.0, 30.0), 3.0, 160.0, False),
     "SM_TempleAltar": ((0.0, -5.0, 98.0), 6.0, 260.0, False),
+    "SM_Forge": ((0.0, 0.0, 65.0), 40.0, 500.0, True),              # B-06 Eldmoor smithy
+    "SM_TorchSconce": ((0.0, 15.0, 30.0), 14.0, 420.0, True),       # B-06 undercroft wall torch
 }
 COLOR = unreal.Color(r=255, g=150, b=70, a=255)
 EAS = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)

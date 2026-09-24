@@ -63,7 +63,8 @@ def _set_profile(sm, profile):
 #: bridges, steps). The importer gives every mesh simple collision, which for
 #: these is roughly their bounding box: a gate you cannot pass, a bridge that
 #: is a wall. They use their own triangles instead.
-WALKABLE = {"SM_KeepGate", "SM_RuinArch", "SM_BridgeStone", "SM_BridgeWood", "SM_TempleSteps"}
+WALKABLE = {"SM_KeepGate", "SM_RuinArch", "SM_BridgeStone", "SM_BridgeWood", "SM_TempleSteps",
+            "SM_PalisadeGate", "SM_CliffCleft", "SM_StoneRamp"}     # B-06 Eldmoor
 
 #: Material slots that are effects, not surfaces: no shadow, no collision.
 FX_SLOTS = {"MI_Fire"}

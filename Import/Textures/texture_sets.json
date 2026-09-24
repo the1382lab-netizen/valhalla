@@ -62,6 +62,15 @@
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Chainmail004"
   },
+  "CliffRock": {
+    "id": "rock_face_03",
+    "license": "CC0",
+    "note": "B-06 Eldmoor art kit (wave3_polyhaven.py): cliff and crag faces; nor_dx and arm as shipped.",
+    "real_size_m": 2.7,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/rock_face_03"
+  },
   "CobbleFloor": {
     "id": "cobblestone_floor_001",
     "license": "CC0",

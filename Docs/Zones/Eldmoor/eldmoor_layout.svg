@@ -232,6 +232,7 @@
 <text x="692.0" y="88.0" font-size="11" font-weight="bold" text-anchor="middle" fill="#fff">C10</text>
 <ellipse cx="47.0" cy="204.0" rx="11" ry="7.5" fill="#7f7469" stroke="#3d3530" stroke-width="1.2" transform="rotate(15 47.0 204.0)"/>
 <ellipse cx="71.0" cy="204.0" rx="11" ry="7.5" fill="#7f7469" stroke="#3d3530" stroke-width="1.2" transform="rotate(-15 71.0 204.0)"/>
+<ellipse cx="59.0" cy="211.5" rx="5.5" ry="8.5" fill="#6f655a" stroke="#3d3530" stroke-width="1"/>
 <text x="35.0" y="235.0" font-size="11" text-anchor="middle" fill="#3d3530">Y</text>
 <text x="95.0" y="229.0" font-size="11" text-anchor="middle" fill="#3d3530">Y</text>
 <line x1="41.0" y1="225.0" x2="62.0" y2="226.8" stroke="#4a3526" stroke-width="3" stroke-linecap="round"/>

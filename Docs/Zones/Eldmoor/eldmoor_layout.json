@@ -3100,6 +3100,19 @@
     "yaw": -15
    },
    {
+    "prop": "plug rock (VB_BoulderLarge_B, yaw 90, scale 1.25; the builder's Cleft_ScreenPlug, closing the 40-60 cm eye-height seam between the two boulders; the script places it 80 cm south of their mean, so its prop name must not contain the word boulder)",
+    "tile": [
+     6,
+     30.75
+    ],
+    "cm": [
+     384,
+     1968.0
+    ],
+    "yaw": 90,
+    "scale": 1.25
+   },
+   {
     "prop": "dead tree",
     "tile": [
      2,

@@ -308,6 +308,9 @@ public:
 	/** The UMG game HUD, or null on a server or before AValhallaHUD has made it. */
 	class UValhallaGameHUDWidget* GetGameHUD() const;
 
+	/** B-21: the code-built mapping context (the options menu's Controls tab lists it); null before SetupInputComponent. */
+	const UInputMappingContext* GetInputMappingContext() const;
+
 	/**
 	 * True while the chat box has keyboard focus. Movement, the action bar
 	 * keys and the panel toggles are ignored while it is set — belt to the

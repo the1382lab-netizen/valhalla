@@ -45,6 +45,14 @@ two (they used to share an ``InventoryPair`` Horizontal Box), placed so the
 default look is unchanged. C++ records each canvas slot as the designer's
 layout and lays the player's over it.
 
+B-21 step 4: the options menu. ``WBP_OptionsMenu`` (-> ``UValhallaOptionsMenuWidget``)
+is laid out by ``layout_options_menu`` (every control named for the C++
+``BindWidgetOptional`` members; C++ adds the colour rows, preset swatches and
+log-filter check boxes and does the rest) and assigned as WBP_GameHUD's
+``OptionsMenuClass``. WBP_GameHUD's ``OptionsButton`` is the cog bottom right
+(``T_UI_Cog`` in ``/Game/Valhalla/UI/Frames``, a UValhallaHUDButton with
+Action = Options).
+
 B-07 step 4 also trimmed ``ui-config.json`` to chat / inventory (cols x rows) /
 nameplates: the layout now lives in the Blueprints themselves. The layout
 functions below still read the file, and every field they read that is gone
@@ -76,10 +84,12 @@ HUD_FOLDER = "/Game/Valhalla/UI/HUD"
 SLOT_BP = HUD_FOLDER + "/WBP_HUDSlot"
 BAR_BP = HUD_FOLDER + "/WBP_HUDBar"
 GAME_HUD_BP = HUD_FOLDER + "/WBP_GameHUD"
+OPTIONS_MENU_BP = HUD_FOLDER + "/WBP_OptionsMenu"
 
 SLOT_CLASS = "/Script/ValhallaGame.ValhallaHUDSlotWidget"
 BAR_CLASS = "/Script/ValhallaGame.ValhallaHUDBarWidget"
 GAME_HUD_CLASS = "/Script/ValhallaGame.ValhallaGameHUDWidget"
+OPTIONS_MENU_CLASS = "/Script/ValhallaGame.ValhallaOptionsMenuWidget"
 
 _PARENTS = (
     ("WBP_HUDSlot", SLOT_CLASS),
@@ -107,6 +117,24 @@ OPTIONAL_PANELS = (
     "TooltipPanel", "TooltipName", "TooltipBody",
     "DropConfirmPanel", "DropText",
     "DeathOverlay", "DeathText",
+    "OptionsButton",
+)
+
+#: UValhallaOptionsMenuWidget::GetOptionalWidgetNames (all BindWidgetOptional).
+OPTIONS_MENU_PARTS = (
+    "Tabs", "CloseButton",
+    "LayoutTabButton", "ColoursTabButton", "ChatLogTabButton", "NameplatesTabButton", "ControlsTabButton",
+    "LockCheck", "UiScaleSlider", "UiScaleText", "OpacitySlider", "OpacityText",
+    "ShowVitalsCheck", "ShowActionBarCheck", "ShowCastBarCheck", "ShowTargetFrameCheck",
+    "ShowPartyCheck", "ShowCombatLogCheck", "ShowChatCheck", "ResetLayoutButton",
+    "ColourList", "ColourEditor", "EditTitle", "PresetGrid",
+    "HueSlider", "SaturationSlider", "ValueSlider", "EditSwatch",
+    "ColourOkButton", "ColourCancelButton", "ResetColoursButton",
+    "ChatFontSizeSlider", "ChatFontSizeText", "ChatLinesSlider", "ChatLinesText",
+    "TimestampsCheck", "LogFilterList", "ResetChatButton",
+    "NpcNameplatesCheck", "PlayerNameplatesCheck", "FloatingTextCheck",
+    "NameplateFontSlider", "NameplateFontText", "ResetNameplatesButton",
+    "ControlsText",
 )
 
 #: UValhallaHUDSlotWidget's BindWidgetOptional parts.
@@ -279,6 +307,14 @@ def describe(asset_path):
                 result[prop] = cls.get_path_name() if cls else ""
             except Exception:  # noqa: BLE001
                 pass
+        try:
+            cls = cdo.get_editor_property("options_menu_class")
+            result["options_menu_class"] = cls.get_path_name() if cls else ""
+        except Exception:  # noqa: BLE001
+            pass
+    elif _is_child_of(asset_path, OPTIONS_MENU_CLASS):
+        result["partsPresent"] = [n for n in OPTIONS_MENU_PARTS if n in names]
+        result["partsMissing"] = [n for n in OPTIONS_MENU_PARTS if n not in names]
     elif _is_child_of(asset_path, SLOT_CLASS):
         result["partsPresent"] = [n for n in SLOT_PARTS if n in names]
         result["partsMissing"] = [n for n in SLOT_PARTS if n not in names]
@@ -589,6 +625,8 @@ def layout_blueprint(asset_path=GAME_HUD_BP, replace=False):
         return layout_bar(asset_path, replace)
     if _is_child_of(asset_path, SLOT_CLASS):
         return layout_slot(asset_path, replace)
+    if _is_child_of(asset_path, OPTIONS_MENU_CLASS):
+        return layout_options_menu(asset_path, replace)
     return _layout_game_hud(asset_path, replace)
 
 
@@ -1090,6 +1128,34 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     _text(w, "YOU DIED", _px(_get(cfg, "deathOverlay.fontSize", "32px"), 32), _colour(_get(cfg, "deathOverlay.textColor", "#ff4444")),
           bold=True, outline=2, justify="CENTER")
 
+    # ── the options cog (B-21 step 4): bottom right, over the panels ──
+    cog_art = _ui_texture("T_UI_Cog")
+    cog, s = b.add(button_class, "OptionsButton", root, True)
+    _canvas(s, (1, 1), (1, 1), (-12, -12), 9)
+    s.set_auto_size(False)
+    s.set_size(unreal.Vector2D(36.0, 36.0))
+    if not _set_button_action(cog, "OPTIONS"):
+        unset_actions.append("OptionsButton")
+    _not_focusable(cog)
+    try:
+        cog.set_tool_tip_text(unreal.Text("Options (Esc)"))
+    except Exception:  # noqa: BLE001 - cosmetic
+        pass
+    if cog_art is not None:
+        style = cog.get_editor_property("widget_style")
+        for state, tint in (("normal", 1.0), ("hovered", 1.25), ("pressed", 0.75)):
+            brush = _image_brush(cog_art)
+            brush.set_editor_property("tint_color", unreal.SlateColor(unreal.LinearColor(tint, tint, tint, 1.0)))
+            style.set_editor_property(state, brush)
+        style.set_editor_property("normal_padding", unreal.Margin(0.0, 0.0, 0.0, 0.0))
+        style.set_editor_property("pressed_padding", unreal.Margin(0.0, 0.0, 0.0, 0.0))
+        cog.set_editor_property("widget_style", style)
+    else:
+        b.warn("T_UI_Cog is not imported; the options button is a plain plate")
+        _button_art(cog, button_art)
+        label, _ = b.add(W.TextBlock.static_class(), "OptionsButtonLabel", cog)
+        _text(label, "Opt", 8, W.LinearColor(0, 0, 0, 1), bold=True, outline=0)
+
     missing = [n for n in REQUIRED_PANELS + OPTIONAL_PANELS if n not in b.added]
     return _finish(blueprint, asset_path, b, {
         "config": config_path,
@@ -1127,3 +1193,244 @@ def _chat_input_style(builder, box, font_size, input_height, background, foregro
         box.set_editor_property("widget_style", style)
     except Exception as exc:  # noqa: BLE001 - the box still works with the engine style
         builder.warn("ChatInput style not applied: {}".format(exc))
+
+
+# ── B-21 step 4: WBP_OptionsMenu ──────────────────────────────────────────
+
+def _not_focusable(widget):
+    """Buttons, check boxes and sliders keep keyboard focus with the game (WASD keeps walking)."""
+    try:
+        widget.set_editor_property("is_focusable", False)
+    except Exception:  # noqa: BLE001 - not every widget has it
+        pass
+
+
+def create_options_menu():
+    """WBP_OptionsMenu (parent UValhallaOptionsMenuWidget), created only when it does not exist."""
+    if unreal.EditorAssetLibrary.does_asset_exist(OPTIONS_MENU_BP):
+        return {"asset": OPTIONS_MENU_BP, "existed": True}
+    factory = unreal.WidgetBlueprintFactory()
+    factory.set_editor_property("parent_class", _load_class(OPTIONS_MENU_CLASS))
+    tools = unreal.AssetToolsHelpers.get_asset_tools()
+    blueprint = tools.create_asset("WBP_OptionsMenu", HUD_FOLDER, unreal.WidgetBlueprint, factory)
+    if blueprint is None:
+        raise RuntimeError("create_asset returned None for {}".format(OPTIONS_MENU_BP))
+    unreal.EditorAssetLibrary.save_asset(OPTIONS_MENU_BP, only_if_is_dirty=False)
+    return {"asset": OPTIONS_MENU_BP, "created": True}
+
+
+def wire_options_menu():
+    """WBP_GameHUD's OptionsMenuClass -> WBP_OptionsMenu (compiled, saved)."""
+    hud_class = _blueprint_class(GAME_HUD_BP)
+    menu_class = _blueprint_class(OPTIONS_MENU_BP)
+    if hud_class is None or menu_class is None:
+        return {"wired": False, "why": "WBP_GameHUD or WBP_OptionsMenu missing"}
+    cdo = unreal.get_default_object(hud_class)
+    cdo.set_editor_property("options_menu_class", menu_class)
+    blueprint = unreal.load_asset(GAME_HUD_BP)
+    out = {"options_menu_class": menu_class.get_path_name()}
+    try:
+        out["compiled"] = bool(_umg_call("CompileWidgetBlueprint", blueprint))
+    except Exception as exc:  # noqa: BLE001
+        out["compiled"] = False
+        out["compileError"] = str(exc)[:400]
+    out["saved"] = bool(unreal.EditorAssetLibrary.save_asset(GAME_HUD_BP, only_if_is_dirty=False))
+    return out
+
+
+def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
+    """WBP_OptionsMenu's tree: the options menu's look, named for UValhallaOptionsMenuWidget.
+
+    MenuFrame (T_UI_Panel) > MenuSize (480 x 470) > MenuColumn: a header
+    (title, CloseButton), the tab bar (LayoutTabButton ... ControlsTabButton),
+    and a dark well holding the ``Tabs`` widget switcher with five pages:
+
+    0 Layout      LockCheck, UiScaleSlider / UiScaleText, OpacitySlider /
+                  OpacityText, Show<Panel>Check x 7, ResetLayoutButton
+    1 Colours     ColourEditor (EditTitle, PresetGrid, Hue / Saturation /
+                  ValueSlider, EditSwatch, ColourOkButton, ColourCancelButton),
+                  ColourList (in a scroll box), ResetColoursButton
+    2 Chat & log  ChatFontSizeSlider / Text, ChatLinesSlider / Text,
+                  TimestampsCheck, LogFilterList, ResetChatButton
+    3 Nameplates  NpcNameplatesCheck, PlayerNameplatesCheck, FloatingTextCheck,
+                  NameplateFontSlider / Text, ResetNameplatesButton
+    4 Controls    ControlsText
+
+    Slider ranges, the rows in ColourList / PresetGrid / LogFilterList and
+    every value come from C++. Creates the asset when missing (checked
+    first), refuses a tree unless ``replace``, compiles, saves, and (``wire``)
+    sets WBP_GameHUD's OptionsMenuClass to it.
+    """
+    created = create_options_menu() if asset_path == OPTIONS_MENU_BP else {}
+    blueprint = unreal.load_asset(asset_path)
+    if blueprint is None:
+        raise RuntimeError("no asset at {}".format(asset_path))
+    refused = _clear_tree(blueprint, replace, asset_path)
+    if refused:
+        return refused
+
+    W = unreal
+    b = _TreeBuilder(blueprint)
+    panel_art = _ui_texture("T_UI_Panel")
+    button_art = _ui_texture("T_UI_Button")
+    title_c = _colour("#ffcc00")
+    label_c = _colour("#aaaacc")
+    value_c = _colour("#ddd6c4")
+    close_c = _colour("#8888aa")
+
+    def text(parent, name, content, size=8, colour=None, bold=False, wrap=False, variable=False):
+        widget, slot = b.add(W.TextBlock.static_class(), name, parent, variable)
+        _text(widget, content, size, colour or value_c, bold=bold, wrap=wrap)
+        return widget, slot
+
+    def button(parent, name, caption, tint=None):
+        widget, slot = b.add(W.Button.static_class(), name, parent, True)
+        widget.set_background_color(tint or close_c)
+        _button_art(widget, button_art)
+        _not_focusable(widget)
+        text(widget, name + "Label", caption, 8, W.LinearColor(0, 0, 0, 1), bold=True)
+        return widget, slot
+
+    def check_row(parent, name, label):
+        row, row_slot = b.add(W.HorizontalBox.static_class(), name + "Row", parent)
+        _pad(row_slot, 0, 2)
+        check, s = b.add(W.CheckBox.static_class(), name, row, True)
+        _not_focusable(check)
+        _valign(s, "CENTER")
+        _, s = text(row, name + "Label", label, wrap=True)
+        _fill(s)
+        _valign(s, "CENTER")
+        _pad(s, 6, 0, 0, 0)
+        return check
+
+    def slider_row(parent, name, label, value_name=None):
+        row, row_slot = b.add(W.HorizontalBox.static_class(), name + "Row", parent)
+        _pad(row_slot, 0, 3)
+        box, s = b.add(W.SizeBox.static_class(), name + "LabelSize", row)
+        box.set_width_override(120.0)
+        _valign(s, "CENTER")
+        text(box, name + "Label", label)
+        slider, s = b.add(W.Slider.static_class(), name, row, True)
+        _not_focusable(slider)
+        _fill(s)
+        _valign(s, "CENTER")
+        if value_name:
+            box, s = b.add(W.SizeBox.static_class(), value_name + "Size", row)
+            box.set_width_override(80.0)
+            _valign(s, "CENTER")
+            _pad(s, 8, 0, 0, 0)
+            text(box, value_name, "", 8, variable=True)
+        return slider
+
+    def header(parent, name, content):
+        _, s = text(parent, name, content, 9, title_c, bold=True)
+        _pad(s, 0, 8, 0, 2)
+
+    # ── the frame ──
+    frame, _ = b.add(W.Border.static_class(), "MenuFrame")
+    _framed_panel(frame, _colour("#1a1a2e", 0.97), 10, panel_art)
+    _visibility(frame, "VISIBLE")
+    size, _ = b.add(W.SizeBox.static_class(), "MenuSize", frame)
+    size.set_width_override(480.0)
+    size.set_height_override(470.0)
+    column, _ = b.add(W.VerticalBox.static_class(), "MenuColumn", size)
+
+    row, _ = b.add(W.HorizontalBox.static_class(), "MenuHeader", column)
+    _, s = text(row, "MenuTitle", "Options", 11, title_c, bold=True)
+    _fill(s)
+    _valign(s, "CENTER")
+    button(row, "CloseButton", "X")
+
+    tabs_row, s = b.add(W.HorizontalBox.static_class(), "TabBar", column)
+    _pad(s, 0, 6, 0, 4)
+    for name, caption in (("LayoutTabButton", "Layout"), ("ColoursTabButton", "Colours"), ("ChatLogTabButton", "Chat & log"),
+                          ("NameplatesTabButton", "Nameplates"), ("ControlsTabButton", "Controls")):
+        _, s = button(tabs_row, name, caption, _colour("#c8b48a"))
+        _pad(s, 0, 0, 4, 0)
+
+    well, s = b.add(W.Border.static_class(), "TabsWell", column)
+    _fill(s)
+    _panel(well, _colour("#0c0c18", 0.85), 8)
+    switcher, _ = b.add(W.WidgetSwitcher.static_class(), "Tabs", well, True)
+
+    # ── 0 Layout ──
+    page, _ = b.add(W.ScrollBox.static_class(), "LayoutTab", switcher)
+    col, _ = b.add(W.VerticalBox.static_class(), "LayoutColumn", page)
+    check_row(col, "LockCheck", "Lock the HUD (untick, then close this menu, to drag panels and their corner grips)")
+    slider_row(col, "UiScaleSlider", "UI scale", "UiScaleText")
+    slider_row(col, "OpacitySlider", "Panel opacity", "OpacityText")
+    header(col, "ShowHeader", "Show")
+    for key, label in (("Vitals", "Vitals (HP, mana)"), ("ActionBar", "Action bar"), ("CastBar", "Cast bar"),
+                       ("TargetFrame", "Target frame"), ("Party", "Party"), ("CombatLog", "Combat log"), ("Chat", "Chat")):
+        check_row(col, "Show{}Check".format(key), label)
+    _, s = button(col, "ResetLayoutButton", "Reset layout")
+    _pad(s, 0, 10, 0, 0)
+    _halign(s, "LEFT")
+
+    # ── 1 Colours ──
+    page, _ = b.add(W.VerticalBox.static_class(), "ColoursTab", switcher)
+    editor, s = b.add(W.Border.static_class(), "ColourEditor", page, True)
+    _panel(editor, _colour("#22223a", 0.95), 6)
+    _pad(s, 0, 0, 0, 6)
+    _visibility(editor, "COLLAPSED")
+    ecol, _ = b.add(W.VerticalBox.static_class(), "ColourEditorColumn", editor)
+    text(ecol, "EditTitle", "Colour", 9, title_c, bold=True, variable=True)
+    grid, s = b.add(W.UniformGridPanel.static_class(), "PresetGrid", ecol, True)
+    grid.set_slot_padding(unreal.Margin(2.0, 2.0, 2.0, 2.0))
+    _pad(s, 0, 4)
+    _halign(s, "LEFT")
+    slider_row(ecol, "HueSlider", "Hue")
+    slider_row(ecol, "SaturationSlider", "Saturation")
+    slider_row(ecol, "ValueSlider", "Brightness")
+    brow, s = b.add(W.HorizontalBox.static_class(), "ColourEditorButtons", ecol)
+    _pad(s, 0, 4, 0, 0)
+    box, s = b.add(W.SizeBox.static_class(), "EditSwatchSize", brow)
+    box.set_width_override(60.0)
+    box.set_height_override(20.0)
+    _valign(s, "CENTER")
+    swatch, _ = b.add(W.Border.static_class(), "EditSwatch", box, True)
+    swatch.set_brush_color(W.LinearColor(1, 1, 1, 1))
+    _, s = button(brow, "ColourOkButton", "OK", _colour("#44cc66"))
+    _pad(s, 10, 0, 4, 0)
+    button(brow, "ColourCancelButton", "Cancel")
+    scroll, s = b.add(W.ScrollBox.static_class(), "ColourScroll", page)
+    _fill(s)
+    b.add(W.VerticalBox.static_class(), "ColourList", scroll, True)
+    _, s = button(page, "ResetColoursButton", "Reset colours")
+    _pad(s, 0, 6, 0, 0)
+    _halign(s, "LEFT")
+
+    # ── 2 Chat & log ──
+    page, _ = b.add(W.ScrollBox.static_class(), "ChatLogTab", switcher)
+    col, _ = b.add(W.VerticalBox.static_class(), "ChatLogColumn", page)
+    slider_row(col, "ChatFontSizeSlider", "Chat font size", "ChatFontSizeText")
+    slider_row(col, "ChatLinesSlider", "Chat lines (idle)", "ChatLinesText")
+    check_row(col, "TimestampsCheck", "Timestamps ([hh:mm] on new lines)")
+    header(col, "LogFilterHeader", "The combat log shows")
+    b.add(W.VerticalBox.static_class(), "LogFilterList", col, True)
+    _, s = button(col, "ResetChatButton", "Reset chat & log")
+    _pad(s, 0, 10, 0, 0)
+    _halign(s, "LEFT")
+
+    # ── 3 Nameplates ──
+    page, _ = b.add(W.VerticalBox.static_class(), "NameplatesTab", switcher)
+    check_row(page, "NpcNameplatesCheck", "NPC nameplates")
+    check_row(page, "PlayerNameplatesCheck", "Player nameplates")
+    check_row(page, "FloatingTextCheck", "Floating combat text")
+    slider_row(page, "NameplateFontSlider", "Nameplate font", "NameplateFontText")
+    _, s = button(page, "ResetNameplatesButton", "Reset nameplates")
+    _pad(s, 0, 10, 0, 0)
+    _halign(s, "LEFT")
+
+    # ── 4 Controls ──
+    page, _ = b.add(W.ScrollBox.static_class(), "ControlsTab", switcher)
+    text(page, "ControlsText", "", 8, value_c, wrap=True, variable=True)
+
+    _, s = text(column, "MenuHint", "Esc closes this menu. Changes are saved for this character.", 7, label_c)
+    _pad(s, 0, 4, 0, 0)
+
+    missing = [n for n in OPTIONS_MENU_PARTS if n not in b.added]
+    result = _finish(blueprint, asset_path, b, {"partsMissing": missing, "asset_created": created})
+    if wire and asset_path == OPTIONS_MENU_BP and result.get("compiled"):
+        result["wired"] = wire_options_menu()
+    return result

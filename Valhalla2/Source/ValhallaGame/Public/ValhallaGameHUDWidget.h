@@ -23,6 +23,7 @@
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/Button.h"
+#include "Layout/SlateRect.h"
 #include "ValhallaGameTypes.h"
 #include "ValhallaInventoryTypes.h"
 #include "ValhallaUIConfig.h"
@@ -49,6 +50,8 @@ class UUniformGridPanel;
 class UVerticalBox;
 class UValhallaGameHUDWidget;
 class UValhallaHUDBarWidget;
+class UValhallaOptionsMenuWidget;
+class UValhallaPanelEditOverlay;
 
 VALHALLAGAME_API DECLARE_LOG_CATEGORY_EXTERN(LogValhallaHUD, Log, All);
 
@@ -88,6 +91,8 @@ enum class EValhallaHUDButton : uint8
 	InventoryClose,
 	SkillsClose,
 	PartyLeave,
+	/** B-21: the cog bottom right; toggles the options menu (as Escape with nothing open). */
+	Options,
 };
 
 /**
@@ -148,6 +153,8 @@ public:
 	void SetCooldown(float Fraction, const FString& Text, const FLinearColor& Colour);
 	void SetDimmed(bool bDimmed);
 	void SetSelected(bool bSelected);
+	/** B-21: the selected / armed rim's colour (the player's Highlight colour); re-applied at once when selected. */
+	void SetHighlightColour(const FLinearColor& Colour);
 	void Clear();
 
 	/** True when a Widget Blueprint child supplied the cell's layout (its designer tree). */
@@ -218,6 +225,7 @@ private:
 	FLinearColor BorderColour = FLinearColor::Gray;
 	FLinearColor HighlightColour = FLinearColor::Yellow;
 	bool bPressed = false;
+	bool bSelectedState = false;
 	bool bTreeReady = false;
 	bool bDesignerTree = false;
 	/** Designer tree: whether Stack is the designer's own (else SetDimmed dims the whole cell). */
@@ -382,6 +390,70 @@ struct FValhallaMovablePanel
 	bool bHideable = false;
 };
 
+/**
+ * B-21 step 5: one colour the player may change (options menu, Colours tab).
+ * `Key` is the "Valhalla|HUD Style" property it overrides and the
+ * FValhallaUserUISettings::Colours key.
+ */
+struct FValhallaStyleColourKey
+{
+	FName Key;
+	const TCHAR* Label = TEXT("");
+};
+
+/**
+ * B-21 step 3: the edit-mode handle over one movable panel. While the HUD is
+ * unlocked (FValhallaUserUISettings::bLocked false) the HUD puts one on its
+ * root canvas over every movable panel, the size of what the panel draws: a
+ * faint outline in the Highlight colour, the panel's name and a 14 x 14 grip
+ * bottom right. A left press on the body starts a move, on the grip a resize;
+ * both capture the mouse and report to the HUD (BeginPanelDrag /
+ * UpdatePanelDrag / EndPanelDrag), which moves the panel live and saves it on
+ * release. The body stops eating clicks while the cursor is over one of the
+ * panel's buttons, check boxes, sliders or text boxes (IsInteractiveChild,
+ * checked every tick), so those keep working; cells and scroll boxes are
+ * dragged (the panel wins). Locked, there are no overlays at all.
+ */
+UCLASS()
+class VALHALLAGAME_API UValhallaPanelEditOverlay : public UUserWidget
+{
+	GENERATED_BODY()
+
+public:
+	FName PanelKey;
+	TWeakObjectPtr<UValhallaGameHUDWidget> Hud;
+
+	/** Build the tree (outline, label, grip) in the given colour. */
+	void Setup(FName InKey, const FLinearColor& Highlight);
+	void SetHighlight(const FLinearColor& Highlight);
+	/** False: the body lets clicks through to the panel (the grip still takes them). */
+	void SetBodyHitTestable(bool bHitTestable);
+	bool IsBodyHitTestable() const { return bBodyHitTestable; }
+
+	/** The grip's side, px; the hit area is a little larger. */
+	static constexpr float GripSize = 14.f;
+
+protected:
+	//~ Begin UUserWidget interface
+	virtual void NativeOnInitialized() override;
+	virtual FReply NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual FReply NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent) override;
+	virtual void NativeOnMouseCaptureLost(const FCaptureLostEvent& CaptureLostEvent) override;
+	//~ End UUserWidget interface
+
+private:
+	void EnsureTree();
+
+	UPROPERTY(Transient) TObjectPtr<UBorder> Outline;
+	UPROPERTY(Transient) TObjectPtr<UBorder> Grip;
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> NameLabel;
+	bool bTreeReady = false;
+	bool bDragging = false;
+	bool bBodyHitTestable = true;
+};
+
 /** One combat-log line, already worded and coloured, with its 1.0 filter key. */
 struct FValhallaCombatLogLine
 {
@@ -433,6 +505,25 @@ struct FValhallaCombatLogLine
  * curve or the front end; PanelOpacity scales the backgrounds' brush alpha
  * only, so text stays readable. `valhalla.UI settings | resetlayout | panels |
  * movepanel ...` drive it from the console.
+ *
+ * Edit mode (B-21 step 3): with the settings unlocked (the options menu's
+ * Lock box, `valhalla.UI lock 0`) every movable panel gets a
+ * UValhallaPanelEditOverlay: drag the body to move it, the bottom-right grip
+ * to resize it (flowing panels: their Size Box; the others: Scale 0.5 .. 2).
+ * Panels the game or the player has hidden are shown faintly so they can be
+ * placed. While the drag runs the panel is pinned by its drawn top-left,
+ * snapped to a 4 px grid and to the canvas edges within 8 px; on release it is
+ * re-anchored to the nearest of the nine anchor points (ChooseAnchor,
+ * AnchorLayoutForRect), so it keeps its place when the window changes size,
+ * and saved. Unlocked, the overlay wins over a panel's cells (no cell drag
+ * and drop, no tooltips) and scroll boxes (the wheel is passed on); its
+ * buttons, check boxes, sliders and text boxes still take clicks. Locked
+ * (the default) there are no overlays and nothing changes.
+ *
+ * Options menu (B-21 step 4): UValhallaOptionsMenuWidget (WBP_OptionsMenu,
+ * OptionsMenuClass), made once and centred on the root canvas; Escape opens it
+ * when CloseTopmost had nothing to close and closes it first when it is open;
+ * the OptionsButton cog toggles it. Style (step 5): ApplyUserStyle.
  *
  * ## Input
  *
@@ -499,8 +590,101 @@ public:
 	 */
 	int32 ApplyUserLayout(const FValhallaUserUISettings& Settings);
 
-	/** B-21 step 5 placeholder: colours, chat and nameplate options. */
+	/**
+	 * B-21 step 5: the player's style, live, no rebuild. Colours (a key of
+	 * GetStyleColourKeys with an override) replace the "Valhalla|HUD Style"
+	 * defaults everywhere the HUD reads them (the Effective*Colour getters):
+	 * bars and nameplates on their next tick, cells' highlight and key labels,
+	 * party names, the cast bar and the chat lines (redrawn) at once;
+	 * PanelTintColour multiplies the movable panels' backgrounds. Chat font
+	 * size, idle lines and timestamps redraw the chat; LogFilters become the
+	 * combat log's filters; the nameplate / player-plate / floating-text
+	 * switches and the nameplate font size restyle the pooled world layer.
+	 * Safe on a HUD with no layout (it only records the values then).
+	 */
 	void ApplyUserStyle(const FValhallaUserUISettings& Settings);
+
+	/** The colours the options menu offers, in menu order. */
+	static const TArray<FValhallaStyleColourKey>& GetStyleColourKeys();
+	static const FValhallaStyleColourKey* FindStyleColourKey(FName Key);
+	/** The HUD Style property `Key` (HpHighColour, ...) as this class's defaults have it; magenta for an unknown key. */
+	FLinearColor GetDefaultColour(FName Key) const;
+	/** The player's override for `Key` when ApplyUserStyle recorded one, else GetDefaultColour. */
+	FLinearColor GetEffectiveColour(FName Key) const;
+
+	// ── Edit mode (B-21 step 3) ─────────────────────────────────────────
+
+	/** True while the player's settings say unlocked: the edit overlays are up. */
+	bool IsEditMode() const { return bEditMode; }
+	/**
+	 * Start moving (or, `bResize`, resizing from the grip) the movable panel
+	 * `Key` from `CanvasPoint` (root-canvas units). The panel is pinned by its
+	 * drawn top-left while it moves. False when it is not on the canvas.
+	 */
+	bool BeginPanelDrag(FName Key, const FVector2D& CanvasPoint, bool bResize);
+	/** The pointer is now at `CanvasPoint`: move (snapped) or resize the panel live. */
+	void UpdatePanelDrag(const FVector2D& CanvasPoint);
+	/**
+	 * Release: two ticks later (once Slate has laid the panel out) its drawn
+	 * rectangle is re-anchored to the nearest of the nine anchor points and
+	 * saved as its FValhallaPanelLayout (bSet) through the settings subsystem.
+	 * `bCommit` false, or a press that never moved, puts it back.
+	 */
+	void EndPanelDrag(bool bCommit = true);
+	bool IsDraggingPanel() const { return !DragKey.IsNone(); }
+	/** Mouse wheel over a panel in edit mode: scroll the scroll box under the cursor. */
+	void ScrollPanelAt(FName Key, const FVector2D& ScreenPosition, float WheelDelta);
+	/** `valhalla.UI dragtest`: press at the panel's centre (or its grip), move by `Delta` canvas units, release. */
+	bool DragPanelForTest(FName Key, const FVector2D& Delta, bool bResize);
+	/** Absolute (desktop) pixels -> root-canvas units. */
+	FVector2D AbsoluteToCanvas(const FVector2D& Absolute) const;
+	/** The movable panel's drawn rectangle in root-canvas units (render scale included); empty when unknown. */
+	FSlateRect GetPanelCanvasRect(FName Key) const;
+	FVector2D GetCanvasSize() const;
+
+	/**
+	 * The anchor point (and alignment: the same) a panel drawn at `Rect` on a
+	 * `Viewport`-sized canvas is kept at: per axis, whichever of the near edge,
+	 * the centre and the far edge its own edge / centre is closest to. Pure.
+	 */
+	static FVector2D ChooseAnchor(const FSlateRect& Rect, const FVector2D& Viewport);
+	/**
+	 * Where a panel of `Size` dragged to `TopLeft` lands: on a `Grid` px grid,
+	 * against a canvas edge when within `EdgeSnap` px of it, and kept on the
+	 * canvas. Pure.
+	 */
+	static FVector2D SnapPanelPosition(const FVector2D& TopLeft, const FVector2D& Size, const FVector2D& Viewport,
+		float Grid = 4.f, float EdgeSnap = 8.f);
+	/**
+	 * The layout (anchors = alignment = ChooseAnchor, Position at UiScale 1,
+	 * bSet) that ResolvePanelLayout + the canvas put back at exactly `Rect`
+	 * whatever its render scale: the alignment point of the drawn rectangle is
+	 * `anchor x canvas + Position x UiScale`. Pure.
+	 */
+	static FValhallaPanelLayout AnchorLayoutForRect(const FSlateRect& Rect, const FVector2D& Viewport, float UiScale);
+	/** Widgets a press must reach even while the HUD is unlocked (buttons, check boxes, sliders, text boxes, combos). */
+	static bool IsInteractiveChild(const UWidget* Widget);
+
+	static constexpr float SnapGrid = 4.f;
+	static constexpr float EdgeSnapDistance = 8.f;
+	static constexpr float MinPanelScale = 0.5f;
+	static constexpr float MaxPanelScale = 2.f;
+
+	// ── Options menu (B-21 step 4) ──────────────────────────────────────
+
+	/** Create the menu once (OptionsMenuClass), centred on the root canvas; show it. Input mode is unchanged. */
+	void OpenOptions();
+	void CloseOptions();
+	void ToggleOptions();
+	bool IsOptionsOpen() const;
+	UValhallaOptionsMenuWidget* GetOptionsMenu() const;
+	UClass* GetOptionsMenuClass() const;
+
+	/** A combat-log filter's menu label ("Your damage", ...), or the key. */
+	static FString GetLogFilterLabel(FName Key);
+	bool IsLogFilterOn(FName Key) const;
+	/** Set one combat-log filter and save it (LogFilters). False when the key is unknown. */
+	bool SetLogFilter(FName Key, bool bOn);
 
 	/**
 	 * The canvas values a panel is given: the designer's (`Designer`), or the
@@ -577,6 +761,41 @@ private:
 	void HandleUserSettingsChanged(const FValhallaUserUISettings& Settings);
 	/** ChatOpenBackground at the player's PanelOpacity. */
 	FLinearColor ChatOpenBrush() const;
+	/** B-21: the movable panels' backgrounds: designer colour x PanelTintColour, alpha x PanelOpacity. */
+	void ApplyPanelBackgrounds();
+	/** B-21 step 3: put up (unlocked) or take down (locked) the edit overlays. */
+	void SetEditMode(bool bOn);
+	/** B-21 step 3: every tick: a pending drag's commit; unlocked, the overlays' rectangles and hit-testing, ghosted panels. */
+	void TickEditMode();
+	/** Whether the game itself would show this panel now (edit mode shows the rest as ghosts). */
+	bool IsPanelWantedByGame(FName Key, const UWidget* Widget) const;
+	/** The drag's result, saved: re-anchored layout, size or scale. */
+	void CommitPanelDrag();
+	/** The Size Box values a flowing panel is showing (width, height or max height). */
+	FVector2D CurrentBoxSize(FName Key) const;
+	/** Minimum content size of a flowing panel while it is resized. */
+	static FVector2D MinFlowingSize(FName Key);
+
+	// B-21 step 5: the colours the HUD applies (the player's override, else the class default).
+	FLinearColor StyleColour(FName Key, const FLinearColor& Default) const;
+	FLinearColor EffectiveHpHighColour() const;
+	FLinearColor EffectiveHpMidColour() const;
+	FLinearColor EffectiveHpLowColour() const;
+	FLinearColor EffectiveManaColour() const;
+	FLinearColor EffectiveEnergyColour() const;
+	FLinearColor EffectiveCastBarColour() const;
+	FLinearColor EffectiveHighlightColour() const;
+	FLinearColor EffectiveKeyLabelColour() const;
+	FLinearColor EffectiveLabelColour() const;
+	FLinearColor EffectiveValueColour() const;
+	FLinearColor EffectivePanelTint() const;
+	/** HP bar fill by fraction: high over half, mid over a quarter, low below. */
+	FLinearColor HpColourFor(float Fraction) const;
+	int32 EffectiveChatFontSize() const;
+	int32 EffectiveChatVisibleLines() const;
+	int32 EffectiveNameplateFontPx() const;
+	/** Nameplate font (ui-config's weight and stroke) at EffectiveNameplateFontPx. */
+	void RestyleNameplates();
 	/** Layout panels, and panels with nothing clickable, stop eating clicks. Returns true when `Widget` is interactive. */
 	bool ApplyClickThrough(UWidget* Widget);
 	/** Hidden, unparented stand-in for a designer part the Blueprint lacks; warns once per name (not without a layout). */
@@ -734,6 +953,13 @@ protected:
 	/** ChatPanel's background while typing (idle it is clear), alpha included. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
 	FLinearColor ChatOpenBackground;
+	/** B-21: multiplies the movable panels' background brushes (white = the designer's colours). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
+	FLinearColor PanelTintColour;
+
+	/** B-21 step 4: the options menu (Escape with nothing open, the cog). WBP_OptionsMenu in WBP_GameHUD's Class Defaults. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD")
+	TSubclassOf<UValhallaOptionsMenuWidget> OptionsMenuClass;
 
 	// ── Designer panels (B-07) ─────────────────────────────────────────
 	// A WBP_GameHUD child binds its widgets to these by name. BindWidget is
@@ -868,6 +1094,11 @@ protected:
 	TObjectPtr<UWidget> DeathOverlay;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|HUD", meta = (BindWidgetOptional))
 	TObjectPtr<UTextBlock> DeathText;
+
+	// options (B-21 step 4)
+	/** The cog bottom right: a UValhallaHUDButton with Action = Options (toggles the options menu). */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|HUD", meta = (BindWidgetOptional))
+	TObjectPtr<UValhallaHUDButton> OptionsButton;
 
 private:
 	// ── State ───────────────────────────────────────────────────────────
@@ -1017,10 +1248,54 @@ private:
 		TArray<TPair<TWeakObjectPtr<UBorder>, FLinearColor>> Backgrounds;
 		bool bUserSet = false;
 		bool bUserHidden = false;
+		/** Edit mode shows this hidden panel faintly so it can be placed. */
+		bool bGhosted = false;
 		/** The render scale applied (UiScale x the panel's). */
 		float AppliedScale = 1.f;
+		/** Edit mode: the panel's buttons, check boxes, ... (the overlay lets presses through to them). */
+		TArray<TWeakObjectPtr<UWidget>> Interactive;
 	};
 	TMap<FName, FPanelState> PanelStates;
+
+	// edit mode (B-21 step 3)
+	bool bEditMode = false;
+	UPROPERTY(Transient) TMap<FName, TObjectPtr<UValhallaPanelEditOverlay>> EditOverlays;
+	/** The panel being dragged (None: no drag). */
+	FName DragKey;
+	bool bDragResize = false;
+	bool bDragMoved = false;
+	FVector2D DragStartPoint = FVector2D::ZeroVector;
+	FSlateRect DragStartRect;
+	FVector2D DragTopLeft = FVector2D::ZeroVector;
+	/** Render scale at the start (UiScale x the panel's) and the panel's own scale now. */
+	float DragStartRenderScale = 1.f;
+	float DragPanelScale = 1.f;
+	FVector2D DragStartBox = FVector2D::ZeroVector;
+	FVector2D DragBox = FVector2D::ZeroVector;
+	/** A released drag waits this many ticks for Slate's layout, then CommitPanelDrag. */
+	int32 PendingCommitTicks = 0;
+	FName PendingCommitKey;
+	bool bPendingResize = false;
+
+	// options menu (B-21 step 4)
+	UPROPERTY(Transient) TObjectPtr<UValhallaOptionsMenuWidget> OptionsMenu;
+
+	// style (B-21 step 5): the player's overrides, as ApplyUserStyle last recorded them
+	TMap<FName, FLinearColor> ColourOverrides;
+	int32 UserChatFontSize = 0;
+	int32 UserChatVisibleLines = 0;
+	bool bChatTimestamps = false;
+	bool bShowNpcNameplates = true;
+	bool bShowPlayerNameplates = true;
+	bool bShowFloatingText = true;
+	int32 UserNameplateFontSize = 0;
+	/** What the chat / nameplates were last drawn with, so a change elsewhere does not redraw them. */
+	FString AppliedChatStyle;
+	/** ApplyUserLayout's last log line (a slider drag applies every frame). */
+	FString LastLayoutLog;
+	int32 AppliedNameplateFontPx = -1;
+	/** Wall-clock arrival of each ChatLog line (parallel to ChatArrivalTimes); MinValue = before this HUD. */
+	TArray<FDateTime> ChatArrivalClock;
 	bool bDesignerDefaultsCaptured = false;
 	float AppliedUiScale = 1.f;
 	float AppliedPanelOpacity = 1.f;

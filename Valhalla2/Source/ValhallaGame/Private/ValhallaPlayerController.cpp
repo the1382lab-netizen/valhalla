@@ -561,10 +561,17 @@ void AValhallaPlayerController::HandleOpenChat()
 
 void AValhallaPlayerController::HandleEscape()
 {
-	if (UValhallaGameHUDWidget* Hud = GetGameHUD())
+	// B-21: Escape closes the topmost thing that is open (the options menu
+	// first); with nothing open it opens the options menu.
+	if (UValhallaGameHUDWidget* Hud = GetGameHUD(); Hud && !Hud->CloseTopmost())
 	{
-		Hud->CloseTopmost();
+		Hud->OpenOptions();
 	}
+}
+
+const UInputMappingContext* AValhallaPlayerController::GetInputMappingContext() const
+{
+	return ValhallaMappingContext;
 }
 
 UValhallaGameHUDWidget* AValhallaPlayerController::GetGameHUD() const

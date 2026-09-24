@@ -21,6 +21,19 @@
 //     applies a set entry and UiScale; ApplyUserLayout on a HUD with no layout
 //     is a no-op; in WBP_GameHUD each movable panel is its own root-canvas
 //     child (the B-21 split of Character + Inventory).
+//   Valhalla.Game.UI.OptionsMenu — B-21 step 4: EValhallaHUDButton::Options,
+//     the HUD's OptionsButton / OptionsMenuClass, every options-menu widget
+//     name a BindWidgetOptional member of the right kind, the show switches
+//     name hideable panels, the controls text from a mapping context, and
+//     WBP_OptionsMenu (when present) a child of the C++ menu that WBP_GameHUD
+//     names.
+//   Valhalla.Game.UI.StyleColours — B-21 step 5: every colour key is a
+//     "Valhalla|HUD Style" FLinearColor; the effective colour is the override
+//     after ApplyUserStyle and the class default without one (and after the
+//     override is removed); log filters restored from the settings.
+//   Valhalla.Game.UI.EditModeMaths — B-21 step 3: ChooseAnchor's nine cases,
+//     the snap (grid, edges, kept on the canvas), AnchorLayoutForRect put back
+//     through ResolvePanelLayout at any UiScale, and IsInteractiveChild.
 //
 // None needs a world or a viewport; all run headless (the bar test makes one
 // bare widget object, never constructed into Slate).
@@ -47,7 +60,15 @@
 #include "ValhallaChatCommands.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
+#include "Components/Button.h"
+#include "Components/CheckBox.h"
+#include "Components/Slider.h"
+#include "Components/TextBlock.h"
+#include "Components/WidgetSwitcher.h"
+#include "InputAction.h"
+#include "InputMappingContext.h"
 #include "ValhallaGameHUDWidget.h"
+#include "ValhallaOptionsMenuWidget.h"
 #include "ValhallaUIConfig.h"
 #include "ValhallaUISettings.h"
 
@@ -514,6 +535,281 @@ bool FValhallaUIMovablePanelsTest::RunTest(const FString& /*Parameters*/)
 	const UBorder* Chat = Cast<UBorder>(Tree->FindWidget(TEXT("ChatPanel")));
 	TestTrue(TEXT("ChatPanel holds the chat Size Box"), Chat && Cast<USizeBox>(Chat->GetContent()) != nullptr);
 	TestNull(TEXT("the Character + Inventory pair is split (no InventoryPair)"), Tree->FindWidget(TEXT("InventoryPair")));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.OptionsMenu (B-21 step 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIOptionsMenuTest,
+	"Valhalla.Game.UI.OptionsMenu",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIOptionsMenuTest::RunTest(const FString& /*Parameters*/)
+{
+	// ── The cog's action ────────────────────────────────────────────────
+	const UEnum* Buttons = StaticEnum<EValhallaHUDButton>();
+	TestTrue(TEXT("EValhallaHUDButton::Options exists"),
+		Buttons && Buttons->GetValueByName(TEXT("EValhallaHUDButton::Options")) == static_cast<int64>(EValhallaHUDButton::Options));
+	TestTrue(TEXT("Options comes after the existing actions (their saved values are unchanged)"),
+		static_cast<int32>(EValhallaHUDButton::Options) > static_cast<int32>(EValhallaHUDButton::PartyLeave));
+
+	// ── The HUD's side ──────────────────────────────────────────────────
+	TestTrue(TEXT("OptionsButton is an optional HUD panel"), UValhallaGameHUDWidget::GetOptionalPanelNames().Contains(TEXT("OptionsButton")));
+	const FObjectPropertyBase* Cog = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), TEXT("OptionsButton"));
+	TestTrue(TEXT("OptionsButton is a UValhallaHUDButton"), Cog && Cog->PropertyClass == UValhallaHUDButton::StaticClass());
+	const UValhallaGameHUDWidget* HudCdo = GetDefault<UValhallaGameHUDWidget>();
+	TestTrue(TEXT("OptionsMenuClass defaults to the C++ menu"), HudCdo->GetOptionsMenuClass() == UValhallaOptionsMenuWidget::StaticClass());
+	TestNull(TEXT("no menu before OpenOptions"), HudCdo->GetOptionsMenu());
+	TestFalse(TEXT("the CDO's menu is closed"), HudCdo->IsOptionsOpen());
+
+	// ── The menu's designer names ───────────────────────────────────────
+	TSet<FName> Seen;
+	for (const FName Name : UValhallaOptionsMenuWidget::GetOptionalWidgetNames())
+	{
+		TestFalse(*FString::Printf(TEXT("%s listed once"), *Name.ToString()), Seen.Contains(Name));
+		Seen.Add(Name);
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaOptionsMenuWidget::StaticClass(), Name);
+		if (!TestNotNull(*FString::Printf(TEXT("%s is a member of the options menu"), *Name.ToString()), Property))
+		{
+			continue;
+		}
+		TestTrue(*FString::Printf(TEXT("%s is a widget"), *Name.ToString()), Property->PropertyClass->IsChildOf(UWidget::StaticClass()));
+#if WITH_EDITORONLY_DATA
+		TestTrue(*FString::Printf(TEXT("%s is BindWidgetOptional"), *Name.ToString()), Property->HasMetaData(TEXT("BindWidgetOptional")));
+#endif
+		// The kind the name promises.
+		const FString Text = Name.ToString();
+		const UClass* Kind = Text.EndsWith(TEXT("Check")) ? UCheckBox::StaticClass()
+			: Text.EndsWith(TEXT("Slider")) ? USlider::StaticClass()
+			: Text.EndsWith(TEXT("Button")) ? UButton::StaticClass()
+			: (Text.EndsWith(TEXT("Text")) || Text == TEXT("EditTitle")) ? UTextBlock::StaticClass()
+			: Text == TEXT("Tabs") ? UWidgetSwitcher::StaticClass() : nullptr;
+		if (Kind)
+		{
+			TestTrue(*FString::Printf(TEXT("%s is a %s"), *Text, *Kind->GetName()), Property->PropertyClass->IsChildOf(Kind));
+		}
+	}
+	for (const TCHAR* Needed : { TEXT("Tabs"), TEXT("CloseButton"), TEXT("LockCheck"), TEXT("UiScaleSlider"), TEXT("OpacitySlider"),
+		TEXT("ResetLayoutButton"), TEXT("ColourList"), TEXT("ColourEditor"), TEXT("HueSlider"), TEXT("SaturationSlider"), TEXT("ValueSlider"),
+		TEXT("ChatFontSizeSlider"), TEXT("ChatLinesSlider"), TEXT("TimestampsCheck"), TEXT("LogFilterList"),
+		TEXT("NpcNameplatesCheck"), TEXT("PlayerNameplatesCheck"), TEXT("FloatingTextCheck"), TEXT("NameplateFontSlider"), TEXT("ControlsText") })
+	{
+		TestTrue(*FString::Printf(TEXT("the menu binds %s"), Needed), Seen.Contains(FName(Needed)));
+	}
+	for (const FName Key : UValhallaOptionsMenuWidget::GetShowPanelKeys())
+	{
+		const FValhallaMovablePanel* Info = UValhallaGameHUDWidget::FindMovablePanel(Key);
+		TestTrue(*FString::Printf(TEXT("Show%sCheck: a hideable panel"), *Key.ToString()), Info && Info->bHideable);
+		TestTrue(*FString::Printf(TEXT("Show%sCheck is a menu widget"), *Key.ToString()),
+			Seen.Contains(FName(*FString::Printf(TEXT("Show%sCheck"), *Key.ToString()))));
+	}
+	TestEqual(TEXT("twelve preset colours"), UValhallaOptionsMenuWidget::GetPresetColours().Num(), 12);
+
+	// ── The controls list comes from the mapping context ────────────────
+	UInputMappingContext* Context = NewObject<UInputMappingContext>(GetTransientPackage(), NAME_None, RF_Transient);
+	UInputAction* Skills = NewObject<UInputAction>(Context, TEXT("IA_ToggleSkills"), RF_Transient);
+	UInputAction* Bar1 = NewObject<UInputAction>(Context, TEXT("IA_ActionBar1"), RF_Transient);
+	UInputAction* Bar2 = NewObject<UInputAction>(Context, TEXT("IA_ActionBar2"), RF_Transient);
+	UInputAction* Bar3 = NewObject<UInputAction>(Context, TEXT("IA_ActionBar3"), RF_Transient);
+	Context->MapKey(Skills, EKeys::K);
+	Context->MapKey(Bar1, EKeys::One);
+	Context->MapKey(Bar2, EKeys::Two);
+	Context->MapKey(Bar3, EKeys::Three);
+	const FString Controls = UValhallaOptionsMenuWidget::BuildControlsText(Context);
+	TestTrue(TEXT("controls: Skills on K"), Controls.Contains(TEXT("Skills:   K")));
+	TestTrue(TEXT("controls: the action bar as one range"), Controls.Contains(TEXT("Action bar slots:   1 - 3")));
+	TestFalse(TEXT("controls: no context -> a note, not a crash"), UValhallaOptionsMenuWidget::BuildControlsText(nullptr).IsEmpty());
+
+	// ── WBP_OptionsMenu, and WBP_GameHUD's class default and cog ────────
+	if (!FPackageName::DoesPackageExist(TEXT("/Game/Valhalla/UI/HUD/WBP_OptionsMenu")))
+	{
+		AddWarning(TEXT("WBP_OptionsMenu is not in this build; its wiring was not checked."));
+		return true;
+	}
+	const UClass* MenuClass = StaticLoadClass(UValhallaOptionsMenuWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_OptionsMenu.WBP_OptionsMenu_C"));
+	TestTrue(TEXT("WBP_OptionsMenu is a UValhallaOptionsMenuWidget"), MenuClass && MenuClass->IsChildOf(UValhallaOptionsMenuWidget::StaticClass()));
+	const UWidgetBlueprintGeneratedClass* MenuGenerated = Cast<UWidgetBlueprintGeneratedClass>(MenuClass);
+	const UWidgetTree* MenuTree = MenuGenerated ? MenuGenerated->GetWidgetTreeArchetype() : nullptr;
+	if (TestNotNull(TEXT("WBP_OptionsMenu has a tree"), MenuTree))
+	{
+		for (const FName Name : UValhallaOptionsMenuWidget::GetOptionalWidgetNames())
+		{
+			TestNotNull(*FString::Printf(TEXT("WBP_OptionsMenu has %s"), *Name.ToString()), MenuTree->FindWidget(Name));
+		}
+		const UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(MenuTree->FindWidget(TEXT("Tabs")));
+		TestTrue(TEXT("five tabs"), Switcher && Switcher->GetNumWidgets() == 5);
+	}
+	const UClass* HudClass = StaticLoadClass(UValhallaGameHUDWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C"));
+	const UValhallaGameHUDWidget* HudDefaults = HudClass ? Cast<UValhallaGameHUDWidget>(HudClass->GetDefaultObject()) : nullptr;
+	TestTrue(TEXT("WBP_GameHUD's Options Menu Class is WBP_OptionsMenu"), HudDefaults && HudDefaults->GetOptionsMenuClass() == MenuClass);
+	const UWidgetBlueprintGeneratedClass* HudGenerated = Cast<UWidgetBlueprintGeneratedClass>(HudClass);
+	const UWidgetTree* HudTree = HudGenerated ? HudGenerated->GetWidgetTreeArchetype() : nullptr;
+	const UValhallaHUDButton* CogButton = HudTree ? Cast<UValhallaHUDButton>(HudTree->FindWidget(TEXT("OptionsButton"))) : nullptr;
+	TestTrue(TEXT("WBP_GameHUD has the OptionsButton cog, Action = Options"), CogButton && CogButton->Action == EValhallaHUDButton::Options);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.StyleColours (B-21 step 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIStyleColoursTest,
+	"Valhalla.Game.UI.StyleColours",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIStyleColoursTest::RunTest(const FString& /*Parameters*/)
+{
+	using namespace ValhallaUITests;
+
+	// ── Every key is a HUD Style colour ─────────────────────────────────
+	const TArray<FValhallaStyleColourKey>& Keys = UValhallaGameHUDWidget::GetStyleColourKeys();
+	TestEqual(TEXT("sixteen colours"), Keys.Num(), 16);
+	for (const TCHAR* Key : { TEXT("HpHighColour"), TEXT("HpMidColour"), TEXT("HpLowColour"), TEXT("ManaColour"), TEXT("EnergyColour"),
+		TEXT("CastBarColour"), TEXT("HighlightColour"), TEXT("LabelColour"), TEXT("ValueColour"), TEXT("ChatGeneralColour"),
+		TEXT("ChatWorldColour"), TEXT("ChatWhisperColour"), TEXT("ChatPartyColour"), TEXT("ChatSystemColour"), TEXT("PanelTintColour") })
+	{
+		TestNotNull(*FString::Printf(TEXT("%s is offered"), Key), UValhallaGameHUDWidget::FindStyleColourKey(Key));
+	}
+	for (const FValhallaStyleColourKey& Info : Keys)
+	{
+		const FStructProperty* Property = FindFProperty<FStructProperty>(UValhallaGameHUDWidget::StaticClass(), Info.Key);
+		if (TestNotNull(*FString::Printf(TEXT("%s is a property"), *Info.Key.ToString()), Property))
+		{
+			TestTrue(*FString::Printf(TEXT("%s is an FLinearColor"), *Info.Key.ToString()), Property->Struct == TBaseStructure<FLinearColor>::Get());
+#if WITH_EDITORONLY_DATA
+			TestEqual(*FString::Printf(TEXT("%s is a HUD Style property"), *Info.Key.ToString()), Property->GetMetaData(TEXT("Category")), FString(TEXT("Valhalla|HUD Style")));
+#endif
+		}
+		TestFalse(*FString::Printf(TEXT("%s has a label"), *Info.Key.ToString()), FString(Info.Label).IsEmpty());
+	}
+
+	// ── Defaults (CDO-level): no override -> the class default ──────────
+	const UValhallaGameHUDWidget* Cdo = GetDefault<UValhallaGameHUDWidget>();
+	const FLinearColor DefaultHigh = FLinearColor::FromSRGBColor(FColor(0x44, 0xff, 0x44));
+	TestTrue(TEXT("CDO: HpHighColour default #44ff44"), NearlyEqual(Cdo->GetDefaultColour(TEXT("HpHighColour")), DefaultHigh));
+	TestTrue(TEXT("CDO: effective = default"), NearlyEqual(Cdo->GetEffectiveColour(TEXT("HpHighColour")), DefaultHigh));
+	TestTrue(TEXT("CDO: PanelTintColour default white"), NearlyEqual(Cdo->GetDefaultColour(TEXT("PanelTintColour")), FLinearColor::White));
+
+	// ── An override wins, only for its key, and goes again with it ──────
+	UValhallaGameHUDWidget* Hud = NewObject<UValhallaGameHUDWidget>(GetTransientPackage(), NAME_None, RF_Transient);
+	FValhallaUserUISettings Settings;
+	const FLinearColor Red = FLinearColor::FromSRGBColor(FColor(0xff, 0x00, 0x00));
+	Settings.Colours.Add(TEXT("HpHighColour"), Red);
+	Settings.Colours.Add(TEXT("NotAHudColour"), FLinearColor::Blue);
+	Settings.ChatFontSize = 12;
+	Settings.bChatTimestamps = true;
+	Settings.LogFilters.Add(TEXT("misses"), false);
+	Settings.bFloatingCombatText = false;
+	Hud->ApplyUserStyle(Settings); // no layout: records, touches no widget
+	TestTrue(TEXT("override: HpHighColour is the player's"), NearlyEqual(Hud->GetEffectiveColour(TEXT("HpHighColour")), Red));
+	TestTrue(TEXT("override: the default is unchanged"), NearlyEqual(Hud->GetDefaultColour(TEXT("HpHighColour")), DefaultHigh));
+	TestTrue(TEXT("no override: HpMidColour is the class default"),
+		NearlyEqual(Hud->GetEffectiveColour(TEXT("HpMidColour")), Cdo->GetDefaultColour(TEXT("HpMidColour"))));
+	TestTrue(TEXT("an unknown key is not recorded"), NearlyEqual(Hud->GetEffectiveColour(TEXT("NotAHudColour")), FLinearColor(1.f, 0.f, 1.f, 1.f)));
+	TestFalse(TEXT("the saved log filter is restored"), Hud->IsLogFilterOn(TEXT("misses")));
+	TestTrue(TEXT("a filter not saved stays on"), Hud->IsLogFilterOn(TEXT("outDmg")));
+	TestTrue(TEXT("the CDO was not touched"), NearlyEqual(Cdo->GetEffectiveColour(TEXT("HpHighColour")), DefaultHigh));
+
+	Settings.Colours.Reset();
+	Settings.LogFilters.Reset();
+	Hud->ApplyUserStyle(Settings);
+	TestTrue(TEXT("override removed: back to the default"), NearlyEqual(Hud->GetEffectiveColour(TEXT("HpHighColour")), DefaultHigh));
+	TestTrue(TEXT("filters reset: misses shown again"), Hud->IsLogFilterOn(TEXT("misses")));
+
+	// ── Log filter labels ───────────────────────────────────────────────
+	TestEqual(TEXT("filter label"), UValhallaGameHUDWidget::GetLogFilterLabel(TEXT("outDmg")), FString(TEXT("Your damage")));
+	TestEqual(TEXT("unknown filter label is the key"), UValhallaGameHUDWidget::GetLogFilterLabel(TEXT("zzz")), FString(TEXT("zzz")));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.EditModeMaths (B-21 step 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIEditModeMathsTest,
+	"Valhalla.Game.UI.EditModeMaths",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIEditModeMathsTest::RunTest(const FString& /*Parameters*/)
+{
+	const FVector2D Viewport(1000.0, 800.0);
+	auto Rect = [](double X, double Y, double W, double H)
+	{
+		return FSlateRect(static_cast<float>(X), static_cast<float>(Y), static_cast<float>(X + W), static_cast<float>(Y + H));
+	};
+
+	// ── ChooseAnchor: the nine points ───────────────────────────────────
+	struct FCase { const TCHAR* Name; FSlateRect R; FVector2D Want; };
+	const FCase Cases[] = {
+		{ TEXT("top left"),      Rect(10, 12, 200, 100),   FVector2D(0.0, 0.0) },
+		{ TEXT("top centre"),    Rect(400, 12, 200, 60),   FVector2D(0.5, 0.0) },
+		{ TEXT("top right"),     Rect(780, 12, 208, 200),  FVector2D(1.0, 0.0) },
+		{ TEXT("middle left"),   Rect(16, 300, 300, 200),  FVector2D(0.0, 0.5) },
+		{ TEXT("centre"),        Rect(380, 330, 240, 140), FVector2D(0.5, 0.5) },
+		{ TEXT("middle right"),  Rect(700, 350, 290, 100), FVector2D(1.0, 0.5) },
+		{ TEXT("bottom left"),   Rect(14, 720, 216, 72),   FVector2D(0.0, 1.0) },
+		{ TEXT("bottom centre"), Rect(300, 730, 400, 62),  FVector2D(0.5, 1.0) },
+		{ TEXT("bottom right"),  Rect(900, 700, 88, 88),   FVector2D(1.0, 1.0) },
+	};
+	for (const FCase& Case : Cases)
+	{
+		const FVector2D Got = UValhallaGameHUDWidget::ChooseAnchor(Case.R, Viewport);
+		TestTrue(*FString::Printf(TEXT("ChooseAnchor %s -> (%.1f, %.1f), got (%.1f, %.1f)"), Case.Name, Case.Want.X, Case.Want.Y, Got.X, Got.Y), Got.Equals(Case.Want));
+	}
+	TestTrue(TEXT("a tie goes to the centre"), UValhallaGameHUDWidget::ChooseAnchor(Rect(0, 0, 1000, 800), Viewport).Equals(FVector2D(0.5, 0.5)));
+
+	// ── Snap ────────────────────────────────────────────────────────────
+	const FVector2D Size(100.0, 50.0);
+	TestTrue(TEXT("snap: to the 4 px grid"), UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(13.0, 22.0), Size, Viewport).Equals(FVector2D(12.0, 24.0)));
+	TestTrue(TEXT("snap: 5 px from the left and bottom edges -> on them"),
+		UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(5.0, 745.0), Size, Viewport).Equals(FVector2D(0.0, 750.0)));
+	TestTrue(TEXT("snap: 7 px from the right, 3 px from the top -> on them"),
+		UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(893.0, 3.0), Size, Viewport).Equals(FVector2D(900.0, 0.0)));
+	TestTrue(TEXT("snap: 9 px away is only the grid"), UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(9.0, 9.0), Size, Viewport).Equals(FVector2D(8.0, 8.0)));
+	TestTrue(TEXT("snap: kept on the canvas"), UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(-40.0, 900.0), Size, Viewport).Equals(FVector2D(0.0, 750.0)));
+	TestTrue(TEXT("snap: no grid, no edges leaves the position"),
+		UValhallaGameHUDWidget::SnapPanelPosition(FVector2D(13.0, 22.0), Size, Viewport, 0.f, 0.f).Equals(FVector2D(13.0, 22.0)));
+
+	// ── AnchorLayoutForRect round trip ──────────────────────────────────
+	// The drawn rectangle's alignment point = anchor x canvas + Position x
+	// UiScale (ResolvePanelLayout multiplies Position by UiScale), the same
+	// point whatever the render scale about it.
+	for (const float UiScale : { 1.f, 1.5f, 0.75f })
+	{
+		for (const FCase& Case : Cases)
+		{
+			const FValhallaPanelLayout Layout = UValhallaGameHUDWidget::AnchorLayoutForRect(Case.R, Viewport, UiScale);
+			TestTrue(*FString::Printf(TEXT("layout %s: set, anchored where ChooseAnchor says, alignment = anchor"), Case.Name),
+				Layout.bSet && Layout.AnchorMin.Equals(Case.Want) && Layout.AnchorMax.Equals(Case.Want) && Layout.Alignment.Equals(Case.Want));
+			const FValhallaPanelLayout Resolved = UValhallaGameHUDWidget::ResolvePanelLayout(FValhallaPanelLayout(), &Layout, UiScale);
+			const FVector2D RectSize = FVector2D(Case.R.GetSize());
+			const FVector2D DrawnPoint = FVector2D(Case.R.Left, Case.R.Top) + Resolved.Alignment * RectSize;
+			const FVector2D SlotPoint = Resolved.AnchorMin * Viewport + Resolved.Position;
+			TestTrue(*FString::Printf(TEXT("layout %s at UI scale %.2f: puts the panel back where it was drawn"), Case.Name, UiScale),
+				DrawnPoint.Equals(SlotPoint, 0.01));
+		}
+	}
+	// On a bigger window a re-anchored panel keeps its distance from its corner.
+	const FValhallaPanelLayout BottomRight = UValhallaGameHUDWidget::AnchorLayoutForRect(Rect(900, 700, 88, 88), Viewport, 1.f);
+	const FVector2D Bigger(1600.0, 900.0);
+	const FVector2D CornerThen = BottomRight.AnchorMin * Bigger + BottomRight.Position; // its bottom-right corner
+	TestTrue(TEXT("re-anchored: 12 px from the bottom-right corner on any window"), CornerThen.Equals(FVector2D(1588.0, 888.0), 0.01));
+
+	// ── What the overlay lets through ───────────────────────────────────
+	const UButton* Button = NewObject<UButton>(GetTransientPackage(), NAME_None, RF_Transient);
+	const UCheckBox* Check = NewObject<UCheckBox>(GetTransientPackage(), NAME_None, RF_Transient);
+	const UScrollBox* Scroll = NewObject<UScrollBox>(GetTransientPackage(), NAME_None, RF_Transient);
+	const UBorder* Border = NewObject<UBorder>(GetTransientPackage(), NAME_None, RF_Transient);
+	TestTrue(TEXT("a button is interactive"), UValhallaGameHUDWidget::IsInteractiveChild(Button));
+	TestTrue(TEXT("a check box is interactive"), UValhallaGameHUDWidget::IsInteractiveChild(Check));
+	TestFalse(TEXT("a scroll box is dragged (the panel wins)"), UValhallaGameHUDWidget::IsInteractiveChild(Scroll));
+	TestFalse(TEXT("a panel background is dragged"), UValhallaGameHUDWidget::IsInteractiveChild(Border));
+	TestFalse(TEXT("null is not"), UValhallaGameHUDWidget::IsInteractiveChild(nullptr));
 	return true;
 }
 

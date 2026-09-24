@@ -61,6 +61,7 @@
 #include "ValhallaPlayerController.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
+#include "ValhallaOptionsMenuWidget.h"
 #include "ValhallaStats.h"
 #include "ValhallaUserSettingsSubsystem.h"
 
@@ -293,11 +294,13 @@ namespace
 	 *   settings  (print the JSON) | resetlayout | panels  (log each movable panel's geometry)
 	 *   movepanel <Key> <x> <y>  (place a panel at canvas offset x, y from its designer anchor: dev, until edit mode)
 	 *   hidepanel <Key> | showpanel <Key> | uiscale <0.5..2> | opacity <0.2..1>
+	 *   B-21 steps 3-4: lock <0|1>  (0 = edit mode) | options  (toggle the options menu)
+	 *   dragtest <Key> <dx> <dy> [resize]  (press, move, release through the edit-mode drag code)
 	 */
 	FAutoConsoleCommandWithWorldAndArgs GUICommand(
 		TEXT("valhalla.UI"),
 		TEXT("Dev only. valhalla.UI [@class] <inventory|skills|chat [text]|say <line>|loot|close|arm <skill>|filter <key>|tooltip <i>|reload|press <slot> [x y]|orbit <deg>|walk <wasd> <s>")
-		TEXT("|settings|resetlayout|panels|movepanel <key> <x> <y>|hidepanel <key>|showpanel <key>|uiscale <s>|opacity <a>> — drive a client's HUD."),
+		TEXT("|settings|resetlayout|panels|movepanel <key> <x> <y>|hidepanel <key>|showpanel <key>|uiscale <s>|opacity <a>|lock <0|1>|options|dragtest <key> <dx> <dy> [resize]> — drive a client's HUD."),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& InArgs, UWorld* World)
 		{
 			TArray<FString> Args = InArgs;
@@ -331,7 +334,21 @@ namespace
 				else if (Verb == TEXT("filter"))   { Hud.ToggleLogFilter(FName(*Rest)); }
 				else if (Verb == TEXT("tooltip"))  { Hud.PinInventoryTooltip(FCString::Atoi(*Rest)); }
 				else if (Verb == TEXT("reload"))   { Hud.ReloadFromDisk(); }
-				else if (Verb == TEXT("settings") || Verb == TEXT("resetlayout") || Verb == TEXT("panels") || Verb == TEXT("movepanel")
+				else if (Verb == TEXT("options"))  { Hud.ToggleOptions(); }
+				else if (Verb == TEXT("dragtest"))
+				{
+					// B-21 step 3: the edit-mode drag, through the same Begin / Update /
+					// EndPanelDrag the overlay's mouse handlers call (the commit
+					// follows two ticks later).
+					if (Args.Num() < 4)
+					{
+						UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI dragtest needs <key> <dx> <dy> [resize]."));
+						return;
+					}
+					const bool bResize = Args.IsValidIndex(4) && Args[4].Equals(TEXT("resize"), ESearchCase::IgnoreCase);
+					Hud.DragPanelForTest(FName(*Args[1]), FVector2D(FCString::Atof(*Args[2]), FCString::Atof(*Args[3])), bResize);
+				}
+				else if (Verb == TEXT("settings") || Verb == TEXT("lock") || Verb == TEXT("resetlayout") || Verb == TEXT("panels") || Verb == TEXT("movepanel")
 					|| Verb == TEXT("hidepanel") || Verb == TEXT("showpanel") || Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
 				{
 					// B-21: the player's UI settings for this HUD's character.
@@ -354,6 +371,11 @@ namespace
 					else if (Verb == TEXT("panels"))
 					{
 						Hud.LogPanelGeometry();
+					}
+					else if (Verb == TEXT("lock"))
+					{
+						const bool bLock = Rest.IsEmpty() ? !UserSettings->Get().bLocked : FCString::Atoi(*Rest) != 0;
+						UserSettings->Mutate([bLock](FValhallaUserUISettings& S) { S.bLocked = bLock; });
 					}
 					else if (Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
 					{
@@ -819,8 +841,18 @@ void UValhallaHUDSlotWidget::SetFrameArt(UTexture2D* SlotTexture, const FVector2
 	Fill->SetBrushColor(FLinearColor::Transparent);
 }
 
+void UValhallaHUDSlotWidget::SetHighlightColour(const FLinearColor& Colour)
+{
+	HighlightColour = Colour;
+	if (bSelectedState && bTreeReady)
+	{
+		SetSelected(true);
+	}
+}
+
 void UValhallaHUDSlotWidget::SetSelected(bool bSelected)
 {
+	bSelectedState = bSelected;
 	if (bDesignerTree)
 	{
 		// The designer's ring if it drew one, else its frame in the highlight colour.
@@ -1264,7 +1296,7 @@ UValhallaHUDSlotWidget* UValhallaGameHUDWidget::MakeCell(EValhallaHUDSlotKind Ki
 	Cell->Setup(Size,
 		bActionBar ? Srgb(0x1a, 0x1a, 0x1a) : Srgb(0x2a, 0x2a, 0x3e),
 		bActionBar ? Srgb(0x66, 0x66, 0x66) : Srgb(0x33, 0x33, 0x55),
-		HighlightColour);
+		EffectiveHighlightColour());
 	if (!Cell->HasDesignerTree())
 	{
 		Cell->SetFrameArt(FindUiTexture(TEXT("T_UI_Slot")));
@@ -1314,6 +1346,11 @@ UValhallaGameHUDWidget::UValhallaGameHUDWidget(const FObjectInitializer& ObjectI
 	ChatPartyColour = Srgb(0x5a, 0xd8, 0xff);
 	ChatSystemColour = Srgb(0xff, 0xaa, 0x44);
 	ChatOpenBackground = Srgb(0x0a, 0x0a, 0x1a, 0.72f);
+	// B-21: white leaves the designer's panel colours as they are.
+	PanelTintColour = FLinearColor::White;
+	// B-21 step 4: WBP_GameHUD's Class Defaults name WBP_OptionsMenu; the C++
+	// class alone has no layout (it warns and shows nothing).
+	OptionsMenuClass = UValhallaOptionsMenuWidget::StaticClass();
 }
 
 const TArray<FName>& UValhallaGameHUDWidget::GetRequiredPanelNames()
@@ -1342,6 +1379,7 @@ const TArray<FName>& UValhallaGameHUDWidget::GetOptionalPanelNames()
 		TEXT("TooltipPanel"), TEXT("TooltipName"), TEXT("TooltipBody"),
 		TEXT("DropConfirmPanel"), TEXT("DropText"),
 		TEXT("DeathOverlay"), TEXT("DeathText"),
+		TEXT("OptionsButton"),
 	};
 	return Names;
 }
@@ -1696,6 +1734,7 @@ void UValhallaGameHUDWidget::BindDesignerPanels()
 	EnsureDesignerPart(DropText, TEXT("DropText"));
 	EnsureDesignerPart(DeathOverlay, TEXT("DeathOverlay"), UBorder::StaticClass());
 	EnsureDesignerPart(DeathText, TEXT("DeathText"));
+	EnsureDesignerPart(OptionsButton, TEXT("OptionsButton"));
 
 	// The Tick / Toggle code works off these, whichever path filled them.
 	ActionBarRoot = ActionBarRow;
@@ -1762,11 +1801,11 @@ void UValhallaGameHUDWidget::PopulateDesignerPanels()
 	// C++ gives it its fill colour. The numbers only size a code-built bar
 	// (a bare UValhallaHUDBarWidget placed in the designer).
 	const FLinearColor BarBackground = FLinearColor::Black;
-	HpBar->Setup(200.f, 12.f, HpHighColour, BarBackground, 0.7f, /*bWithOverlay=*/true, 7);
-	ManaBar->Setup(200.f, 12.f, ManaColour, BarBackground, 0.7f, false, 7);
-	CastBar->Setup(260.f, 16.f, CastBarColour, BarBackground, 0.6f, false, 8);
+	HpBar->Setup(200.f, 12.f, EffectiveHpHighColour(), BarBackground, 0.7f, /*bWithOverlay=*/true, 7);
+	ManaBar->Setup(200.f, 12.f, EffectiveManaColour(), BarBackground, 0.7f, false, 7);
+	CastBar->Setup(260.f, 16.f, EffectiveCastBarColour(), BarBackground, 0.6f, false, 8);
 	CastBar->SetLabelColour(CastBarTextColour);
-	TargetHpBar->Setup(240.f, 14.f, HpHighColour, BarBackground, 0.7f, false, 8);
+	TargetHpBar->Setup(240.f, 14.f, EffectiveHpHighColour(), BarBackground, 0.7f, false, 8);
 	XpBar->Setup(194.f, 4.f, Srgb(0xff, 0xaa, 0x00), BarBackground, 0.8f, false, 6);
 	XpBar->SetToolTipText(AsText(TEXT("Experience to the next level")));
 
@@ -2100,18 +2139,9 @@ int32 UValhallaGameHUDWidget::ApplyUserLayout(const FValhallaUserUISettings& Set
 		State->bUserHidden = bHide;
 		State->bUserSet = Resolved.bSet;
 		Moved += Resolved.bSet ? 1 : 0;
-
-		// Background opacity: the designer's brush alpha times PanelOpacity.
-		for (const TPair<TWeakObjectPtr<UBorder>, FLinearColor>& Background : State->Backgrounds)
-		{
-			if (UBorder* Border = Background.Key.Get())
-			{
-				FLinearColor Colour = Background.Value;
-				Colour.A *= AppliedPanelOpacity;
-				Border->SetBrushColor(Colour);
-			}
-		}
 	}
+	// Background opacity (and B-21 step 5's tint): the designer's brush colours.
+	ApplyPanelBackgrounds();
 	if (bChatOpen && ChatPanel)
 	{
 		ChatPanel->SetBrushColor(ChatOpenBrush());
@@ -2119,19 +2149,44 @@ int32 UValhallaGameHUDWidget::ApplyUserLayout(const FValhallaUserUISettings& Set
 	LayoutForWidth = -1.f; // TickLayout measures again
 	EnforceUserHiddenPanels();
 
-	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: player layout applied (%d panel(s) placed, UI scale %.2f, panel opacity %.2f)."),
-		Moved, AppliedUiScale, AppliedPanelOpacity);
+	// B-21 step 3: unlocked = edit mode (the overlays), locked = none.
+	SetEditMode(!Settings.bLocked);
+
+	// A slider drag in the options menu applies every frame; log what changed only.
+	const FString Summary = FString::Printf(TEXT("%d panel(s) placed, UI scale %.2f, panel opacity %.2f, %s"),
+		Moved, AppliedUiScale, AppliedPanelOpacity, Settings.bLocked ? TEXT("locked") : TEXT("unlocked"));
+	if (LastLayoutLog != Summary)
+	{
+		LastLayoutLog = Summary;
+		UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: player layout applied (%s)."), *Summary);
+	}
 	return Moved;
 }
 
-void UValhallaGameHUDWidget::ApplyUserStyle(const FValhallaUserUISettings& /*Settings*/)
+void UValhallaGameHUDWidget::ApplyPanelBackgrounds()
 {
-	// B-21 step 5 (live style): Colours over the "Valhalla|HUD Style"
-	// properties, chat font / lines / timestamps, log filters, nameplates.
+	const FLinearColor Tint = EffectivePanelTint();
+	for (TPair<FName, FPanelState>& Entry : PanelStates)
+	{
+		for (const TPair<TWeakObjectPtr<UBorder>, FLinearColor>& Background : Entry.Value.Backgrounds)
+		{
+			if (UBorder* Border = Background.Key.Get())
+			{
+				const FLinearColor& Designer = Background.Value;
+				Border->SetBrushColor(FLinearColor(Designer.R * Tint.R, Designer.G * Tint.G, Designer.B * Tint.B,
+					Designer.A * Tint.A * AppliedPanelOpacity));
+			}
+		}
+	}
 }
 
 void UValhallaGameHUDWidget::EnforceUserHiddenPanels()
 {
+	// Edit mode shows hidden panels faintly instead (TickEditMode).
+	if (bEditMode)
+	{
+		return;
+	}
 	for (TPair<FName, FPanelState>& Entry : PanelStates)
 	{
 		UWidget* Widget = Entry.Value.Widget.Get();
@@ -2163,6 +2218,10 @@ void UValhallaGameHUDWidget::HandleUserSettingsChanged(const FValhallaUserUISett
 	}
 	ApplyUserLayout(Settings);
 	ApplyUserStyle(Settings);
+	if (OptionsMenu)
+	{
+		OptionsMenu->SyncFromSettings(Settings);
+	}
 }
 
 FLinearColor UValhallaGameHUDWidget::ChatOpenBrush() const
@@ -2210,7 +2269,7 @@ void UValhallaGameHUDWidget::AddActionCells(UPanelWidget* Row)
 	for (int32 SlotNumber = 1; SlotNumber <= ValhallaActionBarSlots; ++SlotNumber)
 	{
 		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Action, SlotNumber, ActionSlotSize);
-		Cell->SetKeyLabel(FString::FromInt(SlotNumber), KeyLabelColour);
+		Cell->SetKeyLabel(FString::FromInt(SlotNumber), EffectiveKeyLabelColour());
 		if (UHorizontalBoxSlot* CellSlot = Cast<UHorizontalBoxSlot>(Row->AddChild(Cell)))
 		{
 			CellSlot->SetPadding(FMargin(SlotNumber == 1 ? 0.f : ActionSlotGap, 0.f, 0.f, 0.f));
@@ -2242,9 +2301,9 @@ void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 	for (int32 Index = 0; Index < ValhallaPartyMaxMembers; ++Index)
 	{
 		UVerticalBox* Row = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		UTextBlock* Name = MakeText(FString(), 8, ValueColour, false);
+		UTextBlock* Name = MakeText(FString(), 8, EffectiveValueColour(), false);
 		Row->AddChildToVerticalBox(Name);
-		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, HpHighColour, FLinearColor::Black, 0.7f, false, 6);
+		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, EffectiveHpHighColour(), FLinearColor::Black, 0.7f, false, 6);
 		Row->AddChildToVerticalBox(Bar);
 		if (UVerticalBoxSlot* RowSlot = Cast<UVerticalBoxSlot>(Column->AddChild(Row)))
 		{
@@ -2283,7 +2342,7 @@ void UValhallaGameHUDWidget::AddEquipRows(UPanelWidget* Column)
 		UHorizontalBox* Row = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
 		UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Equip, Index, EquipSlotSize);
 		Row->AddChildToHorizontalBox(Cell);
-		UTextBlock* Label = MakeText(FString(), 7, LabelColour);
+		UTextBlock* Label = MakeText(FString(), 7, EffectiveLabelColour());
 		UHorizontalBoxSlot* LabelSlot = Row->AddChildToHorizontalBox(Label);
 		LabelSlot->SetVerticalAlignment(VAlign_Center);
 		LabelSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
@@ -2381,11 +2440,12 @@ void UValhallaGameHUDWidget::BuildWorldLayer()
 		Back->SetPadding(FMargin(NP.BgPaddingX, NP.BgPaddingY));
 		UVerticalBox* Column = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 		Back->SetContent(Column);
-		Plate.Name = MakeText(FString(), PxToSlate(NP.FontSize), NP.Color,
+		// B-21 step 5: the player's nameplate font size when set.
+		Plate.Name = MakeText(FString(), PxToSlate(EffectiveNameplateFontPx()), NP.Color,
 			NP.FontWeight.Equals(TEXT("bold"), ESearchCase::IgnoreCase), NP.StrokeThickness * 0.5f);
 		Plate.Name->SetJustification(ETextJustify::Center);
 		Column->AddChildToVerticalBox(Plate.Name)->SetHorizontalAlignment(HAlign_Center);
-		Plate.Bar = MakeBar(60.f, 4.f, HpLowColour, FLinearColor::Black, 0.8f, false, 6);
+		Plate.Bar = MakeBar(60.f, 4.f, EffectiveHpLowColour(), FLinearColor::Black, 0.8f, false, 6);
 		Plate.Bar->SetLabelVisible(false);
 		Column->AddChildToVerticalBox(Plate.Bar)->SetHorizontalAlignment(HAlign_Center);
 		Plate.Root = Back;
@@ -2397,6 +2457,8 @@ void UValhallaGameHUDWidget::BuildWorldLayer()
 		PooledWidgets.Add(Back);
 		Plates.Add(Plate);
 	}
+
+	AppliedNameplateFontPx = EffectiveNameplateFontPx();
 
 	constexpr int32 FloaterPool = 40;
 	for (int32 Index = 0; Index < FloaterPool; ++Index)
@@ -2442,6 +2504,8 @@ void UValhallaGameHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 	TickConfigWatcher(InDeltaTime);
 	// B-21: last, so a panel the player hid stays hidden whatever the Tick code set.
 	EnforceUserHiddenPanels();
+	// B-21 step 3: a drag's commit, and (unlocked) the edit overlays and ghosts.
+	TickEditMode();
 
 	if (bCombatLogDirty)
 	{
@@ -2499,7 +2563,7 @@ void UValhallaGameHUDWidget::TickVitals()
 	const float HpFrac = PS->MaxHp > 0.f ? PS->Hp / PS->MaxHp : 0.f;
 	HpBar->SetFraction(HpFrac);
 	// GameScene.ts:2156 — green over half, orange over a quarter, red below.
-	HpBar->SetFillColour(HpFrac > 0.5f ? HpHighColour : (HpFrac > 0.25f ? HpMidColour : HpLowColour));
+	HpBar->SetFillColour(HpColourFor(HpFrac));
 	HpBar->SetOverlayFraction(PS->MaxHp > 0.f ? PS->ShieldHp / PS->MaxHp : 0.f);
 	HpBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Hp, PS->MaxHp));
 
@@ -2509,13 +2573,13 @@ void UValhallaGameHUDWidget::TickVitals()
 	if (bMana)
 	{
 		ManaBar->SetFraction(PS->Mana / PS->MaxMana);
-		ManaBar->SetFillColour(ManaColour);
+		ManaBar->SetFillColour(EffectiveManaColour());
 		ManaBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Mana, PS->MaxMana));
 	}
 	else if (bEnergy)
 	{
 		ManaBar->SetFraction(PS->Energy / PS->MaxEnergy);
-		ManaBar->SetFillColour(EnergyColour);
+		ManaBar->SetFillColour(EffectiveEnergyColour());
 		ManaBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), PS->Energy, PS->MaxEnergy));
 	}
 
@@ -2620,7 +2684,7 @@ void UValhallaGameHUDWidget::TickTargetFrame()
 
 	const float Frac = Info.MaxHp > 0.0 ? static_cast<float>(Info.Hp / Info.MaxHp) : 0.f;
 	TargetHpBar->SetFraction(Frac);
-	TargetHpBar->SetFillColour(Frac > 0.5f ? HpHighColour : (Frac > 0.25f ? HpMidColour : HpLowColour));
+	TargetHpBar->SetFillColour(HpColourFor(Frac));
 	TargetHpBar->SetLabel(FString::Printf(TEXT("%.0f / %.0f"), Info.Hp, Info.MaxHp));
 
 	// Buffs: an NPC replicates its own censored view (SyncedBuffs); a player's
@@ -2720,7 +2784,7 @@ void UValhallaGameHUDWidget::TickPartyFrame()
 			Member ? *FString::Printf(TEXT("  Lv %d"), Member->Level) : TEXT(""))));
 		const float Frac = Member && Member->MaxHp > 0.f ? Member->Hp / Member->MaxHp : 0.f;
 		PartyBars[Index]->SetFraction(Frac);
-		PartyBars[Index]->SetFillColour(Frac > 0.5f ? HpHighColour : (Frac > 0.25f ? HpMidColour : HpLowColour));
+		PartyBars[Index]->SetFillColour(HpColourFor(Frac));
 		PartyBars[Index]->SetLabel(Member ? FString::Printf(TEXT("%.0f/%.0f"), Member->Hp, Member->MaxHp) : FString());
 	}
 }
@@ -2742,10 +2806,16 @@ void UValhallaGameHUDWidget::TickChat(float /*DeltaTime*/)
 		for (int32 Index = 0; Index < New; ++Index)
 		{
 			ChatArrivalTimes.Add(ChatSeenCount < 0 ? Now - 60.0 : Now);
+			// B-21: the wall clock for "[hh:mm] " (unknown for lines from before this HUD).
+			ChatArrivalClock.Add(ChatSeenCount < 0 ? FDateTime::MinValue() : FDateTime::Now());
 		}
 		while (ChatArrivalTimes.Num() > PC->GetChatLog().Num())
 		{
 			ChatArrivalTimes.RemoveAt(0);
+		}
+		while (ChatArrivalClock.Num() > PC->GetChatLog().Num())
+		{
+			ChatArrivalClock.RemoveAt(0);
 		}
 		ChatSeenCount = Received;
 		RefreshChatLines();
@@ -2777,14 +2847,23 @@ void UValhallaGameHUDWidget::RefreshChatLines()
 	}
 
 	const TArray<FValhallaChatMessage>& Log = PC->GetChatLog();
-	// ui-config chat.maxMessages while typing, chat.visibleLines while idle.
-	const int32 Show = FMath::Min(Log.Num(), FMath::Max(0, bChatOpen ? Config.Chat.MaxMessages : Config.Chat.VisibleLines));
+	// ui-config chat.maxMessages while typing, chat.visibleLines while idle
+	// (B-21: the player's idle line count and font size win when set).
+	const int32 Show = FMath::Min(Log.Num(), FMath::Max(0, bChatOpen ? Config.Chat.MaxMessages : EffectiveChatVisibleLines()));
+	const int32 FontSize = EffectiveChatFontSize();
+	const int32 ClockOffset = Log.Num() - ChatArrivalClock.Num();
 
 	ChatScroll->ClearChildren();
 	ChatLineWidgets.Reset();
 	for (int32 Index = Log.Num() - Show; Index < Log.Num(); ++Index)
 	{
-		UTextBlock* Line = MakeText(FormatChatLine(Log[Index]), ChatFontSize, ChatColour(Log[Index].Channel), false, 1.f);
+		FString Text = FormatChatLine(Log[Index]);
+		const int32 ClockIndex = Index - ClockOffset;
+		if (bChatTimestamps && ChatArrivalClock.IsValidIndex(ClockIndex) && ChatArrivalClock[ClockIndex] > FDateTime::MinValue())
+		{
+			Text = FString::Printf(TEXT("[%02d:%02d] %s"), ChatArrivalClock[ClockIndex].GetHour(), ChatArrivalClock[ClockIndex].GetMinute(), *Text);
+		}
+		UTextBlock* Line = MakeText(Text, FontSize, ChatColour(Log[Index].Channel), false, 1.f);
 		Line->SetAutoWrapText(true);
 		ChatScroll->AddChild(Line);
 		ChatLineWidgets.Add(Line);
@@ -2796,11 +2875,11 @@ FLinearColor UValhallaGameHUDWidget::ChatColour(EValhallaChatChannel Channel) co
 {
 	switch (Channel)
 	{
-	case EValhallaChatChannel::General: return ChatGeneralColour;
-	case EValhallaChatChannel::World:   return ChatWorldColour;
-	case EValhallaChatChannel::Whisper: return ChatWhisperColour;
-	case EValhallaChatChannel::Party:   return ChatPartyColour;
-	default:                            return ChatSystemColour;
+	case EValhallaChatChannel::General: return StyleColour(TEXT("ChatGeneralColour"), ChatGeneralColour);
+	case EValhallaChatChannel::World:   return StyleColour(TEXT("ChatWorldColour"), ChatWorldColour);
+	case EValhallaChatChannel::Whisper: return StyleColour(TEXT("ChatWhisperColour"), ChatWhisperColour);
+	case EValhallaChatChannel::Party:   return StyleColour(TEXT("ChatPartyColour"), ChatPartyColour);
+	default:                            return StyleColour(TEXT("ChatSystemColour"), ChatSystemColour);
 	}
 }
 
@@ -2904,7 +2983,7 @@ void UValhallaGameHUDWidget::TickInventoryPanel()
 		{
 			Cell->Clear();
 			EquipLabels[Cell->Index]->SetText(AsText(FString::Printf(TEXT("%s  —"), *SlotName)));
-			EquipLabels[Cell->Index]->SetColorAndOpacity(FSlateColor(LabelColour));
+			EquipLabels[Cell->Index]->SetColorAndOpacity(FSlateColor(EffectiveLabelColour()));
 			continue;
 		}
 		Cell->bFilled = true;
@@ -3012,7 +3091,7 @@ void UValhallaGameHUDWidget::TickLayout()
 	}
 	// B-21: the player placed the chat; leave it where they put it.
 	const FPanelState* ChatState = PanelStates.Find(TEXT("Chat"));
-	if (ChatState && ChatState->bUserSet)
+	if ((ChatState && ChatState->bUserSet) || DragKey == TEXT("Chat") || PendingCommitKey == TEXT("Chat"))
 	{
 		return;
 	}
@@ -3120,7 +3199,7 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 		Plate.Name->SetText(AsText(Name));
 		const float Frac = MaxHp > 0.f ? Hp / MaxHp : 0.f;
 		Plate.Bar->SetFraction(Frac);
-		Plate.Bar->SetFillColour(bHostile ? HpLowColour : HpHighColour);
+		Plate.Bar->SetFillColour(bHostile ? EffectiveHpLowColour() : EffectiveHpHighColour());
 		if (UCanvasPanelSlot* PlateSlot = Cast<UCanvasPanelSlot>(Plate.Root->Slot))
 		{
 			PlateSlot->SetPosition(Screen + FVector2D(0.f, ScreenOffset));
@@ -3128,14 +3207,15 @@ void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 		Plate.Root->SetVisibility(ESlateVisibility::HitTestInvisible);
 	};
 
-	for (TActorIterator<AValhallaNPC> It(World); It; ++It)
+	// B-21 step 5: the player's nameplate switches.
+	for (TActorIterator<AValhallaNPC> It(World); It && bShowNpcNameplates; ++It)
 	{
 		if (It->IsAlive())
 		{
 			ShowPlate(*It, It->DisplayName, It->Hp, It->MaxHp, true);
 		}
 	}
-	for (TActorIterator<AValhallaCharacter> It(World); It; ++It)
+	for (TActorIterator<AValhallaCharacter> It(World); It && bShowPlayerNameplates; ++It)
 	{
 		const AValhallaPlayerState* Other = It->GetValhallaPlayerState();
 		if (*It != OwnPawn && Other && Other->IsAlive())
@@ -3405,14 +3485,53 @@ bool UValhallaGameHUDWidget::ToggleLogFilter(FName Key)
 		UE_LOG(LogValhallaHUD, Warning, TEXT("combat log: no filter '%s'."), *Key.ToString());
 		return false;
 	}
-	*bOn = !*bOn;
+	return SetLogFilter(Key, !*bOn);
+}
+
+bool UValhallaGameHUDWidget::SetLogFilter(FName Key, bool bOnNow)
+{
+	bool* bOn = LogFilters.Find(Key);
+	if (!bOn)
+	{
+		UE_LOG(LogValhallaHUD, Warning, TEXT("combat log: no filter '%s'."), *Key.ToString());
+		return false;
+	}
+	*bOn = bOnNow;
 	bCombatLogDirty = true;
-	UE_LOG(LogValhallaHUD, Log, TEXT("combat log filter %s -> %s"), *Key.ToString(), *bOn ? TEXT("on") : TEXT("off"));
+	UE_LOG(LogValhallaHUD, Log, TEXT("combat log filter %s -> %s"), *Key.ToString(), bOnNow ? TEXT("on") : TEXT("off"));
+	// B-21 step 5: saved with the player's settings (restored at the next login).
+	if (UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		UserSettings->Mutate([Key, bOnNow](FValhallaUserUISettings& S) { S.LogFilters.Add(Key, bOnNow); });
+	}
 	return true;
+}
+
+bool UValhallaGameHUDWidget::IsLogFilterOn(FName Key) const
+{
+	const bool* bOn = LogFilters.Find(Key);
+	return !bOn || *bOn;
+}
+
+FString UValhallaGameHUDWidget::GetLogFilterLabel(FName Key)
+{
+	for (const FFilterInfo& Info : FilterInfos())
+	{
+		if (Key == FName(Info.Key))
+		{
+			return Info.Label;
+		}
+	}
+	return Key.ToString();
 }
 
 void UValhallaGameHUDWidget::SpawnFloater(const FValhallaCombatEvent& Event)
 {
+	// B-21 step 5: the player turned floating combat text off.
+	if (!bShowFloatingText)
+	{
+		return;
+	}
 	FString Text;
 	FLinearColor Colour = FLinearColor::White;
 	int32 Size = 14;
@@ -3514,12 +3633,12 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 			UVerticalBox* Text = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 			Text->AddChildToVerticalBox(MakeText(FString::Printf(TEXT("%s%s"), *Skill->Name,
 				bLocked ? *FString::Printf(TEXT("   (Lv %d)"), Skill->LevelRequired) : TEXT("")), 8,
-				bLocked ? LabelColour : ValueColour, true));
+				bLocked ? EffectiveLabelColour() : EffectiveValueColour(), true));
 			const TCHAR* Resource = Skill->ResourceType == EValhallaResourceType::Mana ? TEXT("mana")
 				: (Skill->ResourceType == EValhallaResourceType::Energy ? TEXT("energy") : TEXT(""));
 			Text->AddChildToVerticalBox(MakeText(FString::Printf(TEXT("%s%s  cast %.1fs  cd %.0fs"),
 				Skill->ResourceCost > 0.f ? *FString::Printf(TEXT("%.0f %s"), Skill->ResourceCost, Resource) : TEXT("free"), TEXT(""),
-				Skill->CastTimeMs / 1000.f, Skill->CooldownMs / 1000.f), 7, LabelColour));
+				Skill->CastTimeMs / 1000.f, Skill->CooldownMs / 1000.f), 7, EffectiveLabelColour()));
 			UHorizontalBoxSlot* TextSlot = Row->AddChildToHorizontalBox(Text);
 			TextSlot->SetPadding(FMargin(6.f, 0.f, 0.f, 0.f));
 			TextSlot->SetVerticalAlignment(VAlign_Center);
@@ -3852,6 +3971,9 @@ void UValhallaGameHUDWidget::HandleButton(EValhallaHUDButton Action, int32 Index
 	case EValhallaHUDButton::SkillsClose:
 		if (bSkillsOpen) { ToggleSkills(); }
 		break;
+	case EValhallaHUDButton::Options:
+		ToggleOptions();
+		break;
 	default:
 		break;
 	}
@@ -3914,6 +4036,15 @@ bool UValhallaGameHUDWidget::IsLootPanelOpen() const
 
 bool UValhallaGameHUDWidget::CloseTopmost()
 {
+	// B-21 step 4: the options menu first (its colour editor before the menu).
+	if (IsOptionsOpen())
+	{
+		if (!OptionsMenu->CloseSubPanel())
+		{
+			CloseOptions();
+		}
+		return true;
+	}
 	if (bChatOpen) { CloseChat(); return true; }
 	if (DropRoot->GetVisibility() != ESlateVisibility::Collapsed) { HandleButton(EValhallaHUDButton::DropCancel, 0); return true; }
 	if (FilterMenu->GetVisibility() != ESlateVisibility::Collapsed) { FilterMenu->SetVisibility(ESlateVisibility::Collapsed); return true; }
@@ -4256,6 +4387,13 @@ void UValhallaGameHUDWidget::SubmitChatLine(const FString& Line)
 
 FReply UValhallaGameHUDWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent)
 {
+	// B-21: a slider or check box in the options menu has keyboard focus, so
+	// Escape reaches the HUD before the player controller's binding.
+	if (InKeyEvent.GetKey() == EKeys::Escape && IsOptionsOpen() && !bChatOpen)
+	{
+		CloseTopmost();
+		return FReply::Handled();
+	}
 	if (bChatOpen)
 	{
 		if (InKeyEvent.GetKey() == EKeys::Tab)
@@ -4272,4 +4410,1004 @@ FReply UValhallaGameHUDWidget::NativeOnPreviewKeyDown(const FGeometry& InGeometr
 		}
 	}
 	return Super::NativeOnPreviewKeyDown(InGeometry, InKeyEvent);
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  B-21 step 5 — the player's style (colours, chat, nameplates)
+// ═════════════════════════════════════════════════════════════════════════════
+
+const TArray<FValhallaStyleColourKey>& UValhallaGameHUDWidget::GetStyleColourKeys()
+{
+	// Each key is a "Valhalla|HUD Style" FLinearColor property (and the
+	// FValhallaUserUISettings::Colours key); the options menu lists them in
+	// this order.
+	static const TArray<FValhallaStyleColourKey> Keys = {
+		{ TEXT("HpHighColour"),      TEXT("HP, over half") },
+		{ TEXT("HpMidColour"),       TEXT("HP, over a quarter") },
+		{ TEXT("HpLowColour"),       TEXT("HP, low (and hostile nameplates)") },
+		{ TEXT("ManaColour"),        TEXT("Mana") },
+		{ TEXT("EnergyColour"),      TEXT("Energy") },
+		{ TEXT("CastBarColour"),     TEXT("Cast bar") },
+		{ TEXT("HighlightColour"),   TEXT("Highlight (selected cells, edit outlines)") },
+		{ TEXT("KeyLabelColour"),    TEXT("Action bar key labels") },
+		{ TEXT("LabelColour"),       TEXT("Labels") },
+		{ TEXT("ValueColour"),       TEXT("Names and values") },
+		{ TEXT("ChatGeneralColour"), TEXT("Chat: general") },
+		{ TEXT("ChatWorldColour"),   TEXT("Chat: world") },
+		{ TEXT("ChatWhisperColour"), TEXT("Chat: whisper") },
+		{ TEXT("ChatPartyColour"),   TEXT("Chat: party") },
+		{ TEXT("ChatSystemColour"),  TEXT("Chat: system") },
+		{ TEXT("PanelTintColour"),   TEXT("Panel tint") },
+	};
+	return Keys;
+}
+
+const FValhallaStyleColourKey* UValhallaGameHUDWidget::FindStyleColourKey(FName Key)
+{
+	return GetStyleColourKeys().FindByPredicate([Key](const FValhallaStyleColourKey& Info) { return Info.Key == Key; });
+}
+
+FLinearColor UValhallaGameHUDWidget::GetDefaultColour(FName Key) const
+{
+	// The property itself: it is never written at runtime, so it is the
+	// class's default (WBP_GameHUD's Class Defaults).
+	const FStructProperty* Property = FindFProperty<FStructProperty>(GetClass(), Key);
+	if (Property && Property->Struct == TBaseStructure<FLinearColor>::Get())
+	{
+		return *Property->ContainerPtrToValuePtr<FLinearColor>(this);
+	}
+	return FLinearColor(1.f, 0.f, 1.f, 1.f);
+}
+
+FLinearColor UValhallaGameHUDWidget::GetEffectiveColour(FName Key) const
+{
+	const FLinearColor* Override = ColourOverrides.Find(Key);
+	return Override ? *Override : GetDefaultColour(Key);
+}
+
+FLinearColor UValhallaGameHUDWidget::StyleColour(FName Key, const FLinearColor& Default) const
+{
+	const FLinearColor* Override = ColourOverrides.Find(Key);
+	return Override ? *Override : Default;
+}
+
+FLinearColor UValhallaGameHUDWidget::EffectiveHpHighColour() const    { return StyleColour(TEXT("HpHighColour"), HpHighColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveHpMidColour() const     { return StyleColour(TEXT("HpMidColour"), HpMidColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveHpLowColour() const     { return StyleColour(TEXT("HpLowColour"), HpLowColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveManaColour() const      { return StyleColour(TEXT("ManaColour"), ManaColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveEnergyColour() const    { return StyleColour(TEXT("EnergyColour"), EnergyColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveCastBarColour() const   { return StyleColour(TEXT("CastBarColour"), CastBarColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveHighlightColour() const { return StyleColour(TEXT("HighlightColour"), HighlightColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveKeyLabelColour() const  { return StyleColour(TEXT("KeyLabelColour"), KeyLabelColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveLabelColour() const     { return StyleColour(TEXT("LabelColour"), LabelColour); }
+FLinearColor UValhallaGameHUDWidget::EffectiveValueColour() const     { return StyleColour(TEXT("ValueColour"), ValueColour); }
+FLinearColor UValhallaGameHUDWidget::EffectivePanelTint() const       { return StyleColour(TEXT("PanelTintColour"), PanelTintColour); }
+
+FLinearColor UValhallaGameHUDWidget::HpColourFor(float Fraction) const
+{
+	// GameScene.ts:2156 — green over half, orange over a quarter, red below.
+	return Fraction > 0.5f ? EffectiveHpHighColour() : (Fraction > 0.25f ? EffectiveHpMidColour() : EffectiveHpLowColour());
+}
+
+int32 UValhallaGameHUDWidget::EffectiveChatFontSize() const
+{
+	return UserChatFontSize > 0 ? FMath::Clamp(UserChatFontSize, 6, 24) : ChatFontSize;
+}
+
+int32 UValhallaGameHUDWidget::EffectiveChatVisibleLines() const
+{
+	return UserChatVisibleLines > 0 ? UserChatVisibleLines : Config.Chat.VisibleLines;
+}
+
+int32 UValhallaGameHUDWidget::EffectiveNameplateFontPx() const
+{
+	return UserNameplateFontSize > 0 ? UserNameplateFontSize : Config.Nameplates.FontSize;
+}
+
+void UValhallaGameHUDWidget::RestyleNameplates()
+{
+	const int32 Px = EffectiveNameplateFontPx();
+	if (Px == AppliedNameplateFontPx)
+	{
+		return;
+	}
+	AppliedNameplateFontPx = Px;
+	const FValhallaUIConfig::FNameplates& NP = Config.Nameplates;
+	for (FPlate& Plate : Plates)
+	{
+		if (Plate.Name)
+		{
+			Plate.Name->SetFont(HudFont(PxToSlate(Px), NP.FontWeight.Equals(TEXT("bold"), ESearchCase::IgnoreCase), NP.StrokeThickness * 0.5f));
+		}
+	}
+}
+
+void UValhallaGameHUDWidget::ApplyUserStyle(const FValhallaUserUISettings& Settings)
+{
+	// Record what is in force: the Effective* getters read these.
+	ColourOverrides.Reset();
+	for (const FValhallaStyleColourKey& Info : GetStyleColourKeys())
+	{
+		if (const FLinearColor* Colour = Settings.Colours.Find(Info.Key))
+		{
+			ColourOverrides.Add(Info.Key, *Colour);
+		}
+	}
+	UserChatFontSize = Settings.ChatFontSize;
+	UserChatVisibleLines = Settings.ChatVisibleLines;
+	bChatTimestamps = Settings.bChatTimestamps;
+	bShowNpcNameplates = Settings.bShowNpcNameplates;
+	bShowPlayerNameplates = Settings.bShowPlayerNameplates;
+	bShowFloatingText = Settings.bFloatingCombatText;
+	UserNameplateFontSize = Settings.NameplateFontSize;
+
+	// The combat log's filters: what the player saved (a key not saved is shown).
+	for (const FName Key : GetLogFilterKeys())
+	{
+		const bool* bSaved = Settings.LogFilters.Find(Key);
+		const bool bOn = !bSaved || *bSaved;
+		bool& Current = LogFilters.FindOrAdd(Key);
+		if (Current != bOn)
+		{
+			Current = bOn;
+			bCombatLogDirty = true;
+		}
+	}
+
+	if (!RootCanvas)
+	{
+		return;
+	}
+
+	// Live widgets. Bars and nameplates take their colours on the next tick.
+	const FLinearColor Highlight = EffectiveHighlightColour();
+	const FLinearColor KeyLabel = EffectiveKeyLabelColour();
+	for (UValhallaHUDSlotWidget* Cell : ActionCells)
+	{
+		Cell->SetHighlightColour(Highlight);
+		Cell->SetKeyLabel(FString::FromInt(Cell->Index), KeyLabel);
+	}
+	for (const TArray<TObjectPtr<UValhallaHUDSlotWidget>>* Cells : { &InventoryCells, &EquipCells, &LootCells })
+	{
+		for (UValhallaHUDSlotWidget* Cell : *Cells)
+		{
+			Cell->SetHighlightColour(Highlight);
+		}
+	}
+	SkillsBuiltForClass = NAME_None; // the skills pane's rows are remade with the new colours
+	if (CastBar)
+	{
+		CastBar->SetFillColour(EffectiveCastBarColour());
+	}
+	for (UTextBlock* Name : PartyNames)
+	{
+		Name->SetColorAndOpacity(FSlateColor(EffectiveValueColour()));
+	}
+	ApplyPanelBackgrounds();
+	for (const TPair<FName, TObjectPtr<UValhallaPanelEditOverlay>>& Entry : EditOverlays)
+	{
+		if (Entry.Value)
+		{
+			Entry.Value->SetHighlight(Highlight);
+		}
+	}
+
+	// The chat is redrawn only when something it shows changed.
+	const FString ChatStyle = FString::Printf(TEXT("%d|%d|%d|%s|%s|%s|%s|%s"), EffectiveChatFontSize(), EffectiveChatVisibleLines(), bChatTimestamps ? 1 : 0,
+		*FValhallaUserUISettings::ColourToHex(ChatColour(EValhallaChatChannel::General)), *FValhallaUserUISettings::ColourToHex(ChatColour(EValhallaChatChannel::World)),
+		*FValhallaUserUISettings::ColourToHex(ChatColour(EValhallaChatChannel::Whisper)), *FValhallaUserUISettings::ColourToHex(ChatColour(EValhallaChatChannel::Party)),
+		*FValhallaUserUISettings::ColourToHex(ChatColour(EValhallaChatChannel::System)));
+	if (ChatStyle != AppliedChatStyle)
+	{
+		AppliedChatStyle = ChatStyle;
+		if (bBuilt)
+		{
+			RefreshChatLines();
+		}
+		if (bChatOpen && ChatChannelText)
+		{
+			ChatChannelText->SetColorAndOpacity(FSlateColor(ChatColour(ChatChannel)));
+		}
+	}
+
+	RestyleNameplates();
+	if (!bShowFloatingText)
+	{
+		for (FFloater& Floater : Floaters)
+		{
+			Floater.StartedAt = -1.0;
+			if (Floater.Text)
+			{
+				Floater.Text->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+	}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  B-21 step 3 — edit mode: the overlays, drag, resize, re-anchor
+// ═════════════════════════════════════════════════════════════════════════════
+
+void UValhallaPanelEditOverlay::NativeOnInitialized()
+{
+	Super::NativeOnInitialized();
+	EnsureTree();
+}
+
+void UValhallaPanelEditOverlay::EnsureTree()
+{
+	if (!WidgetTree)
+	{
+		WidgetTree = NewObject<UWidgetTree>(this, TEXT("EditOverlayTree"));
+	}
+	if (bTreeReady)
+	{
+		return;
+	}
+	bTreeReady = true;
+
+	UOverlay* Root = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass());
+	WidgetTree->RootWidget = Root;
+	Root->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+	// The body: a faint outline over the whole panel. Visible = it takes the press.
+	Outline = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	Outline->SetVisibility(ESlateVisibility::Visible);
+	UOverlaySlot* BodySlot = Root->AddChildToOverlay(Outline);
+	BodySlot->SetHorizontalAlignment(HAlign_Fill);
+	BodySlot->SetVerticalAlignment(VAlign_Fill);
+
+	NameLabel = WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass());
+	NameLabel->SetFont(HudFont(7, true, 1.f));
+	NameLabel->SetVisibility(ESlateVisibility::HitTestInvisible);
+	UOverlaySlot* LabelSlot = Root->AddChildToOverlay(NameLabel);
+	LabelSlot->SetHorizontalAlignment(HAlign_Left);
+	LabelSlot->SetVerticalAlignment(VAlign_Top);
+	LabelSlot->SetPadding(FMargin(4.f, 2.f));
+
+	// The grip, bottom right: always takes the press (resize).
+	USizeBox* GripBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass());
+	GripBox->SetWidthOverride(GripSize);
+	GripBox->SetHeightOverride(GripSize);
+	GripBox->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	Grip = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
+	Grip->SetVisibility(ESlateVisibility::Visible);
+	Grip->SetToolTipText(AsText(TEXT("Drag to resize")));
+	GripBox->SetContent(Grip);
+	UOverlaySlot* GripSlot = Root->AddChildToOverlay(GripBox);
+	GripSlot->SetHorizontalAlignment(HAlign_Right);
+	GripSlot->SetVerticalAlignment(VAlign_Bottom);
+
+	SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+}
+
+void UValhallaPanelEditOverlay::Setup(FName InKey, const FLinearColor& Highlight)
+{
+	EnsureTree();
+	PanelKey = InKey;
+	NameLabel->SetText(AsText(InKey.ToString()));
+	SetHighlight(Highlight);
+}
+
+void UValhallaPanelEditOverlay::SetHighlight(const FLinearColor& Highlight)
+{
+	EnsureTree();
+	// The Highlight colour at half alpha round a barely-there wash.
+	Outline->SetBrush(FSlateRoundedBoxBrush(WithAlpha(Highlight, 0.06f), 3.f, WithAlpha(Highlight, 0.5f), 1.5f));
+	Outline->SetBrushColor(FLinearColor::White);
+	Grip->SetBrush(FSlateRoundedBoxBrush(WithAlpha(Highlight, 0.85f), 2.f, FLinearColor(0.f, 0.f, 0.f, 0.8f), 1.f));
+	Grip->SetBrushColor(FLinearColor::White);
+	NameLabel->SetColorAndOpacity(FSlateColor(WithAlpha(Highlight, 0.8f)));
+}
+
+void UValhallaPanelEditOverlay::SetBodyHitTestable(bool bHitTestable)
+{
+	bBodyHitTestable = bHitTestable;
+	if (Outline)
+	{
+		Outline->SetVisibility(bHitTestable ? ESlateVisibility::Visible : ESlateVisibility::HitTestInvisible);
+	}
+}
+
+FReply UValhallaPanelEditOverlay::NativeOnMouseButtonDown(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	UValhallaGameHUDWidget* Owner = Hud.Get();
+	if (Owner && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		// The grip's hit area is a few px larger than it draws.
+		const FVector2D Local = FVector2D(InGeometry.AbsoluteToLocal(InMouseEvent.GetScreenSpacePosition()));
+		const FVector2D Size = FVector2D(InGeometry.GetLocalSize());
+		const bool bGrip = Local.X >= Size.X - GripSize - 4.f && Local.Y >= Size.Y - GripSize - 4.f;
+		if (Owner->BeginPanelDrag(PanelKey, Owner->AbsoluteToCanvas(InMouseEvent.GetScreenSpacePosition()), bGrip))
+		{
+			bDragging = true;
+			return FReply::Handled().CaptureMouse(TakeWidget());
+		}
+		return FReply::Handled();
+	}
+	// Right click falls through to the HUD (the combat log's filter menu).
+	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+FReply UValhallaPanelEditOverlay::NativeOnMouseMove(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	UValhallaGameHUDWidget* Owner = Hud.Get();
+	if (bDragging && Owner && HasMouseCapture())
+	{
+		Owner->UpdatePanelDrag(Owner->AbsoluteToCanvas(InMouseEvent.GetScreenSpacePosition()));
+		return FReply::Handled();
+	}
+	return Super::NativeOnMouseMove(InGeometry, InMouseEvent);
+}
+
+FReply UValhallaPanelEditOverlay::NativeOnMouseButtonUp(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (bDragging && InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		bDragging = false;
+		if (UValhallaGameHUDWidget* Owner = Hud.Get())
+		{
+			Owner->UpdatePanelDrag(Owner->AbsoluteToCanvas(InMouseEvent.GetScreenSpacePosition()));
+			Owner->EndPanelDrag(true);
+		}
+		return FReply::Handled().ReleaseMouseCapture();
+	}
+	return Super::NativeOnMouseButtonUp(InGeometry, InMouseEvent);
+}
+
+FReply UValhallaPanelEditOverlay::NativeOnMouseWheel(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	// The panel's scroll box is under the overlay; pass the wheel on.
+	if (UValhallaGameHUDWidget* Owner = Hud.Get())
+	{
+		Owner->ScrollPanelAt(PanelKey, InMouseEvent.GetScreenSpacePosition(), InMouseEvent.GetWheelDelta());
+	}
+	return FReply::Handled();
+}
+
+void UValhallaPanelEditOverlay::NativeOnMouseCaptureLost(const FCaptureLostEvent& CaptureLostEvent)
+{
+	Super::NativeOnMouseCaptureLost(CaptureLostEvent);
+	if (bDragging)
+	{
+		// Lost mid-drag (alt-tab, the window closing): keep where it got to.
+		bDragging = false;
+		if (UValhallaGameHUDWidget* Owner = Hud.Get())
+		{
+			Owner->EndPanelDrag(true);
+		}
+	}
+}
+
+FVector2D UValhallaGameHUDWidget::ChooseAnchor(const FSlateRect& Rect, const FVector2D& Viewport)
+{
+	// Per axis: the near edge (0) when the panel's near edge is closest to it,
+	// the far edge (1) likewise, the centre (0.5) when the panel's centre is
+	// closest to the screen's centre (the tie goes to the centre).
+	auto Axis = [](double Low, double High, double Extent) -> double
+	{
+		const double ToNear = FMath::Abs(Low);
+		const double ToFar = FMath::Abs(Extent - High);
+		const double ToCentre = FMath::Abs((Low + High) * 0.5 - Extent * 0.5);
+		if (ToCentre <= ToNear && ToCentre <= ToFar)
+		{
+			return 0.5;
+		}
+		return ToNear <= ToFar ? 0.0 : 1.0;
+	};
+	return FVector2D(Axis(Rect.Left, Rect.Right, Viewport.X), Axis(Rect.Top, Rect.Bottom, Viewport.Y));
+}
+
+FVector2D UValhallaGameHUDWidget::SnapPanelPosition(const FVector2D& TopLeft, const FVector2D& Size, const FVector2D& Viewport, float Grid, float EdgeSnap)
+{
+	auto Axis = [Grid, EdgeSnap](double Pos, double Extent, double Canvas) -> double
+	{
+		double Out = Grid > 0.f ? FMath::RoundToDouble(Pos / Grid) * Grid : Pos;
+		// The edges win over the grid.
+		if (FMath::Abs(Pos) <= EdgeSnap)
+		{
+			Out = 0.0;
+		}
+		else if (FMath::Abs(Canvas - (Pos + Extent)) <= EdgeSnap)
+		{
+			Out = Canvas - Extent;
+		}
+		// Never off the canvas (a panel wider than it keeps its near edge visible... or its far one).
+		return Extent <= Canvas ? FMath::Clamp(Out, 0.0, Canvas - Extent) : FMath::Clamp(Out, Canvas - Extent, 0.0);
+	};
+	return FVector2D(Axis(TopLeft.X, Size.X, Viewport.X), Axis(TopLeft.Y, Size.Y, Viewport.Y));
+}
+
+FValhallaPanelLayout UValhallaGameHUDWidget::AnchorLayoutForRect(const FSlateRect& Rect, const FVector2D& Viewport, float UiScale)
+{
+	const FVector2D Anchor = ChooseAnchor(Rect, Viewport);
+	const FVector2D TopLeft(Rect.Left, Rect.Top);
+	const FVector2D Size = FVector2D(Rect.GetSize());
+	const float Scale = FMath::IsFinite(UiScale) ? FMath::Max(0.01f, UiScale) : 1.f;
+
+	FValhallaPanelLayout Out;
+	Out.AnchorMin = Out.AnchorMax = Anchor;
+	Out.Alignment = Anchor;
+	// The drawn rectangle's alignment point sits at anchor x canvas + slot
+	// position, whatever the render scale about that point; the slot position
+	// is Position x UiScale (ResolvePanelLayout).
+	Out.Position = (TopLeft + Anchor * Size - Anchor * Viewport) / Scale;
+	Out.Scale = 1.f;
+	Out.bVisible = true;
+	Out.bSet = true;
+	return Out;
+}
+
+bool UValhallaGameHUDWidget::IsInteractiveChild(const UWidget* Widget)
+{
+	// Cells and scroll boxes are not: in edit mode a drag on them moves the
+	// panel (they fill the inventory, chat, log and skills panels, which would
+	// otherwise have almost nothing to grab).
+	return Widget && (Widget->IsA<UButton>() || Widget->IsA<UCheckBox>() || Widget->IsA<USlider>() || Widget->IsA<USpinBox>()
+		|| Widget->IsA<UEditableTextBox>() || Widget->IsA<UEditableText>() || Widget->IsA<UMultiLineEditableTextBox>()
+		|| Widget->IsA<UMultiLineEditableText>() || Widget->IsA<UComboBoxString>());
+}
+
+FVector2D UValhallaGameHUDWidget::AbsoluteToCanvas(const FVector2D& Absolute) const
+{
+	return RootCanvas ? FVector2D(RootCanvas->GetCachedGeometry().AbsoluteToLocal(Absolute)) : Absolute;
+}
+
+FVector2D UValhallaGameHUDWidget::GetCanvasSize() const
+{
+	return RootCanvas ? FVector2D(RootCanvas->GetCachedGeometry().GetLocalSize()) : FVector2D::ZeroVector;
+}
+
+FSlateRect UValhallaGameHUDWidget::GetPanelCanvasRect(FName Key) const
+{
+	const FPanelState* State = PanelStates.Find(Key);
+	const UWidget* Widget = State ? State->Widget.Get() : nullptr;
+	if (!Widget || !RootCanvas)
+	{
+		return FSlateRect(0.f, 0.f, 0.f, 0.f);
+	}
+	const FGeometry& Geometry = Widget->GetCachedGeometry();
+	const FGeometry& CanvasGeometry = RootCanvas->GetCachedGeometry();
+	const FVector2D Size = FVector2D(Geometry.GetLocalSize());
+	if (Size.X < 1.0 || Size.Y < 1.0)
+	{
+		return FSlateRect(0.f, 0.f, 0.f, 0.f);
+	}
+	// Both corners through the accumulated render transform (UiScale x the panel's scale).
+	const FVector2D A = FVector2D(CanvasGeometry.AbsoluteToLocal(Geometry.LocalToAbsolute(FVector2D::ZeroVector)));
+	const FVector2D B = FVector2D(CanvasGeometry.AbsoluteToLocal(Geometry.LocalToAbsolute(Size)));
+	return FSlateRect(static_cast<float>(FMath::Min(A.X, B.X)), static_cast<float>(FMath::Min(A.Y, B.Y)),
+		static_cast<float>(FMath::Max(A.X, B.X)), static_cast<float>(FMath::Max(A.Y, B.Y)));
+}
+
+FVector2D UValhallaGameHUDWidget::CurrentBoxSize(FName Key) const
+{
+	const FPanelState* State = PanelStates.Find(Key);
+	const USizeBox* Box = State ? State->SizeBox.Get() : nullptr;
+	const FValhallaMovablePanel* Info = FindMovablePanel(Key);
+	if (!Box || !Info || Info->Sizing == EValhallaPanelSizing::Scaled)
+	{
+		return FVector2D::ZeroVector;
+	}
+	FVector2D Out(BoxWidth(Box), Info->Sizing == EValhallaPanelSizing::FlowingBox ? BoxHeight(Box) : BoxMaxHeight(Box));
+	// An axis the designer left to its content: what it measures now.
+	if (Out.X <= 0.0) { Out.X = Box->GetDesiredSize().X; }
+	if (Out.Y <= 0.0) { Out.Y = Box->GetDesiredSize().Y; }
+	return Out;
+}
+
+FVector2D UValhallaGameHUDWidget::MinFlowingSize(FName Key)
+{
+	if (Key == TEXT("Chat"))      { return FVector2D(200.0, 60.0); }
+	if (Key == TEXT("CombatLog")) { return FVector2D(160.0, 80.0); }
+	if (Key == TEXT("Skills"))    { return FVector2D(220.0, 120.0); }
+	return FVector2D(120.0, 60.0);
+}
+
+bool UValhallaGameHUDWidget::IsPanelWantedByGame(FName Key, const UWidget* Widget) const
+{
+	// Windows the player opens: their own state. The rest (always-on parts,
+	// and the ones the Tick code shows and hides every frame: cast bar, target,
+	// party): what the Tick code has just set.
+	if (Key == TEXT("Loot"))                              { return LootBag.IsValid(); }
+	if (Key == TEXT("Skills"))                            { return bSkillsOpen; }
+	if (Key == TEXT("Character") || Key == TEXT("Inventory")) { return bInventoryOpen; }
+	return Widget && Widget->GetVisibility() != ESlateVisibility::Collapsed && Widget->GetVisibility() != ESlateVisibility::Hidden;
+}
+
+void UValhallaGameHUDWidget::SetEditMode(bool bOn)
+{
+	if (!bLayoutFromBlueprint || !RootCanvas)
+	{
+		bEditMode = false;
+		return;
+	}
+	if (bOn == bEditMode)
+	{
+		return;
+	}
+	bEditMode = bOn;
+
+	if (bOn)
+	{
+		for (TPair<FName, FPanelState>& Entry : PanelStates)
+		{
+			UWidget* Widget = Entry.Value.Widget.Get();
+			if (!Widget)
+			{
+				continue;
+			}
+			Entry.Value.Interactive.Reset();
+			UWidgetTree::ForWidgetAndChildren(Widget, [&Entry](UWidget* Child)
+			{
+				if (IsInteractiveChild(Child))
+				{
+					Entry.Value.Interactive.Add(Child);
+				}
+			});
+
+			UValhallaPanelEditOverlay* Overlay = WidgetTree->ConstructWidget<UValhallaPanelEditOverlay>(UValhallaPanelEditOverlay::StaticClass());
+			Overlay->Hud = this;
+			Overlay->Setup(Entry.Key, EffectiveHighlightColour());
+			UCanvasPanelSlot* OverlaySlot = RootCanvas->AddChildToCanvas(Overlay);
+			OverlaySlot->SetAnchors(FAnchors(0.f, 0.f));
+			OverlaySlot->SetAlignment(FVector2D::ZeroVector);
+			OverlaySlot->SetAutoSize(false);
+			// Over every panel and the tooltip (50), under the options menu (60).
+			OverlaySlot->SetZOrder(55);
+			const FSlateRect Rect = GetPanelCanvasRect(Entry.Key);
+			OverlaySlot->SetPosition(FVector2D(Rect.Left, Rect.Top));
+			OverlaySlot->SetSize(FVector2D(Rect.GetSize()));
+			EditOverlays.Add(Entry.Key, Overlay);
+		}
+		HideTooltip();
+		UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: unlocked (edit mode): %d panel overlay(s)."), EditOverlays.Num());
+		return;
+	}
+
+	if (IsDraggingPanel())
+	{
+		EndPanelDrag(true);
+	}
+	for (const TPair<FName, TObjectPtr<UValhallaPanelEditOverlay>>& Entry : EditOverlays)
+	{
+		if (Entry.Value)
+		{
+			Entry.Value->RemoveFromParent();
+		}
+	}
+	EditOverlays.Reset();
+	for (TPair<FName, FPanelState>& Entry : PanelStates)
+	{
+		FPanelState& State = Entry.Value;
+		UWidget* Widget = State.Widget.Get();
+		State.Interactive.Reset();
+		if (Widget && State.bGhosted)
+		{
+			// Back to what the game (or the player) wants: the Tick code shows
+			// the cast bar, target and party again if they are needed.
+			Widget->SetRenderOpacity(1.f);
+			if (State.bUserHidden || !IsPanelWantedByGame(Entry.Key, Widget)
+				|| Entry.Key == TEXT("CastBar") || Entry.Key == TEXT("TargetFrame") || Entry.Key == TEXT("Party"))
+			{
+				Widget->SetVisibility(ESlateVisibility::Collapsed);
+			}
+		}
+		State.bGhosted = false;
+		// The full height edit mode gave the max-height panels.
+		const FValhallaMovablePanel* Info = FindMovablePanel(Entry.Key);
+		if (USizeBox* Box = State.SizeBox.Get(); Box && Info && Info->Sizing == EValhallaPanelSizing::FlowingMaxHeight)
+		{
+			if (Entry.Key == TEXT("Chat") && bChatOpen && ChatOpenHeight > 0.f)
+			{
+				Box->SetHeightOverride(ChatOpenHeight);
+			}
+			else
+			{
+				Box->ClearHeightOverride();
+			}
+		}
+	}
+	EnforceUserHiddenPanels();
+	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: locked."));
+}
+
+void UValhallaGameHUDWidget::TickEditMode()
+{
+	if (PendingCommitTicks > 0 && --PendingCommitTicks == 0)
+	{
+		CommitPanelDrag();
+	}
+	if (!bEditMode)
+	{
+		return;
+	}
+
+	const FVector2D CursorAt = FSlateApplication::IsInitialized() ? FVector2D(FSlateApplication::Get().GetCursorPos()) : FVector2D(-1.0, -1.0);
+	for (TPair<FName, FPanelState>& Entry : PanelStates)
+	{
+		FPanelState& State = Entry.Value;
+		UWidget* Widget = State.Widget.Get();
+		if (!Widget)
+		{
+			continue;
+		}
+
+		// Hidden panels (by the game or the player) show faintly so they can be placed.
+		const bool bShown = !State.bUserHidden && IsPanelWantedByGame(Entry.Key, Widget);
+		if (bShown)
+		{
+			if (State.bGhosted)
+			{
+				Widget->SetRenderOpacity(1.f);
+				State.bGhosted = false;
+			}
+		}
+		else
+		{
+			const ESlateVisibility Current = Widget->GetVisibility();
+			if (Current == ESlateVisibility::Collapsed || Current == ESlateVisibility::Hidden)
+			{
+				const ESlateVisibility Designer = State.DesignerVisibility;
+				Widget->SetVisibility(Designer == ESlateVisibility::Collapsed || Designer == ESlateVisibility::Hidden
+					? ESlateVisibility::SelfHitTestInvisible : Designer);
+			}
+			if (!State.bGhosted)
+			{
+				Widget->SetRenderOpacity(0.4f);
+				State.bGhosted = true;
+			}
+		}
+
+		// Max-height panels (chat, skills) at their full height, so the whole box can be placed and sized.
+		const FValhallaMovablePanel* Info = FindMovablePanel(Entry.Key);
+		if (USizeBox* Box = State.SizeBox.Get(); Box && Info && Info->Sizing == EValhallaPanelSizing::FlowingMaxHeight)
+		{
+			const float MaxHeight = BoxMaxHeight(Box);
+			if (MaxHeight > 0.f && !FMath::IsNearlyEqual(BoxHeight(Box), MaxHeight))
+			{
+				Box->SetHeightOverride(MaxHeight);
+			}
+		}
+
+		// The overlay follows what the panel draws.
+		UValhallaPanelEditOverlay* Overlay = EditOverlays.FindRef(Entry.Key);
+		UCanvasPanelSlot* OverlaySlot = Overlay ? Cast<UCanvasPanelSlot>(Overlay->Slot) : nullptr;
+		if (!OverlaySlot)
+		{
+			continue;
+		}
+		const FSlateRect Rect = GetPanelCanvasRect(Entry.Key);
+		if (Rect.GetSize().X < 2.0 || Rect.GetSize().Y < 2.0)
+		{
+			Overlay->SetVisibility(ESlateVisibility::Collapsed);
+			continue;
+		}
+		OverlaySlot->SetPosition(FVector2D(Rect.Left, Rect.Top));
+		OverlaySlot->SetSize(FVector2D(Rect.GetSize()));
+		Overlay->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+
+		// A button, check box, slider or text box under the cursor gets the press.
+		bool bOverInteractive = false;
+		if (DragKey != Entry.Key)
+		{
+			for (const TWeakObjectPtr<UWidget>& Weak : State.Interactive)
+			{
+				const UWidget* Child = Weak.Get();
+				if (Child && Child->IsVisible() && Child->GetCachedGeometry().IsUnderLocation(CursorAt))
+				{
+					bOverInteractive = true;
+					break;
+				}
+			}
+		}
+		if (Overlay->IsBodyHitTestable() == bOverInteractive)
+		{
+			Overlay->SetBodyHitTestable(!bOverInteractive);
+		}
+	}
+}
+
+bool UValhallaGameHUDWidget::BeginPanelDrag(FName Key, const FVector2D& CanvasPoint, bool bResize)
+{
+	FPanelState* State = PanelStates.Find(Key);
+	UWidget* Widget = State ? State->Widget.Get() : nullptr;
+	UCanvasPanelSlot* CanvasSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr;
+	if (!bEditMode || !CanvasSlot)
+	{
+		return false;
+	}
+	const FSlateRect Rect = GetPanelCanvasRect(Key);
+	if (Rect.GetSize().X < 2.0 || Rect.GetSize().Y < 2.0)
+	{
+		return false;
+	}
+	if (IsDraggingPanel())
+	{
+		EndPanelDrag(true);
+	}
+	if (PendingCommitTicks > 0)
+	{
+		// The previous release has not been saved yet: save it now.
+		PendingCommitTicks = 0;
+		CommitPanelDrag();
+	}
+
+	DragKey = Key;
+	bDragResize = bResize && FindMovablePanel(Key) != nullptr;
+	bDragMoved = false;
+	DragStartPoint = CanvasPoint;
+	DragStartRect = Rect;
+	DragTopLeft = FVector2D(Rect.Left, Rect.Top);
+	DragStartRenderScale = FMath::Max(0.01f, State->AppliedScale);
+	DragPanelScale = DragStartRenderScale / FMath::Max(0.01f, AppliedUiScale);
+	DragStartBox = DragBox = CurrentBoxSize(Key);
+
+	// Pinned by its drawn top-left while it moves (the render scale then grows
+	// it from that corner); CommitPanelDrag re-anchors it.
+	CanvasSlot->SetAnchors(FAnchors(0.f, 0.f));
+	CanvasSlot->SetAlignment(FVector2D::ZeroVector);
+	CanvasSlot->SetPosition(DragTopLeft);
+	Widget->SetRenderTransformPivot(FVector2D::ZeroVector);
+	UE_LOG(LogValhallaHUD, Log, TEXT("edit mode: %s %s from (%.0f, %.0f), %.0f x %.0f"), bDragResize ? TEXT("resize") : TEXT("move"),
+		*Key.ToString(), Rect.Left, Rect.Top, Rect.GetSize().X, Rect.GetSize().Y);
+	return true;
+}
+
+void UValhallaGameHUDWidget::UpdatePanelDrag(const FVector2D& CanvasPoint)
+{
+	FPanelState* State = DragKey.IsNone() ? nullptr : PanelStates.Find(DragKey);
+	UWidget* Widget = State ? State->Widget.Get() : nullptr;
+	UCanvasPanelSlot* CanvasSlot = Widget ? Cast<UCanvasPanelSlot>(Widget->Slot) : nullptr;
+	const FValhallaMovablePanel* Info = FindMovablePanel(DragKey);
+	if (!CanvasSlot || !Info)
+	{
+		return;
+	}
+	const FVector2D Delta = CanvasPoint - DragStartPoint;
+	if (!bDragMoved && Delta.Size() < 3.0)
+	{
+		return; // a click, not a drag (yet)
+	}
+	bDragMoved = true;
+	const FVector2D Canvas = GetCanvasSize();
+	const FVector2D StartSize = FVector2D(DragStartRect.GetSize());
+
+	if (!bDragResize)
+	{
+		DragTopLeft = SnapPanelPosition(FVector2D(DragStartRect.Left, DragStartRect.Top) + Delta, StartSize, Canvas, SnapGrid, EdgeSnapDistance);
+		CanvasSlot->SetPosition(DragTopLeft);
+		return;
+	}
+
+	if (Info->Sizing == EValhallaPanelSizing::Scaled)
+	{
+		// Uniform: the pointer's diagonal against the panel's, from its top-left.
+		const FVector2D Wanted = StartSize + Delta;
+		const double Ratio = FVector2D::DotProduct(Wanted, StartSize) / FMath::Max(1.0, StartSize.SizeSquared());
+		const float StartPanelScale = DragStartRenderScale / FMath::Max(0.01f, AppliedUiScale);
+		DragPanelScale = FMath::Clamp(FMath::RoundToFloat(static_cast<float>(StartPanelScale * Ratio) * 20.f) / 20.f, MinPanelScale, MaxPanelScale);
+		FWidgetTransform Transform = Widget->GetRenderTransform();
+		Transform.Scale = FVector2D(AppliedUiScale * DragPanelScale, AppliedUiScale * DragPanelScale);
+		Widget->SetRenderTransform(Transform);
+		State->AppliedScale = AppliedUiScale * DragPanelScale;
+		return;
+	}
+
+	USizeBox* Box = State->SizeBox.Get();
+	if (!Box)
+	{
+		return;
+	}
+	// The pointer moves in canvas units; the box is sized before the render scale.
+	const FVector2D Min = MinFlowingSize(DragKey);
+	const FVector2D Max = Canvas / DragStartRenderScale;
+	FVector2D Size = DragStartBox + Delta / DragStartRenderScale;
+	Size.X = FMath::Clamp(FMath::RoundToDouble(Size.X / SnapGrid) * SnapGrid, Min.X, FMath::Max(Min.X, Max.X));
+	Size.Y = FMath::Clamp(FMath::RoundToDouble(Size.Y / SnapGrid) * SnapGrid, Min.Y, FMath::Max(Min.Y, Max.Y));
+	DragBox = Size;
+	SetWidthOrClear(Box, Size.X);
+	if (Info->Sizing == EValhallaPanelSizing::FlowingBox)
+	{
+		SetHeightOrClear(Box, Size.Y);
+	}
+	else
+	{
+		SetMaxHeightOrClear(Box, Size.Y);
+		Box->SetHeightOverride(Size.Y); // edit mode shows it at its full height
+	}
+	if (DragKey == TEXT("Chat"))
+	{
+		ChatDesignWidth = Size.X;
+		ChatOpenHeight = Size.Y;
+	}
+}
+
+void UValhallaGameHUDWidget::EndPanelDrag(bool bCommit)
+{
+	if (DragKey.IsNone())
+	{
+		return;
+	}
+	const FName Key = DragKey;
+	DragKey = NAME_None;
+	if (!bCommit || !bDragMoved)
+	{
+		// Nothing moved (a click) or cancelled: back where the settings have it.
+		if (const UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+		{
+			ApplyUserLayout(UserSettings->Get());
+		}
+		return;
+	}
+	// Measured once Slate has laid it out at its new place / size.
+	PendingCommitKey = Key;
+	bPendingResize = bDragResize;
+	PendingCommitTicks = 2;
+}
+
+void UValhallaGameHUDWidget::CommitPanelDrag()
+{
+	const FName Key = PendingCommitKey;
+	PendingCommitKey = NAME_None;
+	const FPanelState* State = PanelStates.Find(Key);
+	const FValhallaMovablePanel* Info = FindMovablePanel(Key);
+	UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this);
+	if (!State || !Info || !UserSettings)
+	{
+		return;
+	}
+	const FSlateRect Rect = GetPanelCanvasRect(Key);
+	const FVector2D Canvas = GetCanvasSize();
+	if (Rect.GetSize().X < 2.0 || Canvas.X < 2.0)
+	{
+		ApplyUserLayout(UserSettings->Get());
+		return;
+	}
+
+	const FValhallaPanelLayout Placed = AnchorLayoutForRect(Rect, Canvas, AppliedUiScale);
+	const FValhallaPanelLayout Designer = State->Designer;
+	const FVector2D Box = CurrentBoxSize(Key);
+	const float PanelScale = FMath::RoundToFloat(State->AppliedScale / FMath::Max(0.01f, AppliedUiScale) * 100.f) / 100.f;
+	const bool bScaled = Info->Sizing == EValhallaPanelSizing::Scaled;
+	UserSettings->Mutate([&](FValhallaUserUISettings& S)
+	{
+		const FValhallaPanelLayout* Existing = S.FindSetPanel(Key);
+		FValhallaPanelLayout Layout = Existing ? *Existing : Designer;
+		Layout.AnchorMin = Placed.AnchorMin;
+		Layout.AnchorMax = Placed.AnchorMax;
+		Layout.Alignment = Placed.Alignment;
+		Layout.Position = Placed.Position;
+		if (bScaled)
+		{
+			Layout.Scale = PanelScale;
+		}
+		else
+		{
+			// The box as it is now (TickLayout may have narrowed the chat), so a move never resizes it.
+			if (Box.X > 0.0) { Layout.Size.X = Box.X; }
+			if (Box.Y > 0.0) { Layout.Size.Y = Box.Y; }
+		}
+		Layout.bSet = true;
+		S.Panels.Add(Key, Layout);
+	});
+	UE_LOG(LogValhallaHUD, Log, TEXT("edit mode: %s %s: drawn (%.0f, %.0f) %.0f x %.0f on %.0f x %.0f -> anchor (%.1f, %.1f) position (%.1f, %.1f)%s"),
+		*Key.ToString(), bPendingResize ? TEXT("resized") : TEXT("moved"), Rect.Left, Rect.Top, Rect.GetSize().X, Rect.GetSize().Y, Canvas.X, Canvas.Y,
+		Placed.AnchorMin.X, Placed.AnchorMin.Y, Placed.Position.X, Placed.Position.Y,
+		*(bScaled ? FString::Printf(TEXT(", scale %.2f"), PanelScale) : FString::Printf(TEXT(", size %.0f x %.0f"), Box.X, Box.Y)));
+}
+
+void UValhallaGameHUDWidget::ScrollPanelAt(FName Key, const FVector2D& ScreenPosition, float WheelDelta)
+{
+	const FPanelState* State = PanelStates.Find(Key);
+	UWidget* Widget = State ? State->Widget.Get() : nullptr;
+	if (!Widget)
+	{
+		return;
+	}
+	UScrollBox* Under = nullptr;
+	UWidgetTree::ForWidgetAndChildren(Widget, [&Under, &ScreenPosition](UWidget* Child)
+	{
+		if (UScrollBox* Scroll = Cast<UScrollBox>(Child); Scroll && Scroll->IsVisible() && Scroll->GetCachedGeometry().IsUnderLocation(ScreenPosition))
+		{
+			Under = Scroll;
+		}
+	});
+	if (Under)
+	{
+		Under->SetScrollOffset(FMath::Clamp(Under->GetScrollOffset() - WheelDelta * 30.f, 0.f, Under->GetScrollOffsetOfEnd()));
+	}
+}
+
+bool UValhallaGameHUDWidget::DragPanelForTest(FName Key, const FVector2D& Delta, bool bResize)
+{
+	if (!bEditMode)
+	{
+		UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI dragtest: the HUD is locked (valhalla.UI lock 0 first)."));
+		return false;
+	}
+	const FSlateRect Rect = GetPanelCanvasRect(Key);
+	const FVector2D Start = bResize ? FVector2D(Rect.Right - 4.0, Rect.Bottom - 4.0) : FVector2D(Rect.GetCenter());
+	if (!BeginPanelDrag(Key, Start, bResize))
+	{
+		UE_LOG(LogValhallaHUD, Warning, TEXT("valhalla.UI dragtest: %s is not a movable panel on the canvas."), *Key.ToString());
+		return false;
+	}
+	UpdatePanelDrag(Start + Delta * 0.5);
+	UpdatePanelDrag(Start + Delta);
+	EndPanelDrag(true);
+	UE_LOG(LogValhallaHUD, Log, TEXT("valhalla.UI dragtest: %s %s by (%.0f, %.0f)."), bResize ? TEXT("resized") : TEXT("moved"), *Key.ToString(), Delta.X, Delta.Y);
+	return true;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  B-21 step 4 — the options menu
+// ═════════════════════════════════════════════════════════════════════════════
+
+UValhallaOptionsMenuWidget* UValhallaGameHUDWidget::GetOptionsMenu() const
+{
+	return OptionsMenu;
+}
+
+UClass* UValhallaGameHUDWidget::GetOptionsMenuClass() const
+{
+	return OptionsMenuClass.Get();
+}
+
+bool UValhallaGameHUDWidget::IsOptionsOpen() const
+{
+	return OptionsMenu && OptionsMenu->GetVisibility() != ESlateVisibility::Collapsed;
+}
+
+void UValhallaGameHUDWidget::OpenOptions()
+{
+	if (!RootCanvas || !bLayoutFromBlueprint)
+	{
+		UE_LOG(LogValhallaHUD, Warning, TEXT("options menu: this HUD has no layout."));
+		return;
+	}
+	if (!OptionsMenu)
+	{
+		UClass* MenuClass = OptionsMenuClass.Get() ? OptionsMenuClass.Get() : UValhallaOptionsMenuWidget::StaticClass();
+		OptionsMenu = WidgetTree->ConstructWidget<UValhallaOptionsMenuWidget>(MenuClass);
+		UCanvasPanelSlot* MenuSlot = RootCanvas->AddChildToCanvas(OptionsMenu);
+		MenuSlot->SetAnchors(FAnchors(0.5f, 0.5f));
+		MenuSlot->SetAlignment(FVector2D(0.5f, 0.5f));
+		MenuSlot->SetPosition(FVector2D::ZeroVector);
+		MenuSlot->SetAutoSize(true);
+		MenuSlot->SetZOrder(60);
+		OptionsMenu->Setup(this);
+		UE_LOG(LogValhallaHUD, Log, TEXT("options menu made (%s)."), *MenuClass->GetName());
+	}
+	if (const UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))
+	{
+		OptionsMenu->SyncFromSettings(UserSettings->Get());
+	}
+	// It eats clicks on itself (a Visible border); the input mode stays GameAndUI.
+	OptionsMenu->SetVisibility(ESlateVisibility::Visible);
+	HideTooltip();
+	UE_LOG(LogValhallaHUD, Log, TEXT("options menu open"));
+}
+
+void UValhallaGameHUDWidget::CloseOptions()
+{
+	if (!OptionsMenu)
+	{
+		return;
+	}
+	OptionsMenu->CloseSubPanel();
+	OptionsMenu->SetVisibility(ESlateVisibility::Collapsed);
+	UE_LOG(LogValhallaHUD, Log, TEXT("options menu closed"));
+}
+
+void UValhallaGameHUDWidget::ToggleOptions()
+{
+	if (IsOptionsOpen())
+	{
+		CloseOptions();
+	}
+	else
+	{
+		OpenOptions();
+	}
 }

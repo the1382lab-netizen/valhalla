@@ -123,6 +123,38 @@ class ValhallaUITools(unreal.ToolsetDefinition):
 
     @toolset_registry.tool_call
     @staticmethod
+    def layout_options_menu(replace: bool = False, wire: bool = True) -> str:
+        """B-21: build WBP_OptionsMenu (the in-game options menu's look) and make it WBP_GameHUD's OptionsMenuClass.
+
+        Creates ``/Game/Valhalla/UI/HUD/WBP_OptionsMenu`` (parent
+        UValhallaOptionsMenuWidget) when it does not exist (checked first),
+        then lays out its tree: frame, header with CloseButton, five tab
+        buttons and the ``Tabs`` widget switcher (Layout, Colours, Chat & log,
+        Nameplates, Controls), every control named for the C++
+        BindWidgetOptional members. C++ adds the colour rows, preset swatches
+        and log-filter check boxes and sets every range and value. Compiles,
+        saves, and with ``wire`` sets WBP_GameHUD's OptionsMenuClass
+        (compiled, saved).
+
+        Args:
+            replace: Remove an existing designer tree first (its edits are lost).
+            wire: Also point WBP_GameHUD's OptionsMenuClass at it.
+
+        Returns:
+            A JSON object as text: ``ok``, ``widgets``, ``compiled`` (and
+            ``compileError``), ``saved``, ``partsMissing`` (should be empty),
+            ``wired``; or ``refused``.
+        """
+        try:
+            result = _hud_blueprints().layout_options_menu(replace=bool(replace), wire=bool(wire))
+        except Exception as exc:  # noqa: BLE001
+            return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])
+        if "refused" in result:
+            return _fail(result["refused"], refused=True)
+        return _ok(**result)
+
+    @toolset_registry.tool_call
+    @staticmethod
     def describe_hud_blueprint(asset_path: str) -> str:
         """List a Widget Blueprint's designer widgets and, for a HUD / bar / cell, the parts it binds.
 

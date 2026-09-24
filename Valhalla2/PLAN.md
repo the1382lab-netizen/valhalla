@@ -1424,13 +1424,14 @@ panel keys. The code-built panel shows them in the meantime.
         they are not in this commit. Until they are committed a clean checkout
         shows the Blueprints' frames without art.
 
-## B-21 — In-game options menu and HUD customization, steps 1–2 (2026-09-24)
+## B-21 — In-game options menu and HUD customization, steps 1–5 (2026-09-24)
 
 Kevin's decisions: settings are per character and synced through the backend
 (saved when changed, loaded at login); the UI is locked by default; Escape
 opens the options menu when nothing else is open; a cog button bottom right is
 the other way in. Steps 1–2 are the foundation (settings model, sync, layout
-apply); the edit mode, the menu and live style come next.
+apply); steps 3–5 the edit mode, the menu and live style; step 6 (with the
+backend) is still to do.
 
 - [x] **Settings model (ValhallaCore).** `FValhallaUserUISettings`
       (`ValhallaUserUISettings.h`, BlueprintType): `Version` 1, `UpdatedAt`
@@ -1542,9 +1543,164 @@ apply); the edit mode, the menu and live style come next.
       (300, -8) (`03`, `04` open), `uiscale 1.3` + `opacity 0.4` (`05`),
       `resetlayout` put everything back (chat at 232, narrowed again). The
       backend path was not exercised in PIE (no backend running there).
-- [ ] Step 3 — edit mode (unlock, drag / resize / hide handles writing Panels).
-- [ ] Step 4 — options menu (Escape when nothing is open, cog button bottom right).
-- [ ] Step 5 — live style (Colours, chat font / lines / timestamps, log filters, nameplates: `ApplyUserStyle`).
+- [x] **Step 3 — edit mode (2026-09-24).** `bLocked` false (the menu's Lock
+      box, `valhalla.UI lock 0|1`) puts a `UValhallaPanelEditOverlay` over
+      every movable panel on the root canvas (Z 55, the drawn rectangle,
+      render scale included, re-measured every tick): the Highlight colour at
+      50 % as a 1.5 px outline over a 6 % wash, the panel key top left, a
+      14 x 14 grip bottom right. Relocking removes them (`SetEditMode`).
+      - Drag: a left press on the overlay body -> `BeginPanelDrag` (mouse
+        captured), `UpdatePanelDrag` on every move, `EndPanelDrag` on release
+        (or capture lost). While it runs the panel is pinned by its drawn
+        top-left (anchor / alignment / pivot 0), moved live, snapped to a
+        4 px grid and to the canvas edges within 8 px, kept on the canvas
+        (`SnapPanelPosition`). Two ticks after release (Slate has laid it
+        out) `CommitPanelDrag` measures it, re-anchors it to the nearest of
+        the nine anchor points per axis (near edge / centre / far edge,
+        whichever the panel's own edge or centre is closest to; a tie goes to
+        the centre: `ChooseAnchor`), turns the rectangle into Position at
+        UiScale 1 (`AnchorLayoutForRect`: the drawn alignment point = anchor x
+        canvas + Position x UiScale, whatever the render scale) and `Mutate`s
+        the panel's layout (bSet; a flowing panel also stores its box as it
+        is, so a move never resizes the TickLayout-narrowed chat). A press
+        that never moves 3 units puts it back.
+      - Resize (the grip, a 18 px hit area): flowing panels set their Size
+        Box (combat log width + height; chat and skills width + max height),
+        min 160 x 80 / 200 x 60 / 220 x 120, on the 4 px grid; scaled panels
+        change Scale 0.5 - 2 (steps of 0.05) uniformly, growing from the
+        pinned top-left (the corner opposite the grip). Unlocked, max-height
+        panels (chat, skills) show at their full height so the whole box can
+        be placed.
+      - Hidden panels (by the player, or the game: no target, no party, no
+        cast, closed windows) are shown at 40 % opacity while unlocked
+        (`TickEditMode`, `IsPanelWantedByGame`) and go back to their state on
+        relock.
+      - What wins: unlocked, the overlay takes presses on the panel, so a
+        drag on its cells or scroll boxes moves the panel (no cell drag and
+        drop, no tooltips while unlocked; the mouse wheel is passed to the
+        scroll box under the cursor). Each tick the overlay body stops
+        hit-testing while the cursor is over one of the panel's buttons,
+        check boxes, sliders, spin / text / combo boxes
+        (`IsInteractiveChild`), so those still work. Right clicks fall
+        through (the combat log's filter menu). Locked there are no overlays:
+        cells, drag and drop and everything else are exactly as before.
+      - Console: `valhalla.UI lock [0|1]`, `valhalla.UI dragtest <Key> <dx>
+        <dy> [resize]` (press / move / release through the same functions the
+        mouse handlers call); `movepanel` still sets a position directly.
+- [x] **Step 4 — options menu (2026-09-24).** `UValhallaOptionsMenuWidget`
+      (logic, `ValhallaOptionsMenuWidget.h/.cpp`) and `WBP_OptionsMenu`
+      (look, `/Game/Valhalla/UI/HUD`, 131 widgets, made by the new
+      `hud_blueprints.layout_options_menu` / tool
+      `ValhallaUITools.layout_options_menu`, check-before-create; the HUD's
+      new `OptionsMenuClass` defaults to the C++ class and the tool sets
+      WBP_GameHUD's to WBP_OptionsMenu). Every widget is BindWidgetOptional
+      (`GetOptionalWidgetNames`; one warning lists what a tree lacks):
+      frame `Tabs` (widget switcher, 5 pages), `CloseButton`,
+      `LayoutTabButton` `ColoursTabButton` `ChatLogTabButton`
+      `NameplatesTabButton` `ControlsTabButton`; Layout: `LockCheck`,
+      `UiScaleSlider`/`UiScaleText` (0.5 - 2), `OpacitySlider`/`OpacityText`
+      (0.2 - 1), `ShowVitalsCheck` `ShowActionBarCheck` `ShowCastBarCheck`
+      `ShowTargetFrameCheck` `ShowPartyCheck` `ShowCombatLogCheck`
+      `ShowChatCheck`, `ResetLayoutButton` (panels, UI scale, opacity; not the
+      lock); Colours: `ColourList` (C++ adds name / swatch / Edit per colour),
+      `ColourEditor` with `EditTitle`, `PresetGrid` (12 swatches, C++),
+      `HueSlider` `SaturationSlider` `ValueSlider` (sRGB HSV), `EditSwatch`,
+      `ColourOkButton` `ColourCancelButton`, `ResetColoursButton`; Chat & log:
+      `ChatFontSizeSlider`/`Text` (6 - 14 pt), `ChatLinesSlider`/`Text`
+      (4 - 20), `TimestampsCheck`, `LogFilterList` (C++: a check box per
+      combat-log filter), `ResetChatButton`; Nameplates:
+      `NpcNameplatesCheck` `PlayerNameplatesCheck` `FloatingTextCheck`
+      `NameplateFontSlider`/`Text` (8 - 20 px), `ResetNameplatesButton`;
+      Controls: `ControlsText` (from the player controller's mapping context:
+      `GetInputMappingContext`, grouped per action, 1 - 8 as one line). No
+      Skills show switch: like the loot, character and inventory windows it
+      is opened by a key (`GetMovablePanels` has it not hideable). Every
+      control `Mutate`s (saved 2 s later) and the HUD re-applies at once; the
+      HUD then `SyncFromSettings` the menu. Buttons, check boxes and sliders
+      are not focusable (WASD keeps walking).
+      - Wiring: `OpenOptions` / `CloseOptions` / `ToggleOptions`; made once,
+        centred on the root canvas (Z 60), collapsed when closed, input mode
+        unchanged (GameAndUI), its border eats clicks and the wheel.
+        `CloseTopmost` closes the menu first (its colour editor before it);
+        `HandleEscape`: nothing closed -> `OpenOptions`. Escape reaching the
+        HUD while a menu control has focus closes it too. The cog:
+        `OptionsButton` (UValhallaHUDButton, new `EValhallaHUDButton::Options`,
+        BindWidgetOptional) at (1,1) / (1,1) / (-12,-12), 36 x 36, Z 9, the
+        `T_UI_Cog` image as its brush (hover 1.25, pressed 0.75), tooltip
+        "Options (Esc)". `valhalla.UI options` toggles it.
+      - Art: `T_UI_Cog` 64 x 64, an 8-tooth bronze cog in the frame palette
+        (T_UI_Button's #b8974e / #8a6f33 / #614d22, dark #1c150a outline, a
+        dark well in the hub), drawn with numpy in Blender (no Pillow there),
+        4x supersampled, source `Import/UI/Frames/T_UI_Cog.png` (with the
+        other `T_UI_*` sources, so FindUiTexture's disk fallback finds it,
+        not `Import/UI/Icons`, which imports to Icons/Items); imported alone
+        to `/Game/Valhalla/UI/Frames/T_UI_Cog` with import_ui_icons.py's frame
+        settings (bilinear, no mips, UI group; `Saved/ClaudeOps/b21/import_cog.py`).
+        WBP_GameHUD re-laid out (`layout_hud_from_config(replace=True)`, 99
+        widgets, compiled, saved; cell / bar classes kept: WBP_HUDSlot_C /
+        WBP_HUDBar_C).
+- [x] **Step 5 — live style (2026-09-24).** `ApplyUserStyle` records the
+      overrides (`ColourOverrides`, only keys of `GetStyleColourKeys`) and the
+      HUD reads colours through `Effective*Colour()` / `ChatColour` /
+      `HpColourFor` (override, else the "Valhalla|HUD Style" default; the
+      properties themselves are never written). 16 keys: HpHigh HpMid HpLow
+      Mana Energy CastBar Highlight KeyLabel Label Value ChatGeneral ChatWorld
+      ChatWhisper ChatParty ChatSystem and the new `PanelTintColour` (white;
+      multiplies the movable panels' background brushes, alpha x
+      PanelOpacity: `ApplyPanelBackgrounds`). Live, no rebuild: bars and
+      nameplates next tick, cells' highlight (`SetHighlightColour`) and key
+      labels, party names, cast bar, edit outlines at once, the skills rows
+      rebuilt when next shown; the chat is redrawn when its font size
+      (6 - 24 clamp), idle lines, timestamps ("[hh:mm] " from the local
+      arrival time; lines from before the HUD have none) or channel colours
+      change. `LogFilters` are the combat log's filters (restored on load;
+      `ToggleLogFilter` / new `SetLogFilter` save them). NPC / player
+      nameplate and floating-text switches in `TickWorldLayer` /
+      `SpawnFloater`; nameplate font size restyles the pooled plates
+      (`RestyleNameplates`, no Rebuild). ApplyUserLayout logs only when its
+      summary changes (a slider drag applies every frame).
+- [x] **Tests (steps 3-5).** `Valhalla.Game.UI.OptionsMenu` (Options enum
+      value after the old ones, OptionsButton / OptionsMenuClass, every menu
+      name a BindWidgetOptional member of the kind its name says, show
+      switches name hideable panels, 12 presets, the controls text from a
+      mapping context, WBP_OptionsMenu's tree has every name and 5 tabs,
+      WBP_GameHUD names it and has the cog with Action = Options),
+      `Valhalla.Game.UI.StyleColours` (16 keys, each a HUD Style
+      FLinearColor; CDO defaults; override wins for its key only, is dropped
+      with the setting; unknown keys ignored; log filters restored),
+      `Valhalla.Game.UI.EditModeMaths` (ChooseAnchor's 9 cases + tie, snap:
+      grid / edges / on canvas, AnchorLayoutForRect round trip through
+      ResolvePanelLayout at UI scale 1 / 1.5 / 0.75, a bottom-right panel 12
+      px from its corner on a bigger window, IsInteractiveChild). Full
+      `Valhalla.` run: 39 tests, all pass but the known
+      `Valhalla.Core.Data.MeshIdFallback`.
+- [x] **PIE / game (L_World, offline, 2 clients; `Saved/ClaudeOps/b21/10_`..`25_`).**
+      Cog bottom right (`10`); a real click on it (SlateInspector) opens the
+      menu (`11`); every tab renders (`12`-`15`); the colour editor, preset
+      red, OK: HP bar red, opacity slider dragged to 20 % (`16`, `17`), both
+      saved to `settings_offline.json`; unlock: outlines, grips and ghosts
+      (`18`); a real mouse drag (SlateInspector Drag) moved the combat log
+      from (1085, 12) to the top edge, re-anchored top centre, saved (`19`);
+      `dragtest Chat 120 -60 resize`: 392 x 112, anchored bottom left (`20`);
+      the PIE window resized 646 x 520 -> 1000 x 640 with the Win32 API: the
+      panels kept their anchors (`21`); colours reset, relocked: overlays and
+      ghosts gone (`22`); a new PIE loaded it all (`23`); combat log hidden,
+      Misses filtered, timestamps and 14 pt chat (`24`: "[12:25] [G]
+      Player1: ..."). Escape in PIE stops the session (the editor's binding),
+      so Escape was checked in a standalone `-game` window with real
+      WM_KEYDOWNs: nothing open -> the menu opens (`25`), Escape closes it,
+      I then Escape closes the inventory (not the menu), Escape again opens
+      it. The offline settings file was put back to its defaults afterwards
+      (the run's copy: `b21/settings_offline_after_pie.json`).
+      - Not exercised: a real press on the resize grip (no Slate ref for it;
+        the grip goes through the same BeginPanelDrag as `dragtest`), the
+        backend path (step 6), inventory drag and drop while locked
+        (unchanged code; no items offline), nameplate font / switches on
+        screen (only through the settings file), a player-hidden panel's
+        ghost (the same code as the game-hidden ghosts shown in `18`).
+      - Known: two PIE clients share `settings_offline.json` (character 0);
+        the last to save wins. The tab bar's "current tab" tint is faint on
+        the bronze plates.
 - [ ] Step 6 — verification (front end -> world with the backend: load at login, save on change, two characters).
 
 ## Backlog

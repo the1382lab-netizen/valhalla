@@ -90,6 +90,12 @@ KITS = {
 }
 MESH_PATH = {m: "/Game/Valhalla/Environment/{0}/{1}/StaticMeshes/{1}".format(k, m) for k, ms in KITS.items() for m in ms}
 MESH_PATH["SM_CliffCleft_Mid"] = "/Game/Valhalla/Environment/Eldmoor/SM_CliffCleft_Mid/StaticMeshes/SM_CliffCleft_Mid"
+for _k, _m in (("Town", "SM_HouseWall_Arch"), ("Tavern", "SM_TavernWall_Arch"), ("Keep", "SM_KeepWall_Arch")):
+    MESH_PATH[_m] = "/Game/Valhalla/Environment/{0}/{1}/StaticMeshes/{1}".format(_k, _m)
+#: Open archways replace every closed door (Kevin, 2026-09-24; clickable doors are backlog B-23).
+#: The arch modules are SM_ (walk-through, per-triangle collision); their 14 cm jambs get hidden VisionBlocker boxes.
+ARCH_OF = {"VB_TavernWall": "SM_TavernWall_Arch", "VB_HouseWall": "SM_HouseWall_Arch", "VB_KeepWall": "SM_KeepWall_Arch"}
+ARCH_OPEN, ARCH_JAMB = 100.0, 14.0
 PLUG_DY = 80.0  # cleft screen plug: cm south of the two boulders' mean position
 MESH_PATH["SM_PortalMarker"] = "/Game/Valhalla/Props/SM_PortalMarker/StaticMeshes/SM_PortalMarker"
 MESH_PATH["Plane"] = "/Engine/BasicShapes/Plane"
@@ -245,6 +251,23 @@ class Builder(object):
         a.set_actor_hidden_in_game(True)
         return a
 
+    def arch(self, mesh, label, folder, x, y, z, yaw):
+        """An open archway module plus two hidden VisionBlocker boxes on its jambs, so sight passes through the
+        100 cm opening only (a VB_ piece with an opening would black out its whole bounding box)."""
+        a = self.place(mesh, label, folder, x, y, z=z, yaw=yaw)
+        bb = self.mesh(mesh).get_bounding_box()
+        th, h = bb.max.y - bb.min.y, bb.max.z - bb.min.z
+        r = math.radians(yaw)
+        for side, tag in ((-1, "L"), (1, "R")):
+            lx = side * (ARCH_OPEN + ARCH_JAMB) / 2.0
+            j = self.place("Cube", "{}_Jamb{}".format(label, tag), folder, x + lx * math.cos(r), y + lx * math.sin(r),
+                           z=z + h / 2.0, yaw=yaw, scale=(ARCH_JAMB / 100.0, th / 100.0, h / 100.0))
+            c = j.static_mesh_component
+            c.set_collision_profile_name("VisionBlocker")
+            c.set_editor_property("cast_shadow", False)
+            j.set_actor_hidden_in_game(True)
+        return a
+
     def marker(self, label, folder, x, y, z=None, dz=100.0, tags=()):
         a = self.cls(unreal.TargetPoint, label, folder, x, y, z=z, dz=dz)
         a.tags = [TAG] + list(tags)
@@ -362,7 +385,7 @@ class Builder(object):
         self.place("SM_KeepBanner", "Banner_Harrow_EastGate", f + "/Palisade", x1 + 20, 112 * T, z=z + 300, yaw=-90.0)
 
         # the Broken Spur (tavern kit) x 38-47, y 102-109; door south at x 42-44
-        self.building("Tavern", 38, 102, 47, 109, "VB_TavernWall", "VB_TavernWall_Door", "VB_TavernWall_Window",
+        self.building("Tavern", 38, 102, 47, 109, "VB_TavernWall", "SM_TavernWall_Arch", "VB_TavernWall_Window",
                       "VB_TavernCorner", door=("S", 43.0), windows={("N", 40), ("N", 44), ("W", 104), ("E", 106), ("S", 40)},
                       floor="SM_TavernFloor", roof="SM_TavernRoof", wall_h=360.0, folder=f + "/Tavern")
         self.place_t("SM_TavernChimney", "Tavern_Chimney", f + "/Tavern", 39.0, 102.5, z=z + 360)
@@ -372,7 +395,7 @@ class Builder(object):
             self.place_t("SM_Table", "Tavern_Table_%d" % k, f + "/Tavern", tx, ty, z=z + FLOOR_T)
         self.place_t("SM_Keg", "Tavern_Keg", f + "/Tavern", 38.8, 103.0, z=z + FLOOR_T)
         # trader's house (town kit) x 52-60, y 102-108, door south
-        self.building("Trader", 52, 102, 60, 108, "VB_HouseWall", "VB_HouseWall_Door", "VB_HouseWall_Window", None,
+        self.building("Trader", 52, 102, 60, 108, "VB_HouseWall", "SM_HouseWall_Arch", "VB_HouseWall_Window", None,
                       door=("S", 56.0), windows={("N", 54), ("N", 58), ("E", 105)}, floor="SM_WoodFloor",
                       roof="SM_Roof_Thatch", wall_h=180.0, folder=f + "/Trader")
         # smithy lean-to x 38-45, y 114-120, open south
@@ -391,6 +414,8 @@ class Builder(object):
             x, y = p["cm"]
             if p["kind"] == "picket_fence":
                 for s in range(6):
+                    if abs(x + 32 + s * 64 - 43 * T) < 96:
+                        continue   # the tavern door (x 42-44) opens onto the yard: no fence across it
                     self.place("SM_Fence", "Tavern_Yard_Fence_%d" % s, f + "/Props", x + 32 + s * 64, y, z=z)
                 continue
             mesh = kinds[p["kind"]]
@@ -399,8 +424,8 @@ class Builder(object):
             self.place(mesh, label, f + "/Props", x, y, z=zz, yaw=-90.0 if p["kind"] == "signpost" else 0.0)
         self.place_t("SM_WeaponRack", "GatePost_North_Rack", f + "/Props", 53.5, 102.0, z=z, yaw=180.0)
         self.place_t("SM_WeaponRack", "CommandPost_Rack", f + "/Props", 53.5, 113.0, z=z, yaw=90.0)
-        for k in range(3):
-            self.place_t("SM_Barrel", "Trader_Barrel_%d" % k, f + "/Props", 55.0 + k, 108.6, z=z)
+        for k, tx in enumerate((53.0, 53.8, 58.8)):   # beside the door (x 55-57), not across it
+            self.place_t("SM_Barrel", "Trader_Barrel_%d" % k, f + "/Props", tx, 108.6, z=z)
         # cobbled street: east gate -> well -> north gate, two tiles wide
         for tx in range(50, 64):
             for ty in (111, 112):
@@ -424,7 +449,7 @@ class Builder(object):
 
     def building(self, name, i0, j0, i1, j1, wall, door_mesh, window_mesh, corner, door=None, windows=(),
                  floor=None, roof=None, wall_h=180.0, folder="Buildings", open_side=None, z=HALL_Z):
-        """Walls on the footprint's edges (tile lines), a 128 cm door, windows, floor and roof."""
+        """Walls on the footprint's edges (tile lines), a 128 cm open archway, windows, floor and roof."""
         sides = {"N": ((i0, j0), (i1, j0), 180.0), "S": ((i0, j1), (i1, j1), 0.0),
                  "W": ((i0, j0), (i0, j1), 90.0), "E": ((i1, j0), (i1, j1), -90.0)}
         for s, ((a0, b0), (a1, b1), yaw) in sides.items():
@@ -437,7 +462,7 @@ class Builder(object):
                 t = (a0 if horiz else b0) + k
                 if door and door[0] == s and door_mesh and abs(t + 1 - door[1]) < 0.01:
                     cx, cy = ((t + 1) * T, b0 * T) if horiz else (a0 * T, (t + 1) * T)
-                    self.place(door_mesh, "{}_Door".format(name), folder, cx, cy, z=z, yaw=yaw)
+                    self.arch(door_mesh, "{}_Door".format(name), folder, cx, cy, z, yaw)
                     k += 2
                     continue
                 cx, cy = ((t + 0.5) * T, b0 * T) if horiz else (a0 * T, (t + 0.5) * T)
@@ -483,7 +508,7 @@ class Builder(object):
             self.place(wall if k % 3 else "VB_KeepWall_Slit", "Curtain_E_%02d" % k, f + "/Curtain", 6016, y, z=z, yaw=-90.0)
         self.place("SM_KeepGate", "Gatehouse", f + "/Curtain", 4608, 2176, z=z)
         self.place("SM_KeepGate", "InnerGate", f + "/InnerWall", 4608, 1536, z=z)
-        self.place("SM_KeepGate", "Postern", f + "/Curtain", 3200, 1216, z=z, yaw=90.0, scale=(0.5, 1.0, 0.62))
+        self.arch("SM_KeepWall_Arch", "Postern", f + "/Curtain", 3200, 1216, z, 90.0)
         for t in C["towers"]:   # T_W at (50,16): the postern door (tiles 18-20) opens beside it
             x, y = t["cm"]
             self.place("VB_KeepTower", "Tower_" + t["id"], f + "/Towers", x, y, z=z)
@@ -495,10 +520,10 @@ class Builder(object):
             k, t = 0, a
             while t < b - 0.01:
                 if any(abs(t + 1 - d) < 0.01 for d in doors) and t + 2 <= b + 0.01:
-                    dm = mesh + "_Door" if mesh + "_Door" in MESH_PATH else None
+                    dm = ARCH_OF.get(mesh)   # no temple arch: the chapel doors stay a plain 128 cm gap
                     cx, cy = ((t + 1) * T, fixed * T) if horiz else (fixed * T, (t + 1) * T)
                     if dm:
-                        self.place(dm, "{}_Door_{}".format(label, k), folder, cx, cy, z=z, yaw=yaw)
+                        self.arch(dm, "{}_Door_{}".format(label, k), folder, cx, cy, z, yaw)
                     t += 2
                     k += 1
                     continue
@@ -549,6 +574,8 @@ class Builder(object):
                 self.instance("SM_Stone_Floor", 3968 + 32 + 128 * a + (64 if a else 0) * 0, 352 + 32 + 128 * b, z=CELLAR_Z,
                               scale=(2.0, 2.0, 1.0), folder=f + "/Undercroft/Floor")
         for k, y in enumerate((448, 576, 704)):
+            if k == 1:
+                continue   # the gaol stands open: its middle grille (with the locked door) is left out
             self.place("SM_CellBars", "Undercroft_CellBars_%d" % k, f + "/Undercroft", 4096, y, z=CELLAR_Z, yaw=90.0)
         for k, (tx, ty) in enumerate(((70.5, 5.6), (72.0, 5.6), (73.5, 5.6), (75.0, 5.6), (71.3, 6.4), (74.2, 6.4))):
             self.place_t("SM_Keg" if k % 2 == 0 else "SM_Crate", "Undercroft_UnderRamp_%d" % k, f + "/Undercroft", tx, ty,
@@ -629,10 +656,16 @@ class Builder(object):
         """The two screen boulders are rounded: at eye height their silhouettes leave a 40-60 cm sight slit
         in front of the cleft mouth even though their bounds overlap. One VB boulder just south of the seam
         closes it without narrowing the cliff-foot passage (review A1)."""
-        bs = [s["cm"] for s in self.layout["hiddenEntrance"]["screen"] if "oulder" in s["prop"]]
-        x = sum(c[0] for c in bs) / len(bs)
-        y = sum(c[1] for c in bs) / len(bs) + PLUG_DY
-        self.place("VB_BoulderLarge_B", "Cleft_ScreenPlug", "Highlands/CleftScreen", x, y, yaw=90.0, scale=1.25)
+        scr = self.layout["hiddenEntrance"]["screen"]
+        plug = [s for s in scr if s["prop"].startswith("plug")]
+        if plug:   # the layout carries it since ff46cd5b
+            (x, y), yaw, sc = plug[0]["cm"], plug[0].get("yaw", 90.0), plug[0].get("scale", 1.25)
+        else:
+            bs = [s["cm"] for s in scr if s["prop"].startswith("boulder")]
+            x = sum(c[0] for c in bs) / len(bs)
+            y = sum(c[1] for c in bs) / len(bs) + PLUG_DY
+            yaw, sc = 90.0, 1.25
+        self.place("VB_BoulderLarge_B", "Cleft_ScreenPlug", "Highlands/CleftScreen", x, y, yaw=yaw, scale=sc)
 
     def greyfell(self):
         f = "Highlands"
@@ -670,6 +703,8 @@ class Builder(object):
              "dead tree": "SM_DeadTree", "fallen log": "SM_LogFallen", "bush": "SM_BushA", "fern clumps": "SM_Fern",
              "stump": "SM_Stump", "rock (small) x6 scree": "SM_Rock_A"}
         for k, s in enumerate(scr):
+            if s["prop"].startswith("plug"):
+                continue   # placed by cleft_screen_plug()
             x, y = s["cm"]
             mesh = m[s["prop"]] if s["prop"] in m else ("VB_BoulderLarge_A" if "VB_BoulderLarge_A" in s["prop"] else None)
             if mesh == "SM_Rock_A":

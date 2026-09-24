@@ -830,6 +830,32 @@ in place for `valhalla.Visual.BodyProfile 0`.
         are rigid on `head`.
       - 868–2,960 tris per piece; hair 4.3k / 5.0k.
       - SK_Hood_Bald_Cap is not needed (the MetaHuman head is its own scalp).
+- [x] **A-030 wired** —
+      - Chat `/sit` (toggles), `/stand`, `/wave`, `/cheer`, `/bow` (`ValhallaChat::Parse` →
+        `ServerEmote`; also parsed server-side in `TryHandleChatCommand`).
+      - `AValhallaCharacter::bSitting` replicates; the body holds `MH_Sit`. The server
+        stands a sitter up on movement, cast, auto-attack start or death
+        (`UValhallaSkillComponent`).
+      - Emotes go out on `MulticastEmote` (unreliable) and are dropped when the
+        character moves; refused while casting.
+      - The defender of a blocked or dodged blow plays `MH_Block` / `MH_Dodge`,
+        never over a swing, a cast or a sit.
+      - weaponStyle `greatsword` → `MH_Attack_2H`, two-handed (hides the shield).
+        No greatsword item exists yet.
+      - Chat parse tests cover the verbs.
+      - Sitting's regen and the casters' Meditate skill: backlog B-18.
+- [x] **Fixes (2026-09-24)** —
+      - Body shrank during authored clips (attacks, casts, block, dodge, emotes, sit):
+        they carried `metahuman_base_skel`'s smaller bone lengths with the body mesh as
+        retarget source. Retarget source cleared (`ue_io.write_anim` now does this), so
+        the body maps them to its own proportions like the locomotion; `MH_Sit`
+        re-grounded (`Tools/anim_authoring/sit_ground.py`).
+      - Enter didn't reopen chat after sending a line until the screen was clicked: the
+        text box cleared keyboard focus after commit, and the hand-back went to Slate's
+        "game viewport", which in a two-client PIE is the other window. `ChatInput` no
+        longer clears focus on commit, and `CloseChat` focuses this player's own
+        viewport (`GetWorld()->GetGameViewport()`). Checked with real key presses in
+        both PIE clients.
 - [x] **Code** —
       - `UValhallaVisuals::SkinnedArtRoot / EquipmentMeshPath / HairMeshPath` pick
         the active body's folder.
@@ -843,8 +869,7 @@ in place for `valhalla.Visual.BodyProfile 0`.
 - Hair vertex colour must be exported LINEAR: `M_Hair` multiplies it in raw.
 - Known: capes and skirts are stiff, with no cloth sim. The ranger's shoulder cape
   reads as a wide collar at rest. The robe skirt stretches between the legs on a
-  wide stride. Sit / emotes / 2H / block / dodge are imported but not wired up.
-  No LODs on the pieces.
+  wide stride.   No LODs on the pieces.
 - Review shots: `Saved/ArtReview/wave2mh/` (`pie1_*`, `sheet_*`).
 
 ## Phase 15 — Hosting a test for other people (2026-09-23)
@@ -1059,6 +1084,118 @@ Checklist for a session with outside players: [deploy/GOING_LIVE.md](../deploy/G
         must re-clone or hard-reset; old hashes in PLAN.md and docs go stale;
         GitHub keeps the old objects reachable through caches and forks until
         support purges them, so the hashes must be treated as leaked anyway.
+
+## Phase 16 — B-15 art overhaul, Wave 3: the Desert (2026-09-24)
+
+Every Desert mesh and the portal marker rebuilt in Blender by script
+(`Blender assets/scripts/wave3_desert.py`, `.blend` in `Blender assets/Environment/valhalla_wave3_desert.blend`),
+exported to the same `Import/` glb and re-imported in place with
+`import_kit.reimport_meshes` (`Saved/ClaudeOps/w3_import_ue.py`). No level edits.
+
+- [x] **Textures** — CC0: ambientCG Ground080 `DesertSand`, Ground097 `SandRipples`;
+      Poly Haven dry_ground_01 `CrackedEarth`, sandstone_blocks_05 `SandstoneBlocks`,
+      old_sandstone_02 `SandstoneRock`, palm_bark `PalmBark`. Procedural:
+      `PalmFrond` (`wave3_palm_texture.py`), `Cactus` (`wave3_cactus_texture.py`).
+      Poly Haven sets now come from `wave3_polyhaven.py` (plain Python, `nor_dx` + `arm`
+      as shipped); all recorded in `Import/Textures/texture_sets.json`.
+- [x] **Ground** — sand A/B/C and cracked earth on `M_ValhallaGroundBlend`
+      (`MI_SandBlend`, `MI_CrackedBlend`), vertex-colour patches faded out at every
+      edge; first-pass tops kept (7.3 / 6.2 cm). The tile skirt has its own rim
+      vertices, so smooth top normals no longer bend at the edges.
+- [x] **Dunes** — every dune in L_Desert is an actor on top of a sand tile (scaled
+      1.1–1.6, diagonal chains), so `SM_Dune` is now only a round mound 0.96 m across
+      with its rim buried; chains merge into ridges.
+- [x] **Walls** — ashlar sandstone, bounds identical, VisionBlocker kept.
+- [x] **Nature** — boulder (bedded sandstone), saguaro and barrel cacti, date palm
+      (`MI_PalmFrond` on `M_ValhallaFoliage`).
+- [x] **Portal marker** — rune-stone obelisk on an octagonal plinth; `M_PortalGlow`
+      toned down (EmissiveStrength 4 → 1.6).
+- Known: palm wind not done; wall block joints don't line up across module seams;
+  the ruins' floor inside the Desert walls is the grassland stone floor.
+- Review shots: `Saved/ArtReview/wave3/` (`before_*`, `v*_*`, `final_*`).
+
+## Phase 17 — B-15 art overhaul, Wave 4: UI art (2026-09-24)
+
+- [x] **Item icons (A-059)** — `Blender assets/scripts/wave4_icons.py`: an icon
+      studio (ortho camera, warm key / cool rim / fill, transparent film) that
+      imports the model the game uses (weapon/shield glb, MetaHuman armour FBX), rebuilds
+      its materials from `Import/UI/icon_materials.json` (written by
+      `valhalla_tools/export_icon_materials.py` from the live MIs), poses it by
+      category and renders 256 px; `wave4_icon_finish.py` (Pillow) makes the 128 px PNG
+      with outline and shadow. 30 icons = every item in items.json; 8 new props
+      (rings, potions, rat tail, coins) modelled in the studio; items.json
+      `inventoryIcon` set for the dagger, totem and those 6.
+- [x] **Skill icons (A-060)** — `wave4_skill_icons.py`: SDF emblems shaded as metal
+      or glow on the skill's `iconColor`; 41 in `Import/UI/Icons/Skills/<id>.png`.
+      `SetSkillIcon(..., FindSkillIcon(id))`; no icon → the old code tile.
+- [x] **HUD frames (A-061)** — `wave4_ui_frames.py`: nine-slice `T_UI_Panel`,
+      `T_UI_Slot`, `T_UI_Button`, `T_UI_BarFrame`, `T_UI_BarFill` in `Import/UI/Frames`.
+      `MakePanel` (not the chat panel), `MakeCell` (`SetFrameArt`), `MakeButton`,
+      `MakeBar` and the combat log use them via `ValhallaHudArt::BoxBrush`.
+      `FindUiTexture` / `LoadUiTexture` load the imported asset, else the PNG on disk.
+- [x] **Import** — `import_ui_icons.py` now handles Icons, Icons/Skills and Frames,
+      re-imports a PNG newer than its asset, and sets bilinear + mips on 128 px icons
+      (nearest, no mips on the 32 px 1.0 icons).
+- Known: 46 of the 1.0 item icons belong to no current item and stay pixel art;
+  panels are ~20 px wider with the trim (layout positions unchanged).
+- Review shots: `Saved/ArtReview/wave4/`.
+
+## Phase 18 — B-15 art overhaul, Wave 5: more environment (2026-09-24)
+
+New assets only; nothing in the hand-edited levels changed. Built by
+`Blender assets/scripts/wave5_kit.py` (`build_set(name)` / `build_all()`, review
+renders via `wave5_review.py`), exported to `Import/Environment/<Set>/`, imported to
+`/Game/Valhalla/Environment/<Set>/` by `import_kit.reimport_meshes` (81 meshes, all
+slots bound, VB_ pieces on the VisionBlocker profile).
+
+- [x] **Tavern (A-064)** — 64 cm wall / window / door (128) / corner, stone ground
+      floor with a jettied timber upper storey (3.6 m), slate gable roof (128 x 128),
+      chimney, hanging sign, plank floor.
+- [x] **Temple (A-065)** — limestone wall and pilaster wall (2.4 m), fluted column,
+      altar, steps, mosaic floor, brazier, a hooded statue.
+- [x] **Keep (A-066)** — 50 cm curtain walls in 1.28 m modules (plain, arrow slit),
+      corner pier, round tower (2.16 m, 4.8 m), gatehouse with raised portcullis
+      (SM_, walk-through), banner. Outside = +Y in Unreal.
+- [x] **Ruins (A-067)** — block-laid broken walls (ragged tops, every block supported),
+      corner, low wall, snapped and fallen columns, half arch, broken statue, rubble.
+- [x] **Bridge and river bank (A-068)** — humped stone bridge (3.84 m), plank footbridge,
+      bank edge strip and corner (land +Y, over the tile line), reeds, stepping stones.
+- [x] **Cave (A-069)** — rock walls 1.28 x 0.64 x 2.4 m (and 1.4 m) with ledged strata,
+      pillar to hide joints / turn corners, ceiling lip (overhangs 0.9 m, no roof for the
+      top-down camera), floor tile, stalagmites, stalactites, glowing crystals, rubble.
+- [x] **Interior props (A-071)** — bar, table, chair, bench, bed, shelf, books, candle,
+      chest, keg, fireplace, table clutter.
+- [x] **Camp props (A-072)** — A-frame and bell tents, campfire, cooking fire, bedroll,
+      weapon rack, log seat, supply pile.
+- [x] **Foliage variety (A-073)** — two bushes, grass tuft, two flower patches, fern,
+      dead tree, stump, fallen log. Card materials on M_ValhallaFoliage.
+- [x] **Desert variety (A-074)** — bones, horned skull, sandstone ruin wall and column,
+      nomad awning, pottery.
+- Textures: 12 Poly Haven CC0 sets (SlateRoof, KeepStone, TempleStone, Marble,
+  TempleFloor, RuinStone, MossyRock, OakPlanks, DarkPlanks, LogBark, CaveRock,
+  CaveFloor) + 5 procedural foliage cards (`wave5_foliage_textures.py`); flat MIs
+  MI_Crystal (emissive), MI_Wax, MI_Pottery, MI_Bread. Script: `Saved/ClaudeOps/w5_import_ue.py`.
+- Cards, bank strips, banner, sign, ceiling lip, stalactites and table dressing are NoCollision.
+- Review level: `/Game/Valhalla/Maps/Dev/L_ArtReview_Wave5` (L_World lighting LOOK, every
+  piece in vignettes; `Saved/ClaudeOps/w5_showcase.py` rebuilds it). Shots: `Saved/ArtReview/wave5/`
+  (`vp_*.png` from the editor viewport; the SceneCapture shots render the water black).
+- [x] **Moving fire** — campfires, cooking fire, braziers, fireplace, candles and the altar
+      candles carry their flames as five crossed cards (`wave5_kit.flame`) on `MI_Fire`
+      (`M_ValhallaFire`, `valhalla_tools/build_fire.py`): unlit, masked + dithered, a teardrop
+      eaten and bent by rising 3D value noise in object space (offset by the actor's position
+      so neighbours differ). Fire sections cast no shadow and do not collide.
+      `valhalla_tools/fire_lights.add_all()` attaches a movable warm PointLight to each fire
+      prop in the open level with a flicker light function (`MI_FireFlicker_A/B/C`, three
+      phases); tagged `ValhallaFireLight`, `remove_all()` undoes it. Run it after placing fires,
+      like `lamp_lights`. Review GIFs: `Saved/ArtReview/wave5/fire/`.
+- [x] **Walk-through pieces** — `import_kit.WALKABLE` (SM_KeepGate, SM_RuinArch, both
+      bridges, SM_TempleSteps) get complex-as-simple collision on import; the importer's
+      simple collision had made the gate and bridges solid boxes. Stone bridge widened to 80 cm
+      between parapets (capsule is 60). Checked with 30 x 60 capsule sweeps on the Pawn profile
+      (`Saved/ClaudeOps/w5_walk_test.py`): gate, arch and both bridges clear, keep and tavern
+      walls still block. The gate has no closed state yet.
+- Known: wall pieces are box-UV'd per piece, so the stone shows a faint seam every
+  64 cm; cave walls show a straight joint where two pieces meet (use a pillar).
 
 ## B-07 — HUD → Widget Blueprint, step 1: stats, XP, keybinds (2026-09-24)
 
@@ -1291,8 +1428,15 @@ panel keys. The code-built panel shows them in the meantime.
 
 Open features and improvements are tracked in Google Drive, folder
 "Valhalla 2.0 Backlog": the index document "Valhalla 2.0 — Backlog"
-(https://docs.google.com/document/d/1pGBSZFRmC25Vw6mJIIcS9fPpWIo_ufkfvQ_qNeDPWCk/edit)
+(https://docs.google.com/document/d/1MmGert5h6aDJx1TSdeO-gpdU7zDGqMaKnNZjBVI_6aA/edit)
 links one plan document per item (B-01 ...). Check it before starting new work.
 
-Current index (2026-09-23, supersedes the link above): "Valhalla 2.0 — Backlog"
-(https://docs.google.com/document/d/11_6hlP2HgrbNl8QTKk3NRAx1t_sf1rAE9gqlseRyW-A/edit).
+Current index (2026-09-24, supersedes the links above): "Valhalla 2.0 — Backlog"
+(https://docs.google.com/document/d/1swd398GJccpi1PJWxTR9hlbcAhifoV5_0A1iU2GSgKQ/edit).
+B-15 plan: https://docs.google.com/document/d/1rPej3Xn6kOdMX3fuJzbg3geO9o5SqFzcIMrrSG5EXe8/edit;
+asset list: https://docs.google.com/spreadsheets/d/1O0EMLM5b__j9z3URoybK_i6beZUKANp7vziid2nIoxc/edit
+(Docs/B-15 Art asset list.xlsx is the repo copy).
+
+Decision (Kevin, 2026-09-24): B-15 Wave 6 (creatures) is on hold. The first creatures
+can be free Unreal assets; the classes get built out first (backlog B-20) before more
+NPCs and creatures are added.

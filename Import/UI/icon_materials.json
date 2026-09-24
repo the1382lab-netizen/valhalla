@@ -1,0 +1,1241 @@
+{
+ "meshes": {
+  "SM_bow_hunting": [
+   [
+    "MI_Timber",
+    "MI_Timber"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ],
+   [
+    "M_Rope",
+    "M_Rope"
+   ]
+  ],
+  "SM_dagger_iron": [
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ]
+  ],
+  "SM_mace_priests": [
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ],
+   [
+    "M_MaceGlow",
+    "M_MaceGlow"
+   ],
+   [
+    "MI_Gold",
+    "MI_Gold"
+   ]
+  ],
+  "SM_shield_buckler_iron": [
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ],
+   [
+    "M_IronDark",
+    "M_IronDark"
+   ],
+   [
+    "MI_Gold",
+    "MI_Gold"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ]
+  ],
+  "SM_shield_kite_iron": [
+   [
+    "MI_PropWood",
+    "MI_PropWood"
+   ],
+   [
+    "M_IronDark",
+    "M_IronDark"
+   ],
+   [
+    "MI_ShieldBlue",
+    "MI_ShieldBlue"
+   ],
+   [
+    "MI_Gold",
+    "MI_Gold"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ]
+  ],
+  "SM_staff_apprentice": [
+   [
+    "MI_Timber",
+    "MI_Timber"
+   ],
+   [
+    "M_Rope",
+    "M_Rope"
+   ],
+   [
+    "M_OrbGlow",
+    "M_OrbGlow"
+   ]
+  ],
+  "SM_sword_iron": [
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ]
+  ],
+  "SM_totem_bone": [
+   [
+    "MI_Bone",
+    "MI_Bone"
+   ],
+   [
+    "MI_LeatherWrap",
+    "MI_LeatherWrap"
+   ],
+   [
+    "M_Rope",
+    "M_Rope"
+   ],
+   [
+    "M_MaceGlow",
+    "M_MaceGlow"
+   ]
+  ],
+  "SK_boots_cloth_slippers": [
+   [
+    "MI_ClothCream",
+    "MI_ClothCream"
+   ],
+   [
+    "MI_ClothBrown",
+    "MI_ClothBrown"
+   ]
+  ],
+  "SK_boots_iron_sabatons": [
+   [
+    "MI_IronPlate",
+    "MI_IronPlate"
+   ],
+   [
+    "M_IronDark",
+    "M_IronDark"
+   ]
+  ],
+  "SK_boots_ranger": [
+   [
+    "MI_Leather",
+    "MI_Leather"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_chest_apprentice_robe": [
+   [
+    "MI_ClothBlue",
+    "MI_ClothBlue"
+   ],
+   [
+    "MI_ClothCream",
+    "MI_ClothCream"
+   ],
+   [
+    "M_Rope",
+    "M_Rope"
+   ]
+  ],
+  "SK_chest_priests_chain": [
+   [
+    "MI_Chainmail",
+    "MI_Chainmail"
+   ],
+   [
+    "MI_ClothCream",
+    "MI_ClothCream"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_chest_travelers_jerkin": [
+   [
+    "MI_Leather",
+    "MI_Leather"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ],
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ]
+  ],
+  "SK_cloak_warden": [
+   [
+    "MI_ClothGreen",
+    "MI_ClothGreen"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ],
+   [
+    "MI_Steel",
+    "MI_Steel"
+   ]
+  ],
+  "SK_gloves_cloth_wraps": [
+   [
+    "MI_ClothCream",
+    "MI_ClothCream"
+   ],
+   [
+    "MI_ClothBrown",
+    "MI_ClothBrown"
+   ]
+  ],
+  "SK_gloves_iron_gauntlets": [
+   [
+    "MI_IronPlate",
+    "MI_IronPlate"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_gloves_ranger_bracers": [
+   [
+    "MI_Leather",
+    "MI_Leather"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_hat_adept": [
+   [
+    "MI_ClothBlue",
+    "MI_ClothBlue"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_helm_iron_full": [
+   [
+    "MI_IronPlate",
+    "MI_IronPlate"
+   ],
+   [
+    "M_IronDark",
+    "M_IronDark"
+   ]
+  ],
+  "SK_hood_scout": [
+   [
+    "MI_Leather",
+    "MI_Leather"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ],
+  "SK_legs_apprentice_robe": [
+   [
+    "MI_ClothBlue",
+    "MI_ClothBlue"
+   ],
+   [
+    "MI_ClothCream",
+    "MI_ClothCream"
+   ]
+  ],
+  "SK_legs_iron_plate": [
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ],
+   [
+    "MI_IronPlate",
+    "MI_IronPlate"
+   ]
+  ],
+  "SK_legs_travelers": [
+   [
+    "MI_ClothBrown",
+    "MI_ClothBrown"
+   ],
+   [
+    "MI_Leather",
+    "MI_Leather"
+   ],
+   [
+    "MI_LeatherDark",
+    "MI_LeatherDark"
+   ]
+  ]
+ },
+ "materials": {
+  "MI_Timber": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Timber.MI_Timber",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 0.7400000095367432,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.7200000286102295,
+     0.6200000047683716,
+     0.550000011920929,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Timber/T_Timber_N.T_Timber_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Timber/T_Timber_BC.T_Timber_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Timber/T_Timber_ORM.T_Timber_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_LeatherWrap": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_LeatherWrap.MI_LeatherWrap",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.6000000238418579,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.20000000298023224,
+     0.11999999731779099,
+     0.07000000029802322,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "M_Rope": {
+   "path": "/Game/Valhalla/Characters/Materials/M_Rope.M_Rope",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.8500000238418579,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.4423229992389679,
+     0.32972899079322815,
+     0.14497199654579163,
+     1.0
+    ],
+    "BaseColor": [
+     0.4423229992389679,
+     0.32972899079322815,
+     0.14497199654579163,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "MI_Steel": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Steel.MI_Steel",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 1.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.2800000011920929,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.6200000047683716,
+     0.6299999952316284,
+     0.6600000262260437,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "M_MaceGlow": {
+   "path": "/Game/Valhalla/Characters/Materials/M_MaceGlow.M_MaceGlow",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.4000000059604645,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 6.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     1.0,
+     0.6800199747085571,
+     0.14799800515174866,
+     1.0
+    ],
+    "BaseColor": [
+     1.0,
+     0.6800199747085571,
+     0.14799800515174866,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "MI_Gold": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Gold.MI_Gold",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 1.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.41999998688697815,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.800000011920929,
+     0.5199999809265137,
+     0.1599999964237213,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "M_IronDark": {
+   "path": "/Game/Valhalla/Characters/Materials/M_IronDark.M_IronDark",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 1.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.4000000059604645,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.07805699855089188,
+     0.09151799976825714,
+     0.10615599900484085,
+     1.0
+    ],
+    "BaseColor": [
+     0.07805699855089188,
+     0.09151799976825714,
+     0.10615599900484085,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "MI_PropWood": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_PropWood.MI_PropWood",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.2000000476837158,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     1.0499999523162842,
+     0.949999988079071,
+     0.8500000238418579,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/DoorPlanks/T_DoorPlanks_N.T_DoorPlanks_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/DoorPlanks/T_DoorPlanks_BC.T_DoorPlanks_BC",
+    "ORMMap": "/Game/Valhalla/Textures/DoorPlanks/T_DoorPlanks_ORM.T_DoorPlanks_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_ShieldBlue": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_ShieldBlue.MI_ShieldBlue",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.7200000286102295,
+    "MetallicScale": 1.0,
+    "Specular": 0.30000001192092896,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.02500000037252903,
+     0.05999999865889549,
+     0.2199999988079071,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "M_OrbGlow": {
+   "path": "/Game/Valhalla/Characters/Materials/M_OrbGlow.M_OrbGlow",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.4000000059604645,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 6.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.21576400101184845,
+     0.6940810084342957,
+     1.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.21576400101184845,
+     0.6940810084342957,
+     1.0,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "MI_Bone": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Bone.MI_Bone",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 256.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.6000000238418579,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.8199999928474426,
+     0.7799999713897705,
+     0.6600000262260437,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Engine/EngineMaterials/DefaultNormal.DefaultNormal",
+    "BaseColorMap": "/Engine/EngineResources/WhiteSquareTexture.WhiteSquareTexture",
+    "ORMMap": "/Game/Valhalla/Textures/_Defaults/T_Default_ORM.T_Default_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": false
+   }
+  },
+  "MI_ClothCream": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_ClothCream.MI_ClothCream",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 3.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.800000011920929,
+     0.7200000286102295,
+     0.550000011920929,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Wool/T_Wool_N.T_Wool_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Wool/T_Wool_BC.T_Wool_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Wool/T_Wool_ORM.T_Wool_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_ClothBrown": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_ClothBrown.MI_ClothBrown",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 3.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.33000001311302185,
+     0.2199999988079071,
+     0.14000000059604645,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Wool/T_Wool_N.T_Wool_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Wool/T_Wool_BC.T_Wool_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Wool/T_Wool_ORM.T_Wool_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_IronPlate": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_IronPlate.MI_IronPlate",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 1.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.8500000238418579,
+     0.8500000238418579,
+     0.8500000238418579,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/IronPlate/T_IronPlate_N.T_IronPlate_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/IronPlate/T_IronPlate_BC.T_IronPlate_BC",
+    "ORMMap": "/Game/Valhalla/Textures/IronPlate/T_IronPlate_ORM.T_IronPlate_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_Leather": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Leather.MI_Leather",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 2.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     1.0,
+     1.0,
+     1.0,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Leather/T_Leather_N.T_Leather_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Leather/T_Leather_BC.T_Leather_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Leather/T_Leather_ORM.T_Leather_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_LeatherDark": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_LeatherDark.MI_LeatherDark",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 2.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.41999998688697815,
+     0.36000001430511475,
+     0.33000001311302185,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Leather/T_Leather_N.T_Leather_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Leather/T_Leather_BC.T_Leather_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Leather/T_Leather_ORM.T_Leather_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_ClothBlue": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_ClothBlue.MI_ClothBlue",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 3.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.11999999731779099,
+     0.20000000298023224,
+     0.47999998927116394,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Wool/T_Wool_N.T_Wool_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Wool/T_Wool_BC.T_Wool_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Wool/T_Wool_ORM.T_Wool_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_Chainmail": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_Chainmail.MI_Chainmail",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 3.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.8999999761581421,
+     0.8999999761581421,
+     0.9200000166893005,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Chainmail/T_Chainmail_N.T_Chainmail_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Chainmail/T_Chainmail_BC.T_Chainmail_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Chainmail/T_Chainmail_ORM.T_Chainmail_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  },
+  "MI_ClothGreen": {
+   "path": "/Game/Valhalla/Materials/Sets/MI_ClothGreen.MI_ClothGreen",
+   "class": "MaterialInstanceConstant",
+   "master": "M_ValhallaPBR",
+   "scalars": {
+    "AOStrength": 1.0,
+    "MacroScale": 900.0,
+    "UVScale": 3.0,
+    "TextureWorldSize": 160.0,
+    "Grime": 0.0,
+    "RoughnessScale": 1.0,
+    "Metallic": 0.0,
+    "UseVertexColor": 0.0,
+    "MacroVariation": 0.0,
+    "Roughness": 0.75,
+    "MetallicScale": 1.0,
+    "Specular": 0.5,
+    "EmissiveStrength": 0.0
+   },
+   "vectors": {
+    "EmissiveColor": [
+     0.0,
+     0.0,
+     0.0,
+     1.0
+    ],
+    "BaseColor": [
+     0.1599999964237213,
+     0.25999999046325684,
+     0.15000000596046448,
+     1.0
+    ],
+    "GrimeColor": [
+     0.11999999731779099,
+     0.10000000149011612,
+     0.07999999821186066,
+     1.0
+    ]
+   },
+   "textures": {
+    "NormalMap": "/Game/Valhalla/Textures/Wool/T_Wool_N.T_Wool_N",
+    "BaseColorMap": "/Game/Valhalla/Textures/Wool/T_Wool_BC.T_Wool_BC",
+    "ORMMap": "/Game/Valhalla/Textures/Wool/T_Wool_ORM.T_Wool_ORM"
+   },
+   "switches": {
+    "WorldAlignedUV": false,
+    "UseTextures": true
+   }
+  }
+ }
+}

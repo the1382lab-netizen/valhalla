@@ -279,6 +279,35 @@ void AValhallaCharacter::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& O
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(AValhallaCharacter, bDeathPresentation);
+	DOREPLIFETIME(AValhallaCharacter, bSitting);
+}
+
+void AValhallaCharacter::SetSitting(bool bInSitting)
+{
+	if (!HasAuthority() || bSitting == bInSitting)
+	{
+		return;
+	}
+	bSitting = bInSitting;
+	OnRep_Sitting();   // the listen server's own body
+	UE_LOG(LogValhallaVisual, Log, TEXT("%s %s"), *GetName(), bSitting ? TEXT("sits down") : TEXT("stands up"));
+}
+
+void AValhallaCharacter::OnRep_Sitting()
+{
+	if (AnimComponent)
+	{
+		AnimComponent->SetSitting(bSitting);
+	}
+}
+
+void AValhallaCharacter::MulticastEmote_Implementation(uint8 Emote)
+{
+	const EValhallaAnim Anim = static_cast<EValhallaAnim>(Emote);
+	if (AnimComponent && (Anim == EValhallaAnim::EmoteWave || Anim == EValhallaAnim::EmoteCheer || Anim == EValhallaAnim::EmoteBow))
+	{
+		AnimComponent->PlayEmote(Anim);
+	}
 }
 
 void AValhallaCharacter::OnRep_DeathPresentation()
@@ -291,6 +320,10 @@ void AValhallaCharacter::SetDeathPresentation(bool bDead)
 	if (HasAuthority())
 	{
 		bDeathPresentation = bDead;
+		if (bDead)
+		{
+			bSitting = false;   // AnimComponent->SetDead below clears the pose
+		}
 	}
 
 	// The body stays on screen and plays `A_Death`, holding its last frame.
@@ -766,12 +799,14 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 		const bool bHasWeapon = !WeaponId.IsNone();
 		const EValhallaGrip Grip = UValhallaVisuals::GripForWeapon(this, WeaponId);
 		const bool bBow = bHasWeapon && Grip == EValhallaGrip::Bow;
-		// A bow and a staff need both hands (the staff attack is a two-handed
-		// thrust), so a shield is neither carried nor drawn while one is held.
-		const bool bTwoHanded = bHasWeapon && (bBow || Grip == EValhallaGrip::Staff);
+		// A bow, a staff and a greatsword need both hands (the staff attack is
+		// a two-handed thrust, the greatsword a two-handed chop), so a shield
+		// is neither carried nor drawn while one is held.
+		const EValhallaAnim AttackAnim = UValhallaVisuals::AttackAnimForWeapon(this, WeaponId);
+		const bool bTwoHanded = bHasWeapon
+			&& (bBow || Grip == EValhallaGrip::Staff || AttackAnim == EValhallaAnim::Attack2H);
 		const bool bShield = !bTwoHanded && !ValhallaPS->GetEquipped(EValhallaEquipSlot::Offhand).IsNone();
-		AnimComponent->SetWeaponLoadout(UValhallaVisuals::AttackAnimForWeapon(this, WeaponId),
-			bHasWeapon && !bBow, bBow, bShield);
+		AnimComponent->SetWeaponLoadout(AttackAnim, bHasWeapon && !bBow, bBow, bShield);
 		if (OffhandMesh && UValhallaVisuals::UseExternalBody())
 		{
 			OffhandMesh->SetVisibility(!bTwoHanded);

@@ -31,6 +31,8 @@ enum class EValhallaChatAction : uint8
 	PartyDecline,
 	/** `/leave`. */
 	PartyLeave,
+	/** `/sit` `/stand` `/wave` `/cheer` `/bow` — ServerEmote(Text), Text = the verb. */
+	Emote,
 	/** A known command used wrongly; `Text` is the usage line to show locally. */
 	Usage,
 	/** `/something-else`; `Text` is "Unknown command: /something-else". */
@@ -62,6 +64,7 @@ namespace ValhallaChat
 	 *   /p /party <text>          party, sticky
 	 *   /w /whisper <name> <text> whisper
 	 *   /invite <name>  /accept  /decline  /leave
+	 *   /sit /stand /wave /cheer /bow
 	 *   anything else with a leading slash → Unknown
 	 *   no slash → Send on `CurrentChannel`
 	 */

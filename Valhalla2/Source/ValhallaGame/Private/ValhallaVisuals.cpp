@@ -80,6 +80,13 @@ FString UValhallaVisuals::AnimPath(EValhallaAnim Anim)
 		case EValhallaAnim::PoseGripRight: Clip = TEXT("MHP_GripR");                   break;
 		case EValhallaAnim::PoseGripLeft:  Clip = TEXT("MHP_GripL");                   break;
 		case EValhallaAnim::PoseShieldArm: Clip = TEXT("MHP_ShieldArm");               break;
+		case EValhallaAnim::Sit:           Clip = TEXT("MH_Sit");                      break;
+		case EValhallaAnim::EmoteWave:     Clip = TEXT("MH_Emote_Wave");               break;
+		case EValhallaAnim::EmoteCheer:    Clip = TEXT("MH_Emote_Cheer");              break;
+		case EValhallaAnim::EmoteBow:      Clip = TEXT("MH_Emote_Bow");                break;
+		case EValhallaAnim::Attack2H:      Clip = TEXT("MH_Attack_2H");                break;
+		case EValhallaAnim::Block:         Clip = TEXT("MH_Block");                    break;
+		case EValhallaAnim::Dodge:         Clip = TEXT("MH_Dodge");                    break;
 		}
 		return FString::Printf(TEXT("/Game/Valhalla/Characters/MetaHuman/Animations/%s"), Clip);
 	}
@@ -116,6 +123,13 @@ FString UValhallaVisuals::AnimPath(EValhallaAnim Anim)
 	case EValhallaAnim::Cast:   Name = TEXT("A_Cast");   break;
 	case EValhallaAnim::Hit:    Name = TEXT("A_Hit");    break;
 	case EValhallaAnim::Death:  Name = TEXT("A_Death");  break;
+	case EValhallaAnim::Sit:        Name = TEXT("A_Sit");         break;
+	case EValhallaAnim::EmoteWave:  Name = TEXT("A_Emote_Wave");  break;
+	case EValhallaAnim::EmoteCheer: Name = TEXT("A_Emote_Cheer"); break;
+	case EValhallaAnim::EmoteBow:   Name = TEXT("A_Emote_Bow");   break;
+	case EValhallaAnim::Attack2H:   Name = TEXT("A_Attack2H");    break;
+	case EValhallaAnim::Block:      Name = TEXT("A_Block");       break;
+	case EValhallaAnim::Dodge:      Name = TEXT("A_Dodge");       break;
 	default: break;
 	}
 
@@ -398,7 +412,8 @@ EValhallaAnim UValhallaVisuals::AttackAnimForWeapon(const UObject* WorldContext,
 	if (Style == TEXT("staff"))  { return EValhallaAnim::AttackStaff; }
 	if (Style == TEXT("mace"))   { return EValhallaAnim::AttackMace; }
 	if (Style == TEXT("dagger")) { return EValhallaAnim::AttackDagger; }
-	return EValhallaAnim::AttackSword;   // sword, greatsword, and anything new
+	if (Style == TEXT("greatsword")) { return EValhallaAnim::Attack2H; }
+	return EValhallaAnim::AttackSword;   // sword, and anything new
 }
 
 EValhallaAnim UValhallaVisuals::AnimForAttackCycle(EValhallaAttackCycle Cycle)

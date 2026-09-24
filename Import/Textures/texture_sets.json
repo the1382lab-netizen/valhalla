@@ -17,6 +17,15 @@
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/hessian_230"
   },
+  "Cactus": {
+    "id": "wave3_cactus_texture.py",
+    "license": "own work (B-15)",
+    "note": "cactus rib tile (wave3_cactus_texture.py)",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
+  },
   "Canvas": {
     "id": "cotton_jersey",
     "license": "CC0",
@@ -25,6 +34,24 @@
     "resolution": "1k",
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/cotton_jersey"
+  },
+  "CaveFloor": {
+    "id": "dark_rock",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.421,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/dark_rock"
+  },
+  "CaveRock": {
+    "id": "dark_rock_02",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.001,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/dark_rock_02"
   },
   "Chainmail": {
     "id": "Chainmail004",
@@ -44,6 +71,33 @@
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/cobblestone_floor_001"
   },
+  "CrackedEarth": {
+    "id": "dry_ground_01",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 4.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/dry_ground_01"
+  },
+  "DarkPlanks": {
+    "id": "dark_wooden_planks",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/dark_wooden_planks"
+  },
+  "DesertSand": {
+    "id": "Ground080",
+    "license": "CC0",
+    "note": "B-15 Wave 3. Maps: Color, NormalDX, ORM packed from AmbientOcclusion+Roughness+metallic=0.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Ground080"
+  },
   "DirtPath": {
     "id": "stony_dirt_path",
     "license": "CC0",
@@ -62,6 +116,33 @@
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/weathered_planks"
   },
+  "Fern": {
+    "id": "wave5_foliage_textures.py",
+    "license": "own work (B-15)",
+    "note": "fern frond card",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
+  },
+  "FlowersA": {
+    "id": "wave5_foliage_textures.py",
+    "license": "own work (B-15)",
+    "note": "meadow flowers, yellow and white",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
+  },
+  "FlowersB": {
+    "id": "wave5_foliage_textures.py",
+    "license": "own work (B-15)",
+    "note": "meadow flowers, violet and blue",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
+  },
   "GrassGround": {
     "id": "Grass004",
     "license": "CC0",
@@ -70,6 +151,15 @@
     "resolution": "2K-PNG",
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Grass004"
+  },
+  "GrassTuft": {
+    "id": "wave5_foliage_textures.py",
+    "license": "own work (B-15)",
+    "note": "grass blades card",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
   },
   "HairStrands": {
     "id": "wave2_body_textures.bake_hair",
@@ -88,6 +178,15 @@
     "resolution": "2K-PNG",
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Metal009"
+  },
+  "KeepStone": {
+    "id": "medieval_blocks_03",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/medieval_blocks_03"
   },
   "LeafCluster": {
     "id": "LeafSet016",
@@ -116,6 +215,60 @@
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Leather028"
   },
+  "LogBark": {
+    "id": "bark_brown_02",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/bark_brown_02"
+  },
+  "Marble": {
+    "id": "marble_01",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.5,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/marble_01"
+  },
+  "MossyRock": {
+    "id": "mossy_rock",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 3.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/mossy_rock"
+  },
+  "OakPlanks": {
+    "id": "oak_wood_planks",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.2,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/oak_wood_planks"
+  },
+  "PalmBark": {
+    "id": "palm_bark",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.86,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/palm_bark"
+  },
+  "PalmFrond": {
+    "id": "wave3_palm_texture.py",
+    "license": "own work (B-15)",
+    "note": "palm frond card (wave3_palm_texture.py)",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
+  },
   "Plaster": {
     "id": "plastered_wall_02",
     "license": "CC0",
@@ -124,6 +277,15 @@
     "resolution": "2k",
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/plastered_wall_02"
+  },
+  "Reeds": {
+    "id": "wave5_foliage_textures.py",
+    "license": "own work (B-15)",
+    "note": "reeds and cattails card",
+    "real_size_m": 0.0,
+    "resolution": "512",
+    "source": "procedural",
+    "url": ""
   },
   "Rock": {
     "id": "Rock030",
@@ -134,6 +296,42 @@
     "source": "ambientcg",
     "url": "https://ambientcg.com/view?id=Rock030"
   },
+  "RuinStone": {
+    "id": "mossy_stone_wall",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/mossy_stone_wall"
+  },
+  "SandRipples": {
+    "id": "Ground097",
+    "license": "CC0",
+    "note": "B-15 Wave 3. Maps: Color, NormalDX, ORM packed from AmbientOcclusion+Roughness+metallic=0.",
+    "real_size_m": 1.0,
+    "resolution": "2K-PNG",
+    "source": "ambientcg",
+    "url": "https://ambientcg.com/view?id=Ground097"
+  },
+  "SandstoneBlocks": {
+    "id": "sandstone_blocks_05",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 3.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/sandstone_blocks_05"
+  },
+  "SandstoneRock": {
+    "id": "old_sandstone_02",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.53,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/old_sandstone_02"
+  },
   "SkinBase": {
     "id": "wave2_body_textures.bake_skin",
     "license": "own work (B-15 Wave 2)",
@@ -142,6 +340,15 @@
     "resolution": "2k",
     "source": "procedural",
     "url": ""
+  },
+  "SlateRoof": {
+    "id": "grey_roof_tiles_02",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 1.5,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/grey_roof_tiles_02"
   },
   "StoneFloor": {
     "id": "stone_tiles_02",
@@ -160,6 +367,24 @@
     "resolution": "2k",
     "source": "polyhaven",
     "url": "https://polyhaven.com/a/castle_wall_slates"
+  },
+  "TempleFloor": {
+    "id": "marble_mosaic_tiles",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/marble_mosaic_tiles"
+  },
+  "TempleStone": {
+    "id": "white_sandstone_bricks_03",
+    "license": "CC0",
+    "note": "B-15 Wave 3 (wave3_polyhaven.py): nor_dx and arm as shipped.",
+    "real_size_m": 2.0,
+    "resolution": "2k",
+    "source": "polyhaven",
+    "url": "https://polyhaven.com/a/white_sandstone_bricks_03"
   },
   "Thatch": {
     "id": "reed_roof_04",

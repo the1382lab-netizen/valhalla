@@ -138,8 +138,9 @@ void UValhallaAnimInstance::PlayAction(UAnimSequence* Sequence, bool bLoop, floa
 	ActionTarget = 1.f;
 }
 
-void UValhallaAnimInstance::StopAction()
+void UValhallaAnimInstance::StopAction(float BlendOutSeconds)
 {
+	ActionBlendOut = BlendOutSeconds >= 0.f ? BlendOutSeconds : ActionBlendOutSeconds;
 	ActionTarget = 0.f;
 	AdditiveTarget = 0.f;
 }
@@ -167,7 +168,7 @@ void UValhallaAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	WalkAlpha = StepAlpha(WalkAlpha, WalkTarget, LocomotionBlendSeconds, DeltaSeconds);
 	ActionAlpha = StepAlpha(
 		ActionAlpha, ActionTarget,
-		ActionTarget > ActionAlpha ? ActionBlendIn : ActionBlendOutSeconds,
+		ActionTarget > ActionAlpha ? ActionBlendIn : ActionBlendOut,
 		DeltaSeconds);
 
 	// This is the AnimBlueprint "write your variables in Event Blueprint Update

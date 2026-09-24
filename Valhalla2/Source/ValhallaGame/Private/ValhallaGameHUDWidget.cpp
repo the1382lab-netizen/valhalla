@@ -34,7 +34,9 @@
 #include "Components/UniformGridSlot.h"
 #include "Components/VerticalBox.h"
 #include "Components/VerticalBoxSlot.h"
+#include "Engine/GameViewportClient.h"
 #include "Engine/Texture2D.h"
+#include "Widgets/SViewport.h"
 #include "EngineUtils.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/FileManager.h"
@@ -446,6 +448,47 @@ namespace
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  Frame art (B-15 Wave 4)
+// ═════════════════════════════════════════════════════════════════════════════
+
+namespace ValhallaHudArt
+{
+	/**
+	 * A nine-slice brush from a frame texture. `MarginPx` is the border in the
+	 * texture's own pixels (x, y); `BorderPx` is how wide that border draws on
+	 * screen, which sets the brush's image size.
+	 */
+	static FSlateBrush BoxBrush(UTexture2D* Texture, const FVector2D& MarginPx, float BorderPx)
+	{
+		FSlateBrush Brush;
+		if (!Texture)
+		{
+			return Brush;
+		}
+		const FVector2D Size(FMath::Max(1, Texture->GetSizeX()), FMath::Max(1, Texture->GetSizeY()));
+		const float Scale = BorderPx / FMath::Max(1.0, MarginPx.X);
+		Brush.SetResourceObject(Texture);
+		Brush.ImageSize = Size * Scale;
+		Brush.DrawAs = ESlateBrushDrawType::Box;
+		Brush.Margin = FMargin(MarginPx.X / Size.X, MarginPx.Y / Size.Y);
+		Brush.TintColor = FSlateColor(FLinearColor::White);
+		return Brush;
+	}
+
+	static FSlateBrush ImageBrush(UTexture2D* Texture)
+	{
+		FSlateBrush Brush;
+		if (Texture)
+		{
+			Brush.SetResourceObject(Texture);
+			Brush.ImageSize = FVector2D(Texture->GetSizeX(), Texture->GetSizeY());
+			Brush.DrawAs = ESlateBrushDrawType::Image;
+		}
+		return Brush;
+	}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  UValhallaHUDSlotWidget
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -622,8 +665,17 @@ void UValhallaHUDSlotWidget::SetAbbrev(const FString& Text, const FLinearColor& 
 	Abbrev->SetVisibility(Text.IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::HitTestInvisible);
 }
 
-void UValhallaHUDSlotWidget::SetSkillIcon(const FString& Code, const FLinearColor& Category, const FLinearColor& SkillColour)
+void UValhallaHUDSlotWidget::SetSkillIcon(const FString& Code, const FLinearColor& Category, const FLinearColor& SkillColour, UTexture2D* Texture)
 {
+	if (Texture)
+	{
+		// The painted icon (Import/UI/Icons/Skills) fills the well; no code.
+		SkillTile->SetVisibility(ESlateVisibility::Collapsed);
+		SetAbbrev(FString(), FLinearColor::White);
+		SetIcon(Texture);
+		return;
+	}
+	SetIcon(nullptr);
 	// Rounded square, category fill, a 1.5 px rim in the skill's own colour.
 	SkillTile->SetBrush(FSlateRoundedBoxBrush(Category, 6.f, SkillColour, 1.5f));
 	SkillTile->SetBrushColor(FLinearColor::White);
@@ -687,6 +739,22 @@ void UValhallaHUDSlotWidget::SetDimmed(bool bDimmed)
 	}
 }
 
+void UValhallaHUDSlotWidget::SetFrameArt(UTexture2D* SlotTexture, const FVector2D& MarginPx, float BorderPx, float FramePadding)
+{
+	EnsureTree();
+	if (!SlotTexture)
+	{
+		return;
+	}
+	bFrameArt = true;
+	// By default T_UI_Slot: 10 px of the 64 px texture is rim, drawn 4 px wide
+	// whatever the cell size. The combat log passes the panel art instead.
+	Frame->SetBrush(ValhallaHudArt::BoxBrush(SlotTexture, MarginPx, BorderPx));
+	Frame->SetBrushColor(FLinearColor::White);
+	Frame->SetPadding(FMargin(FramePadding));
+	Fill->SetBrushColor(FLinearColor::Transparent);
+}
+
 void UValhallaHUDSlotWidget::SetSelected(bool bSelected)
 {
 	if (bDesignerTree)
@@ -700,6 +768,11 @@ void UValhallaHUDSlotWidget::SetSelected(bool bSelected)
 		{
 			Frame->SetBrushColor(bSelected ? HighlightColour : DesignerFrameColour);
 		}
+		return;
+	}
+	if (bFrameArt)
+	{
+		Frame->SetBrushColor(bSelected ? HighlightColour : FLinearColor::White);
 		return;
 	}
 	Frame->SetBrushColor(bSelected ? HighlightColour : BorderColour);
@@ -1022,6 +1095,27 @@ void UValhallaHUDBarWidget::SetLabelVisible(bool bVisible)
 	}
 }
 
+void UValhallaHUDBarWidget::SetFrameArt(UTexture2D* FrameTexture, UTexture2D* FillTexture)
+{
+	EnsureTree();
+	if (bDesignerTree)
+	{
+		return;
+	}
+	if (FrameTexture)
+	{
+		// An iron frame (6 px of 128 x 24), drawn 3 px wide.
+		Frame->SetBrush(ValhallaHudArt::BoxBrush(FrameTexture, FVector2D(6.f, 6.f), 3.f));
+		Frame->SetBrushColor(FLinearColor::White);
+		Frame->SetPadding(FMargin(2.f));
+	}
+	if (FillTexture)
+	{
+		// A glossy grey ramp; the bar colour tints it (SetFillColour sets the brush colour).
+		Fill->SetBrush(ValhallaHudArt::ImageBrush(FillTexture));
+	}
+}
+
 UValhallaHUDBarWidget* UValhallaGameHUDWidget::MakeBar(float Width, float Height, const FLinearColor& FillColour,
 	const FLinearColor& Background, float BackgroundAlpha, bool bWithOverlay, int32 FontSize)
 {
@@ -1032,6 +1126,7 @@ UValhallaHUDBarWidget* UValhallaGameHUDWidget::MakeBar(float Width, float Height
 	Bar->Setup(Width, Height, FillColour, Background, BackgroundAlpha, bWithOverlay, FontSize);
 	// A bar C++ makes (party, nameplates) is C++'s size, designer tree or not.
 	Bar->SetBarSize(Width, Height);
+	Bar->SetFrameArt(FindUiTexture(TEXT("T_UI_BarFrame")), FindUiTexture(TEXT("T_UI_BarFill")));
 	return Bar;
 }
 
@@ -1044,11 +1139,20 @@ UTextBlock* UValhallaGameHUDWidget::MakeText(const FString& Content, int32 Size,
 	return Text;
 }
 
-UBorder* UValhallaGameHUDWidget::MakePanel(const FLinearColor& Colour, float Alpha, float PanelPadding)
+UBorder* UValhallaGameHUDWidget::MakePanel(const FLinearColor& Colour, float Alpha, float PanelPadding, bool bFramed)
 {
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 	Panel->SetBrushColor(WithAlpha(Colour, Alpha));
 	Panel->SetPadding(FMargin(PanelPadding));
+	UTexture2D* PanelArt = (bFramed && Alpha > 0.f) ? FindUiTexture(TEXT("T_UI_Panel")) : nullptr;
+	if (PanelArt)
+	{
+		// Leather in bronze trim (24 px of 256 is trim), drawn 10 px wide.
+		// Nearly opaque: the trim should not look washed out over the world.
+		Panel->SetBrush(ValhallaHudArt::BoxBrush(PanelArt, FVector2D(24.f, 24.f), 10.f));
+		Panel->SetBrushColor(FLinearColor(1.f, 1.f, 1.f, FMath::Max(Alpha, 0.94f)));
+		Panel->SetPadding(FMargin(PanelPadding + 10.f));
+	}
 	// A panel eats clicks, so clicking the inventory does not also select
 	// whatever is standing behind it.
 	Panel->SetVisibility(ESlateVisibility::Visible);
@@ -1062,6 +1166,20 @@ UValhallaHUDButton* UValhallaGameHUDWidget::MakeButton(const FString& Caption, E
 	Button->Index = Index;
 	Button->Hud = this;
 	Button->SetBackgroundColor(Tint);
+	if (UTexture2D* ButtonArt = FindUiTexture(TEXT("T_UI_Button")))
+	{
+		// A bronze plate: 10 px of the 64 x 32 texture is bevel, drawn 5 px.
+		FButtonStyle Style = Button->GetStyle();
+		FSlateBrush Plate = ValhallaHudArt::BoxBrush(ButtonArt, FVector2D(10.f, 10.f), 5.f);
+		Style.SetNormal(Plate);
+		Plate.TintColor = FSlateColor(FLinearColor(1.25f, 1.2f, 1.1f));
+		Style.SetHovered(Plate);
+		Plate.TintColor = FSlateColor(FLinearColor(0.75f, 0.72f, 0.68f));
+		Style.SetPressed(Plate);
+		Style.SetNormalPadding(FMargin(8.f, 2.f));
+		Style.SetPressedPadding(FMargin(8.f, 3.f, 8.f, 1.f));
+		Button->SetStyle(Style);
+	}
 	Button->AddChild(MakeText(Caption, 9, FLinearColor::Black, true, 0.f));
 	Button->OnClicked.AddDynamic(Button, &UValhallaHUDButton::HandleClicked);
 	return Button;
@@ -1083,6 +1201,10 @@ UValhallaHUDSlotWidget* UValhallaGameHUDWidget::MakeCell(EValhallaHUDSlotKind Ki
 		bActionBar ? Srgb(0x1a, 0x1a, 0x1a) : Srgb(0x2a, 0x2a, 0x3e),
 		bActionBar ? Srgb(0x66, 0x66, 0x66) : Srgb(0x33, 0x33, 0x55),
 		HighlightColour);
+	if (!Cell->HasDesignerTree())
+	{
+		Cell->SetFrameArt(FindUiTexture(TEXT("T_UI_Slot")));
+	}
 	Cell->Clear();
 	return Cell;
 }
@@ -1529,8 +1651,11 @@ void UValhallaGameHUDWidget::BindDesignerPanels()
 		LogCell->Index = 0;
 	}
 
-	// The chat box's commit handler.
+	// The chat box. By default a text box clears keyboard focus after its commit
+	// handler runs, which undoes CloseChat's hand-back to the game viewport:
+	// Enter then reached nothing until the player clicked the screen.
 	ChatInput->OnTextCommitted.AddUniqueDynamic(this, &UValhallaGameHUDWidget::HandleChatCommitted);
+	ChatInput->SetClearKeyboardFocusOnCommit(false);
 }
 
 void UValhallaGameHUDWidget::PopulateDesignerPanels()
@@ -1977,9 +2102,9 @@ void UValhallaGameHUDWidget::TickActionBar()
 		Cell->bFilled = true;
 		Cell->Id = SkillId;
 
-		// The generated icon: a category-tinted rounded tile with skills.json's
-		// two-letter code, drawn by Slate rather than baked into 41 textures.
-		Cell->SetSkillIcon(SkillCode(*Skill), CategoryColour(Skill->Category), Packed(Skill->IconColor));
+		// The painted icon (B-15 Wave 4) when there is one, else the generated
+		// tile: category colour with skills.json's two-letter code.
+		Cell->SetSkillIcon(SkillCode(*Skill), CategoryColour(Skill->Category), Packed(Skill->IconColor), FindSkillIcon(SkillId));
 
 		const float Remaining = Skills->GetSlotCooldownRemaining(Cell->Index);
 		const float Total = FMath::Max(Skill->CooldownMs / 1000.f, Remaining);
@@ -2920,7 +3045,7 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 			UValhallaHUDSlotWidget* Cell = MakeCell(EValhallaHUDSlotKind::Skill, INDEX_NONE, SkillSlotSize);
 			Cell->bFilled = true;
 			Cell->Id = SkillId;
-			Cell->SetSkillIcon(SkillCode(*Skill), CategoryColour(Skill->Category), Packed(Skill->IconColor));
+			Cell->SetSkillIcon(SkillCode(*Skill), CategoryColour(Skill->Category), Packed(Skill->IconColor), FindSkillIcon(SkillId));
 			const bool bLocked = PS->Level < Skill->LevelRequired;
 			Cell->SetDimmed(bLocked);
 			Row->AddChildToHorizontalBox(Cell);
@@ -3460,7 +3585,8 @@ UTexture2D* UValhallaGameHUDWidget::FindItemIcon(FName ItemId)
 			Texture = FImageUtils::ImportFileAsTexture2D(DiskPath);
 			if (Texture)
 			{
-				Texture->Filter = TF_Nearest;
+				// The 1.0 icons are 32 px pixel art; the Wave 4 renders are 128 px.
+				Texture->Filter = Texture->GetSizeX() <= 32 ? TF_Nearest : TF_Bilinear;
 				Texture->UpdateResource();
 			}
 			else
@@ -3471,6 +3597,46 @@ UTexture2D* UValhallaGameHUDWidget::FindItemIcon(FName ItemId)
 	}
 
 	IconCache.Add(ItemId, Texture);
+	return Texture;
+}
+
+UTexture2D* UValhallaGameHUDWidget::FindSkillIcon(FName SkillId)
+{
+	return SkillId.IsNone() ? nullptr : LoadUiTexture(TEXT("Icons/Skills"), TEXT("Icons/Skills"), SkillId.ToString(), false);
+}
+
+UTexture2D* UValhallaGameHUDWidget::FindUiTexture(const FString& Name)
+{
+	return LoadUiTexture(TEXT("Frames"), TEXT("Frames"), Name, false);
+}
+
+UTexture2D* UValhallaGameHUDWidget::LoadUiTexture(const FString& AssetFolder, const FString& DiskFolder, const FString& Name, bool bPixelArtFilter)
+{
+	const FString Key = AssetFolder + TEXT("/") + Name;
+	if (TObjectPtr<UTexture2D>* Cached = UiTextureCache.Find(Key))
+	{
+		return *Cached;
+	}
+
+	// The imported copy first (import_ui_icons.py), then the PNG on disk, as
+	// FindItemIcon does, so new art shows in the editor before an import.
+	const FString AssetPath = FString::Printf(TEXT("/Game/Valhalla/UI/%s/%s.%s"), *AssetFolder, *Name, *Name);
+	UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, *AssetPath, nullptr, LOAD_NoWarn | LOAD_Quiet);
+	if (!Texture)
+	{
+		const FString DiskPath = FPaths::ConvertRelativePathToFull(FPaths::Combine(
+			UValhallaDataSettings::Get()->GetResolvedDataRoot(), TEXT("../../Import/UI"), DiskFolder, Name + TEXT(".png")));
+		if (FPaths::FileExists(DiskPath))
+		{
+			Texture = FImageUtils::ImportFileAsTexture2D(DiskPath);
+			if (Texture)
+			{
+				Texture->Filter = bPixelArtFilter ? TF_Nearest : TF_Bilinear;
+				Texture->UpdateResource();
+			}
+		}
+	}
+	UiTextureCache.Add(Key, Texture);
 	return Texture;
 }
 
@@ -3501,6 +3667,17 @@ void UValhallaGameHUDWidget::SetInputForTyping(bool bTyping)
 		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
 		Mode.SetHideCursorDuringCapture(false);
 		PC->SetInputMode(Mode);
+		// SetInputMode only queues the viewport focus; it is applied on the
+		// viewport's next input event, and a keyboard event can't reach the
+		// viewport until it has focus. Hand focus back now so Enter reopens chat.
+		// Use this player's own viewport: Slate's "game viewport" is whichever
+		// was registered last, which in a two-client PIE is the other window.
+		UGameViewportClient* ViewportClient = GetWorld() ? GetWorld()->GetGameViewport() : nullptr;
+		const TSharedPtr<SViewport> ViewportWidget = ViewportClient ? ViewportClient->GetGameViewportWidget() : nullptr;
+		if (ViewportWidget.IsValid() && FSlateApplication::IsInitialized())
+		{
+			FSlateApplication::Get().SetKeyboardFocus(ViewportWidget, EFocusCause::SetDirectly);
+		}
 	}
 }
 
@@ -3601,6 +3778,7 @@ void UValhallaGameHUDWidget::SubmitChatLine(const FString& Line)
 	case EValhallaChatAction::PartyAccept:  PC->ServerPartyAccept();  PC->ClearPendingPartyInvite(); break;
 	case EValhallaChatAction::PartyDecline: PC->ServerPartyDecline(); PC->ClearPendingPartyInvite(); break;
 	case EValhallaChatAction::PartyLeave:   PC->ServerPartyLeave();   break;
+	case EValhallaChatAction::Emote:        PC->ServerEmote(FName(*Parsed.Text)); break;
 	case EValhallaChatAction::Usage:
 	case EValhallaChatAction::Unknown:
 	{

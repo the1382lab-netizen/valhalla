@@ -72,5 +72,10 @@ def write_anim(path, frames, fps=30, root_lock=True, template="/Game/Valhalla/Ch
         c.set_bone_track_keys(b, pos, rot, scl, False)
     c.close_bracket(False)
     a.set_editor_property("force_root_lock", root_lock)
+    # The frames are in metahuman_base_skel's own (smaller) proportions. With no
+    # retarget source the body mesh maps them onto its own bone lengths at runtime,
+    # like the retargeted MH_MM_* / MH_MF_* clips. Inheriting the template's source
+    # (the body mesh) made these clips shrink the body while they played.
+    a.set_editor_property("retarget_source_asset", None)
     eal.save_loaded_asset(a, False)
     return a

@@ -75,7 +75,7 @@
       "attackSpeedMs": 2000,
       "minDamage": 2,
       "maxDamage": 5,
-      "inventoryIcon": "sword_iron.png",
+      "inventoryIcon": "dagger_iron.png",
       "spriteId": "sword_iron",
       "meshId": "dagger_iron",
       "weaponStyle": "dagger"
@@ -96,7 +96,7 @@
       "attackSpeedMs": 1800,
       "minDamage": 2,
       "maxDamage": 6,
-      "inventoryIcon": "mace_priests.png",
+      "inventoryIcon": "totem_bone.png",
       "spriteId": "mace_priests",
       "meshId": "totem_bone",
       "weaponStyle": "mace"
@@ -326,7 +326,8 @@
       "maxStack": 1,
       "statBonuses": {
         "strength": 2
-      }
+      },
+      "inventoryIcon": "ring_strength.png"
     },
     "ring_of_wisdom": {
       "id": "ring_of_wisdom",
@@ -339,7 +340,8 @@
       "maxStack": 1,
       "statBonuses": {
         "wisdom": 2
-      }
+      },
+      "inventoryIcon": "ring_wisdom.png"
     },
     "health_potion": {
       "id": "health_potion",
@@ -348,7 +350,8 @@
       "category": "consumable",
       "rarity": "common",
       "stackable": true,
-      "maxStack": 20
+      "maxStack": 20,
+      "inventoryIcon": "potion_health.png"
     },
     "mana_potion": {
       "id": "mana_potion",
@@ -357,7 +360,8 @@
       "category": "consumable",
       "rarity": "common",
       "stackable": true,
-      "maxStack": 20
+      "maxStack": 20,
+      "inventoryIcon": "potion_mana.png"
     },
     "rat_tail": {
       "id": "rat_tail",
@@ -366,7 +370,8 @@
       "category": "quest",
       "rarity": "common",
       "stackable": true,
-      "maxStack": 99
+      "maxStack": 99,
+      "inventoryIcon": "rat_tail.png"
     },
     "gold_coin": {
       "id": "gold_coin",
@@ -375,7 +380,8 @@
       "category": "misc",
       "rarity": "common",
       "stackable": true,
-      "maxStack": 9999
+      "maxStack": 9999,
+      "inventoryIcon": "gold_coin.png"
     },
     "item_1771651247461": {
       "id": "item_1771651247461",

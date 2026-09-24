@@ -171,6 +171,25 @@ public:
 	 */
 	void SetDeathPresentation(bool bDead);
 
+	// ── Sitting and emotes (B-15 A-030, 2026-09-23) ─────────────────────
+
+	/**
+	 * EverQuest's /sit. Server only; replicated to everyone by bSitting. The
+	 * character stands again when it moves, casts, starts an auto-attack or
+	 * dies (UValhallaSkillComponent), or on /stand. No gameplay effect yet:
+	 * sitting's regen and the casters' Meditate skill are backlog items.
+	 */
+	void SetSitting(bool bInSitting);
+	bool IsSitting() const { return bSitting; }
+
+	/**
+	 * A one-shot emote (EValhallaAnim::EmoteWave / EmoteCheer / EmoteBow) on
+	 * every client this character is relevant to. Unreliable, like the combat
+	 * events: an emote that is lost is not worth a resend.
+	 */
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastEmote(uint8 Emote);
+
 	// ── Camera ──────────────────────────────────────────────────────────
 
 	/** The isometric boom. The controller reads its yaw to rotate WASD. */
@@ -299,6 +318,13 @@ protected:
 
 	UFUNCTION()
 	void OnRep_DeathPresentation();
+
+	/** See SetSitting. */
+	UPROPERTY(ReplicatedUsing = OnRep_Sitting)
+	bool bSitting = false;
+
+	UFUNCTION()
+	void OnRep_Sitting();
 
 	// ── Tuning ──────────────────────────────────────────────────────────
 

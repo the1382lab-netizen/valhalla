@@ -179,7 +179,7 @@ public:
 	 * instead of the action blend (see FValhallaAnimInstanceProxy::AdditivePlayer);
 	 * this stops either.
 	 */
-	void StopAction();
+	void StopAction(float BlendOutSeconds = -1.f);
 
 	/** True while the action layer has any weight at all. */
 	bool IsActionBlended() const { return ActionAlpha > KINDA_SMALL_NUMBER; }
@@ -256,6 +256,9 @@ private:
 
 	/** Blend-in of the current action; ActionBlendInSeconds unless PlayAction asked otherwise. */
 	float ActionBlendIn = ActionBlendInSeconds;
+
+	/** Blend-out of the current action; ActionBlendOutSeconds unless StopAction asked otherwise. */
+	float ActionBlendOut = ActionBlendOutSeconds;
 
 	bool bActionLoop = false;
 

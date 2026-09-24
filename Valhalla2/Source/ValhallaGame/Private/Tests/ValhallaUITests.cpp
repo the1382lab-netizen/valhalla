@@ -237,6 +237,14 @@ bool FValhallaUIChatCommandsTest::RunTest(const FString& /*Parameters*/)
 	Check(TEXT("/DECLINE"),          ECh::General, EAct::PartyDecline, ECh::General, TEXT(""), TEXT(""), false);
 	Check(TEXT("/leave"),            ECh::General, EAct::PartyLeave,   ECh::General, TEXT(""), TEXT(""), false);
 
+	// Emotes (B-15 A-030): the verb, no argument.
+	Check(TEXT("/sit"),              ECh::General, EAct::Emote, ECh::General, TEXT("sit"),   TEXT(""), false);
+	Check(TEXT("/stand"),            ECh::Party,   EAct::Emote, ECh::General, TEXT("stand"), TEXT(""), false);
+	Check(TEXT("/WAVE"),             ECh::General, EAct::Emote, ECh::General, TEXT("wave"),  TEXT(""), false);
+	Check(TEXT("/cheer"),            ECh::General, EAct::Emote, ECh::General, TEXT("cheer"), TEXT(""), false);
+	Check(TEXT("/bow"),              ECh::General, EAct::Emote, ECh::General, TEXT("bow"),   TEXT(""), false);
+	Check(TEXT("/sitting"),          ECh::General, EAct::Unknown, ECh::System, TEXT("Unknown command: /sitting"), TEXT(""), false);
+
 	// Anything else with a slash is a typo, shown locally.
 	Check(TEXT("/dance wildly"),     ECh::General, EAct::Unknown, ECh::System, TEXT("Unknown command: /dance"), TEXT(""), false);
 

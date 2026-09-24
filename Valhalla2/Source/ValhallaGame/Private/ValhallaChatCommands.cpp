@@ -135,6 +135,16 @@ namespace ValhallaChat
 		if (Lower == TEXT("/decline")) { Out.Action = EValhallaChatAction::PartyDecline; return Out; }
 		if (Lower == TEXT("/leave"))   { Out.Action = EValhallaChatAction::PartyLeave;   return Out; }
 
+		for (const TCHAR* Verb : { TEXT("sit"), TEXT("stand"), TEXT("wave"), TEXT("cheer"), TEXT("bow") })
+		{
+			if (Lower.Len() == FCString::Strlen(Verb) + 1 && Lower.EndsWith(Verb) && Lower[0] == TEXT('/'))
+			{
+				Out.Action = EValhallaChatAction::Emote;
+				Out.Text = Verb;
+				return Out;
+			}
+		}
+
 		if (Raw.StartsWith(TEXT("/")))
 		{
 			int32 Space = INDEX_NONE;

@@ -45,6 +45,13 @@ namespace
 		case EValhallaAnim::CastChannelStaff: return TEXT("A_Cast_Channel_Staff");
 		case EValhallaAnim::CastReleaseStaff: return TEXT("A_Cast_Release_Staff");
 		case EValhallaAnim::CastStaff:     return TEXT("A_Cast_Staff");
+		case EValhallaAnim::Sit:           return TEXT("A_Sit");
+		case EValhallaAnim::EmoteWave:     return TEXT("A_Emote_Wave");
+		case EValhallaAnim::EmoteCheer:    return TEXT("A_Emote_Cheer");
+		case EValhallaAnim::EmoteBow:      return TEXT("A_Emote_Bow");
+		case EValhallaAnim::Attack2H:      return TEXT("A_Attack2H");
+		case EValhallaAnim::Block:         return TEXT("A_Block");
+		case EValhallaAnim::Dodge:         return TEXT("A_Dodge");
 		}
 		return TEXT("A_Idle");
 	}
@@ -66,6 +73,11 @@ namespace
 
 	/** Blend into a held cast pose, seconds: slower than a swing so the gather reads. */
 	constexpr float CastHoldBlendInSeconds = 0.22f;
+
+	/** Sitting down / standing up and into an emote: slow enough to read as a whole-body move. */
+	constexpr float SitBlendInSeconds = 0.2f;
+	constexpr float StandBlendOutSeconds = 0.35f;
+	constexpr float EmoteBlendInSeconds = 0.18f;
 
 	/** True for the event kinds that mean "a blow was struck", hit or not. */
 	bool IsSwingOutcome(EValhallaCombatEventKind Kind)
@@ -263,7 +275,7 @@ void UValhallaAnimComponent::SetLocomotion(EValhallaAnim Anim)
 	}
 }
 
-void UValhallaAnimComponent::PlayAction(EValhallaAnim Anim)
+void UValhallaAnimComponent::PlayAction(EValhallaAnim Anim, float BlendInSeconds)
 {
 	if (bDead)
 	{
@@ -280,11 +292,18 @@ void UValhallaAnimComponent::PlayAction(EValhallaAnim Anim)
 
 	bHoldingCast = false;
 	bActionPlaying = true;
+	bEmoteAction = false;
+	if (bSitting)
+	{
+		// Anything else the body does (a swing, an emote) gets it up first.
+		bSitting = false;
+		ApplyStance();
+	}
 
 	// Always restarts: two swings in a row are two swings, and skipping the
 	// second because it matches the first would make a fast weapon look slow.
 	CurrentAnim = Anim;
-	AnimInstance->PlayAction(Asset, /*bLoop=*/false);
+	AnimInstance->PlayAction(Asset, /*bLoop=*/false, BlendInSeconds);
 
 	// The deadline is kept here rather than read back off the node's own time.
 	// The sequence length is a fixed property of the asset and the play rate is
@@ -317,18 +336,81 @@ void UValhallaAnimComponent::ApplyStance()
 {
 	if (AnimInstance)
 	{
-		// A corpse lets go: no fist, no raised shield arm on a body lying down.
-		AnimInstance->SetStance(bStanceGripRight && !bDead, bStanceGripLeft && !bDead, bStanceShieldArm && !bDead);
+		// A corpse lets go: no fist, no raised shield arm on a body lying down;
+		// a sitter keeps hold of the weapon but rests the shield arm.
+		AnimInstance->SetStance(bStanceGripRight && !bDead, bStanceGripLeft && !bDead,
+			bStanceShieldArm && !bDead && !bSitting);
 	}
 }
 
 void UValhallaAnimComponent::PlayHitReaction()
 {
-	if (bDead || bActionPlaying || bHoldingCast)
+	if (bDead || bActionPlaying || bHoldingCast || bSitting)
 	{
 		return;
 	}
 	PlayAction(EValhallaAnim::Hit);
+}
+
+void UValhallaAnimComponent::PlayEmote(EValhallaAnim Emote)
+{
+	if (bDead || bHoldingCast || !Sequence(Emote))
+	{
+		return;
+	}
+	// PlayAction stands a sitter up without waiting for the replicated flag.
+	PlayAction(Emote, EmoteBlendInSeconds);
+	bEmoteAction = true;
+	UE_LOG(LogValhallaVisual, Log, TEXT("%s emote %s"), *GetNameSafe(GetOwner()), AnimName(Emote));
+}
+
+void UValhallaAnimComponent::PlayDefense(EValhallaAnim Defense)
+{
+	if (bDead || bHoldingCast || bSitting || !Sequence(Defense))
+	{
+		return;
+	}
+	// A block or a dodge cuts off a flinch or an emote, never a swing.
+	const bool bInterruptible = !bActionPlaying || bEmoteAction
+		|| CurrentAnim == EValhallaAnim::Hit || CurrentAnim == EValhallaAnim::Block || CurrentAnim == EValhallaAnim::Dodge;
+	if (bInterruptible)
+	{
+		PlayAction(Defense);
+		UE_LOG(LogValhallaVisual, Log, TEXT("%s defends: %s"), *GetNameSafe(GetOwner()), AnimName(Defense));
+	}
+}
+
+void UValhallaAnimComponent::SetSitting(bool bInSitting)
+{
+	if (bSitting == bInSitting || bDead)
+	{
+		return;
+	}
+	EnsureAnimInstance();
+	UAnimSequence* Sit = Sequence(EValhallaAnim::Sit);
+	if (!AnimInstance || !Sit)
+	{
+		return;
+	}
+
+	bSitting = bInSitting;
+	bActionPlaying = false;
+	bEmoteAction = false;
+	bHoldingCast = false;
+	ApplyStance();
+
+	if (bSitting)
+	{
+		// Non-looping: the player clamps on the last frame and the action
+		// layer stays at full weight until SetSitting(false).
+		CurrentAnim = EValhallaAnim::Sit;
+		AnimInstance->PlayAction(Sit, /*bLoop=*/false, SitBlendInSeconds);
+	}
+	else
+	{
+		AnimInstance->StopAction(StandBlendOutSeconds);
+		CurrentAnim = LocomotionAnim;
+	}
 }
 
 void UValhallaAnimComponent::SetDead(bool bInDead)
@@ -341,6 +423,8 @@ void UValhallaAnimComponent::SetDead(bool bInDead)
 	bDead = bInDead;
 	bActionPlaying = false;
 	bHoldingCast = false;
+	bSitting = false;
+	bEmoteAction = false;
 
 	EnsureAnimInstance();
 	if (!AnimInstance)
@@ -513,7 +597,24 @@ void UValhallaAnimComponent::TickComponent(float DeltaSeconds, ELevelTick TickTy
 	if (bActionPlaying && IsActionFinished())
 	{
 		bActionPlaying = false;
+		bEmoteAction = false;
 		AnimInstance->StopAction();
+	}
+
+	// An emote is dropped the moment the character walks off. (A sitter is
+	// stood up by the server, AValhallaCharacter::SetSitting, which replicates.)
+	if (bActionPlaying && bEmoteAction && GetOwner()->GetVelocity().Size2D() > WalkSpeedThreshold)
+	{
+		bActionPlaying = false;
+		bEmoteAction = false;
+		AnimInstance->StopAction();
+	}
+
+	// Sitting is a held pose: no cast hold on top of it (casting stands you up).
+	if (bSitting)
+	{
+		TickLocomotion();
+		return;
 	}
 
 	// The cast pose is held open from the replicated cast state, and it
@@ -576,7 +677,17 @@ void UValhallaAnimComponent::DispatchCombatEvent(const UObject* WorldContext, co
 			InstigatorAnim->PlaySwing();
 		}
 		// A heal is not a blow, and neither is a tick that did nothing.
-		if (TargetAnim && IsSwingOutcome(Event.Kind) && !Event.bHeal && Event.Amount > 0.f)
+		// The defender: a blocked blow raises the guard, a dodged one sidesteps,
+		// anything else that landed flinches.
+		if (TargetAnim && Event.Kind == EValhallaCombatEventKind::Blocked)
+		{
+			TargetAnim->PlayDefense(EValhallaAnim::Block);
+		}
+		else if (TargetAnim && Event.Kind == EValhallaCombatEventKind::Dodged)
+		{
+			TargetAnim->PlayDefense(EValhallaAnim::Dodge);
+		}
+		else if (TargetAnim && IsSwingOutcome(Event.Kind) && !Event.bHeal && Event.Amount > 0.f)
 		{
 			TargetAnim->PlayHitReaction();
 		}

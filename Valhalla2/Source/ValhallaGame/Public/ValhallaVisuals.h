@@ -104,10 +104,20 @@ enum class EValhallaAnim : uint8
 	CastChannelStaff,
 	CastReleaseStaff,
 	CastStaff,
+	/** B-15 A-030 (2026-09-23): /sit (held on its last frame), the chat emotes, */
+	Sit,
+	EmoteWave,
+	EmoteCheer,
+	EmoteBow,
+	/** the two-handed swing (weaponStyle "greatsword"), and the defender's */
+	Attack2H,
+	/** reaction to a blocked or dodged blow. */
+	Block,
+	Dodge,
 };
 
 /** One past the last EValhallaAnim, for tables indexed by it. */
-constexpr int32 ValhallaAnimCount = static_cast<int32>(EValhallaAnim::CastStaff) + 1;
+constexpr int32 ValhallaAnimCount = static_cast<int32>(EValhallaAnim::Dodge) + 1;
 
 /**
  * Pure look-ups from game data to content. No state, no world, no side effects

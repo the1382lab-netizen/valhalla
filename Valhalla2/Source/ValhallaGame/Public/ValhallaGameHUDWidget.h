@@ -134,7 +134,13 @@ public:
 	 * the two-letter code on it. `SkillColour` (skills.json `iconColor`) is the
 	 * tile's rim, so two offensive skills still read apart.
 	 */
-	void SetSkillIcon(const FString& Code, const FLinearColor& CategoryColour, const FLinearColor& SkillColour);
+	void SetSkillIcon(const FString& Code, const FLinearColor& CategoryColour, const FLinearColor& SkillColour, UTexture2D* Texture = nullptr);
+	/**
+	 * B-15 Wave 4 frame art: the cell draws `SlotTexture` (T_UI_Slot, a bronze
+	 * rim round a dark well) as a nine-slice box instead of the flat ui-config
+	 * border and fill. Selection then tints the rim with the highlight colour.
+	 */
+	void SetFrameArt(UTexture2D* SlotTexture, const FVector2D& MarginPx = FVector2D(10.f, 10.f), float BorderPx = 4.f, float FramePadding = 3.f);
 	void SetKeyLabel(const FString& Text, const FLinearColor& Colour);
 	void SetQuantity(int32 Quantity);
 	/** 0 hides the overlay; `Text` is the seconds left. */
@@ -207,6 +213,7 @@ private:
 	void FillMissingParts();
 
 	float CellSize = 44.f;
+	bool bFrameArt = false;
 	FLinearColor BorderColour = FLinearColor::Gray;
 	FLinearColor HighlightColour = FLinearColor::Yellow;
 	bool bPressed = false;
@@ -265,6 +272,13 @@ public:
 	void SetLabel(const FString& Text);
 	void SetLabelColour(const FLinearColor& Colour);
 	void SetLabelVisible(bool bVisible);
+
+	/**
+	 * B-15 Wave 4 frame art for the code-built bar: T_UI_BarFrame as a nine-slice
+	 * frame and T_UI_BarFill as the fill (tinted by the fill colour). No-op for a
+	 * null texture or a designer tree.
+	 */
+	void SetFrameArt(UTexture2D* FrameTexture, UTexture2D* FillTexture);
 
 	bool HasDesignerTree() const { return bDesignerTree; }
 
@@ -529,6 +543,11 @@ private:
 
 	// ── Helpers ─────────────────────────────────────────────────────────
 	UTexture2D* FindItemIcon(FName ItemId);
+	/** Import/UI/Icons/Skills/<id>.png (imported: /Game/Valhalla/UI/Icons/Skills). Null keeps the generated tile. */
+	UTexture2D* FindSkillIcon(FName SkillId);
+	/** A HUD frame texture (T_UI_Panel, T_UI_Slot...): /Game/Valhalla/UI/Frames, else Import/UI/Frames on disk. */
+	UTexture2D* FindUiTexture(const FString& Name);
+	UTexture2D* LoadUiTexture(const FString& AssetFolder, const FString& DiskFolder, const FString& Name, bool bPixelArtFilter);
 	void ShowItemTooltip(FName ItemId, int32 Quantity);
 	void HideTooltip();
 	void RequestDrop(EValhallaHUDSlotKind Kind, int32 Index);
@@ -540,7 +559,8 @@ private:
 	UValhallaHUDBarWidget* MakeBar(float Width, float Height, const FLinearColor& Fill, const FLinearColor& Background, float BackgroundAlpha, bool bWithOverlay = false, int32 FontSize = 9);
 
 	UTextBlock* MakeText(const FString& Content, int32 Size, const FLinearColor& Colour, bool bBold = false, float Outline = 1.f);
-	UBorder* MakePanel(const FLinearColor& Colour, float Alpha, float PanelPadding);
+	/** `bFramed`: draw T_UI_Panel (leather and bronze) when it exists and the panel is visible (Alpha > 0). */
+	UBorder* MakePanel(const FLinearColor& Colour, float Alpha, float PanelPadding, bool bFramed = true);
 	UValhallaHUDButton* MakeButton(const FString& Caption, EValhallaHUDButton Action, int32 Index, const FLinearColor& Tint);
 	UValhallaHUDSlotWidget* MakeCell(EValhallaHUDSlotKind Kind, int32 Index, float Size);
 	class UCanvasPanelSlot* Place(UWidget* Widget, const FVector2D& Anchor, const FVector2D& Alignment, const FVector2D& Position, int32 ZOrder = 0);
@@ -885,6 +905,7 @@ private:
 
 	// icons
 	UPROPERTY(Transient) TMap<FName, TObjectPtr<UTexture2D>> IconCache;
+	UPROPERTY(Transient) TMap<FString, TObjectPtr<UTexture2D>> UiTextureCache;
 
 	// config watcher
 	double ConfigWatchAccumulator = 0.0;

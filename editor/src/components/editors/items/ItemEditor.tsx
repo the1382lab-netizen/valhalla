@@ -6,7 +6,7 @@ const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 const CATEGORIES = ['equipment', 'consumable', 'quest', 'misc'];
 // Must match EquipSlotType in shared/src/items.ts
 const EQUIP_SLOTS = ['weapon', 'offhand', 'helm', 'chest', 'legs', 'boots', 'gloves', 'back', 'ring'];
-const WEAPON_STYLES = ['sword', 'greatsword', 'mace', 'bow', 'staff'];
+const WEAPON_STYLES = ['sword', 'dagger', 'greatsword', 'mace', 'bow', 'staff'];
 /** Equip slots with no mesh on the character. */
 const SLOTS_WITHOUT_MESH = new Set(['ring']);
 const STAT_TYPES: { key: string; label: string; step: string }[] = [
@@ -382,7 +382,7 @@ export const ItemEditor: React.FC = () => {
                           <option value="">None (melee swing)</option>
                           {WEAPON_STYLES.map(w => (
                             <option key={w} value={w}>
-                              {w} &rarr; {w === 'bow' ? 'shoot' : 'attack'}
+                              {w} &rarr; {w === 'bow' ? 'shoot' : w === 'greatsword' ? 'two-handed attack' : 'attack'}
                             </option>
                           ))}
                         </select>

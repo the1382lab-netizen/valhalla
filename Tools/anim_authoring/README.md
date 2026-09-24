@@ -19,3 +19,12 @@ Character space: forward = +Y, right = -X, up = +Z, unscaled cm (the body is
 If you change a grip in `author.py`, copy `out/grips.json` into
 `UValhallaVisuals` GripFrame (ValhallaVisuals.cpp) — the attacks are keyed
 against those frames.
+
+Proportions: the authored frames are in `metahuman_base_skel`'s reference proportions
+(head bone at 143 cm), not the body mesh's (162 cm). `write_anim` therefore clears
+the clip's retarget source so the body maps them onto its own bone lengths at
+runtime, the same size as the retargeted locomotion. Before 2026-09-24 the clips
+kept the template's source and the body shrank while they played. Leg IK is solved
+in skeleton proportions, so crouched poses can float slightly on the body: MH_Sit
+was re-grounded in the editor (`sit_ground.py`, run in the editor); rerun it after
+rewriting MH_Sit.

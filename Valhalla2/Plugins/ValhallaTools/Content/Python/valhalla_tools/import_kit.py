@@ -59,6 +59,37 @@ def _set_profile(sm, profile):
     return True
 
 
+#: Pieces a character walks *through* or *over* (an open gate, an arch, the
+#: bridges, steps). The importer gives every mesh simple collision, which for
+#: these is roughly their bounding box: a gate you cannot pass, a bridge that
+#: is a wall. They use their own triangles instead.
+WALKABLE = {"SM_KeepGate", "SM_RuinArch", "SM_BridgeStone", "SM_BridgeWood", "SM_TempleSteps"}
+
+#: Material slots that are effects, not surfaces: no shadow, no collision.
+FX_SLOTS = {"MI_Fire"}
+
+
+def _collision_rules(sm, name):
+    """WALKABLE -> complex-as-simple; FX_SLOTS sections cast no shadow and do
+    not collide. Returns what was applied, for the report."""
+    applied = []
+    sme = unreal.get_editor_subsystem(unreal.StaticMeshEditorSubsystem)
+    if name in WALKABLE:
+        sme.remove_collisions(sm)
+        bs = sm.get_editor_property("body_setup")
+        bs.set_editor_property("collision_trace_flag", unreal.CollisionTraceFlag.CTF_USE_COMPLEX_AS_SIMPLE)
+        applied.append("complexAsSimple")
+    mats = sm.get_editor_property("static_materials")
+    for lod in range(sm.get_num_lods()):
+        for sec in range(sm.get_num_sections(lod)):
+            slot = str(mats[sme.get_lod_material_slot(sm, lod, sec)].material_slot_name)
+            if slot in FX_SLOTS:
+                sme.enable_section_cast_shadow(sm, False, lod, sec)
+                sme.enable_section_collision(sm, False, lod, sec)
+                applied.append("fx:" + slot)
+    return applied
+
+
 def reimport_meshes(entries):
     report = []
     old_bounds = {}
@@ -132,9 +163,10 @@ def reimport_meshes(entries):
             sm.set_editor_property("static_materials", mats[:keep])
             slots = [s for s in slots][:keep]
 
+        rules = _collision_rules(sm, name)
         EAL.save_loaded_asset(sm)
         entry = {"mesh": path, "slots": slots, "tris": sm.get_num_triangles(0),
-                 "bounds": _bounds(sm), "profile": profile}
+                 "bounds": _bounds(sm), "profile": profile, "rules": rules}
         if path in old_bounds:
             entry["oldBounds"] = old_bounds[path]
         if missing:

@@ -255,6 +255,13 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerPartyLeave();
 
+	/**
+	 * /sit /stand /wave /cheer /bow (B-15 A-030). `Emote` is the verb without
+	 * the slash. /sit toggles, as in EverQuest. Refused while dead or casting.
+	 */
+	UFUNCTION(Server, Reliable)
+	void ServerEmote(FName Emote);
+
 	/** The party view the server last pushed. GameRoom.ts:1161 PARTY_UPDATE. */
 	UFUNCTION(Client, Reliable)
 	void ClientPartyUpdate(int32 InPartyId, const TArray<FString>& MemberNames);

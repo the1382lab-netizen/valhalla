@@ -95,7 +95,7 @@ public:
 	void SetWeaponLoadout(EValhallaAnim InAttackAnim, bool bInGripRight, bool bInGripLeft, bool bInShieldArm);
 
 	/** One shot of a named animation, interrupting whatever action is running. */
-	void PlayAction(EValhallaAnim Anim);
+	void PlayAction(EValhallaAnim Anim, float BlendInSeconds = -1.f);
 
 	/**
 	 * A flinch. Refused while an action or a cast is running, because a player
@@ -104,6 +104,27 @@ public:
 	 * mid-flight reads as the attacker's swing failing.
 	 */
 	void PlayHitReaction();
+
+	/**
+	 * A chat emote (/wave /cheer /bow). Plays over whatever the body is doing
+	 * unless it is dead or holding a cast, and is dropped the moment the
+	 * character starts to move.
+	 */
+	void PlayEmote(EValhallaAnim Emote);
+
+	/**
+	 * The defender's side of a blocked or dodged blow. Replaces a hit reaction
+	 * or an emote, never a swing, a cast or a sit.
+	 */
+	void PlayDefense(EValhallaAnim Defense);
+
+	/**
+	 * /sit and standing up. Sitting plays A_Sit and holds its last frame on the
+	 * action layer (as a corpse holds A_Death); standing blends it out.
+	 * Driven by AValhallaCharacter's replicated bSitting.
+	 */
+	void SetSitting(bool bInSitting);
+	bool IsSitting() const { return bSitting; }
 
 	/** Fall over and stay down, or get back up. Idempotent. */
 	void SetDead(bool bInDead);
@@ -230,6 +251,12 @@ private:
 
 	/** True from the death event until the respawn one. */
 	bool bDead = false;
+
+	/** See SetSitting. */
+	bool bSitting = false;
+
+	/** The running action is an emote: movement cancels it. */
+	bool bEmoteAction = false;
 
 	/** So a failed load is complained about once rather than every frame. */
 	bool bLoaded = false;

@@ -1100,6 +1100,47 @@ void AValhallaPlayerController::DeliverChat(AValhallaPlayerController* To, const
 	}
 }
 
+void AValhallaPlayerController::ServerEmote_Implementation(FName Emote)
+{
+	AValhallaCharacter* Sitter = Cast<AValhallaCharacter>(GetPawn());
+	const AValhallaPlayerState* ValhallaPS = GetPlayerState<AValhallaPlayerState>();
+	if (!Sitter || !ValhallaPS || !ValhallaPS->IsAlive())
+	{
+		return;
+	}
+
+	const FString Verb = Emote.ToString().ToLower();
+	if (Verb == TEXT("sit"))
+	{
+		Sitter->SetSitting(!Sitter->IsSitting());
+		return;
+	}
+	if (Verb == TEXT("stand"))
+	{
+		Sitter->SetSitting(false);
+		return;
+	}
+
+	EValhallaAnim Anim;
+	if (Verb == TEXT("wave"))       { Anim = EValhallaAnim::EmoteWave; }
+	else if (Verb == TEXT("cheer")) { Anim = EValhallaAnim::EmoteCheer; }
+	else if (Verb == TEXT("bow"))   { Anim = EValhallaAnim::EmoteBow; }
+	else
+	{
+		return;
+	}
+
+	const UValhallaSkillComponent* Skills = Sitter->FindComponentByClass<UValhallaSkillComponent>();
+	if (Skills && !Skills->CastingSkillId.IsNone())
+	{
+		ServerChat_Implementation(TEXT("__system"), TEXT("You can't do that while casting."), FString());
+		return;
+	}
+
+	Sitter->SetSitting(false);
+	Sitter->MulticastEmote(static_cast<uint8>(Anim));
+}
+
 bool AValhallaPlayerController::TryHandleChatCommand(const FString& Raw)
 {
 	if (!Raw.StartsWith(TEXT("/")))
@@ -1108,6 +1149,14 @@ bool AValhallaPlayerController::TryHandleChatCommand(const FString& Raw)
 	}
 
 	const FString Lower = Raw.ToLower();
+
+	// B-15 A-030 — emotes, the same verbs the chat box parses.
+	if (Lower == TEXT("/sit") || Lower == TEXT("/stand") || Lower == TEXT("/wave")
+		|| Lower == TEXT("/cheer") || Lower == TEXT("/bow"))
+	{
+		ServerEmote_Implementation(FName(*Lower.Mid(1)));
+		return true;
+	}
 
 	// GameScene.ts:5291 — /w and /whisper both take "<name> <message>".
 	if (Lower.StartsWith(TEXT("/whisper ")) || Lower.StartsWith(TEXT("/w ")))

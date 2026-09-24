@@ -458,6 +458,12 @@ void UValhallaSkillComponent::SendSkillFailed(const FString& Reason, FName Reaso
 
 void UValhallaSkillComponent::ServerCastSkill_Implementation(FName SkillId, AActor* Target, FVector TargetLocation)
 {
+	// EQ: casting stands you up.
+	if (AValhallaCharacter* Sitter = GetValhallaOwner())
+	{
+		Sitter->SetSitting(false);
+	}
+
 	const UValhallaDataSubsystem* Data = GetData();
 	const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(SkillId) : nullptr;
 	if (!Skill)
@@ -762,6 +768,11 @@ void UValhallaSkillComponent::ServerStartAutoAttackWith_Implementation(AActor* T
 
 void UValhallaSkillComponent::StartAutoAttackInternal(AActor* Target, FName SkillId)
 {
+	if (AValhallaCharacter* Sitter = GetValhallaOwner())
+	{
+		Sitter->SetSitting(false);
+	}
+
 	// SkillSystem.ts:396 — starting an auto-attack drops any cast in progress.
 	if (!CastingSkillId.IsNone())
 	{
@@ -1068,6 +1079,18 @@ void UValhallaSkillComponent::ServerFixedTick(float FixedDeltaSeconds, double No
 	if (!PlayerState || !Data)
 	{
 		return;
+	}
+
+	// ── Sitting: walking off (or dying) stands you up ────────────────────
+	if (AValhallaCharacter* Sitter = GetValhallaOwner(); Sitter && Sitter->IsSitting())
+	{
+		const UCharacterMovementComponent* Movement = Sitter->GetCharacterMovement();
+		const bool bMoving = Movement
+			&& Movement->GetCurrentAcceleration().SizeSquared2D() > MovementInterruptAccelThreshold * MovementInterruptAccelThreshold;
+		if (bMoving || !PlayerState->IsAlive())
+		{
+			Sitter->SetSitting(false);
+		}
 	}
 
 	// ── Cast progression (SkillSystem.ts:263) ────────────────────────────

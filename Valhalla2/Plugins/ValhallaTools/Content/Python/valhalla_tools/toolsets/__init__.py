@@ -3,8 +3,10 @@
 from toolset_registry.registration import Registration
 from valhalla_tools.toolsets import data_tools
 from valhalla_tools.toolsets import level_tools
+from valhalla_tools.toolsets import ui_tools
 
 _registration = Registration([
     data_tools.ValhallaDataTools,
     level_tools.ValhallaLevelTools,
+    ui_tools.ValhallaUITools,
 ])

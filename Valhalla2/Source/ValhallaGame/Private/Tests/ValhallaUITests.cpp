@@ -9,21 +9,37 @@
 //   Valhalla.Game.UI.ChatCommands — the chat box's grammar (GameScene.ts:5222
 //     `submitChatInput`): /g /world /p /w /invite /accept /decline /leave, the
 //     sticky channel, the usage lines, and Tab's channel cycle.
+//   Valhalla.Game.UI.HudBlueprintGroundwork — B-07 step 2: the game HUD
+//     class setting defaults to the code-built HUD, the C++ class never lays
+//     out from a Blueprint, the designer panel names (which WBP_GameHUD must
+//     match) are BindWidget / BindWidgetOptional members of the right types,
+//     and the bar widget clamps its fraction.
 //
-// Neither needs a world, a widget or a viewport; both run headless.
+// None needs a world or a viewport; all run headless (the bar test makes one
+// bare widget object, never constructed into Slate).
 
 #include "CoreMinimal.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Dom/JsonObject.h"
+#include "Components/EditableTextBox.h"
+#include "Components/PanelWidget.h"
+#include "Components/ScrollBox.h"
+#include "Components/Border.h"
+#include "Components/UniformGridPanel.h"
 #include "Misc/AutomationTest.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "UObject/UnrealType.h"
 #include "ValhallaChatCommands.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
+#include "ValhallaGameHUDWidget.h"
 #include "ValhallaUIConfig.h"
+#include "ValhallaUISettings.h"
+
+#include <limits>
 
 #ifndef VALHALLA_GAME_TEST_FLAGS
 #define VALHALLA_GAME_TEST_FLAGS ( \
@@ -214,6 +230,93 @@ bool FValhallaUIChatCommandsTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("Tab: World -> Party"),   static_cast<int32>(ValhallaChat::NextChannel(ECh::World)),   static_cast<int32>(ECh::Party));
 	TestEqual(TEXT("Tab: Party -> General"), static_cast<int32>(ValhallaChat::NextChannel(ECh::Party)),   static_cast<int32>(ECh::General));
 	TestEqual(TEXT("label"), ValhallaChat::ChannelLabel(ECh::World), FString(TEXT("[World]")));
+
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.HudBlueprintGroundwork (B-07 step 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIHudBlueprintGroundworkTest,
+	"Valhalla.Game.UI.HudBlueprintGroundwork",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIHudBlueprintGroundworkTest::RunTest(const FString& /*Parameters*/)
+{
+	// ── The game HUD class setting ──────────────────────────────────────
+	// Empty until step 3/4 assigns WBP_GameHUD in DefaultGame.ini; flip this
+	// check then.
+	TestTrue(TEXT("Game HUD Class is empty (the code-built HUD)"), GetDefault<UValhallaUISettings>()->GameHUDClass.IsNull());
+	TestTrue(TEXT("no setting, no override -> UValhallaGameHUDWidget"),
+		UValhallaUISettings::ResolveGameHUDClass(TSoftClassPtr<UValhallaGameHUDWidget>(), FString()).Get() == UValhallaGameHUDWidget::StaticClass());
+	TestTrue(TEXT("a /Script override naming the C++ class resolves to it"),
+		UValhallaUISettings::ResolveGameHUDClass(TSoftClassPtr<UValhallaGameHUDWidget>(), TEXT("/Script/ValhallaGame.ValhallaGameHUDWidget")).Get()
+			== UValhallaGameHUDWidget::StaticClass());
+
+	// ── The C++ class builds itself ─────────────────────────────────────
+	const UValhallaGameHUDWidget* Cdo = GetDefault<UValhallaGameHUDWidget>();
+	TestFalse(TEXT("the C++ HUD class never lays out from a Blueprint"), Cdo->WantsLayoutFromBlueprint());
+	TestFalse(TEXT("CDO: bLayoutFromBlueprint is false"), Cdo->IsLayoutFromBlueprint());
+	TestTrue(TEXT("SlotWidgetClass defaults to the C++ cell"), Cdo->GetSlotWidgetClass().Get() == UValhallaHUDSlotWidget::StaticClass());
+	TestTrue(TEXT("BarWidgetClass defaults to the C++ bar"), Cdo->GetBarWidgetClass().Get() == UValhallaHUDBarWidget::StaticClass());
+
+	// ── The designer names step 3's WBP_GameHUD must match ──────────────
+	auto CheckPanel = [this](FName Name, bool bRequired)
+	{
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), Name);
+		if (!TestNotNull(*FString::Printf(TEXT("%s is an object property"), *Name.ToString()), Property))
+		{
+			return;
+		}
+		TestTrue(*FString::Printf(TEXT("%s is a widget"), *Name.ToString()), Property->PropertyClass->IsChildOf(UWidget::StaticClass()));
+#if WITH_EDITORONLY_DATA
+		TestTrue(*FString::Printf(TEXT("%s is %s"), *Name.ToString(), bRequired ? TEXT("BindWidget") : TEXT("BindWidgetOptional")),
+			Property->HasMetaData(bRequired ? TEXT("BindWidget") : TEXT("BindWidgetOptional")));
+#endif
+	};
+	TestEqual(TEXT("seven required panels"), UValhallaGameHUDWidget::GetRequiredPanelNames().Num(), 7);
+	for (const FName Name : UValhallaGameHUDWidget::GetRequiredPanelNames())
+	{
+		CheckPanel(Name, true);
+	}
+	for (const FName Name : UValhallaGameHUDWidget::GetOptionalPanelNames())
+	{
+		CheckPanel(Name, false);
+	}
+	auto CheckType = [this](const TCHAR* Name, const UClass* Expected)
+	{
+		const FObjectPropertyBase* Property = FindFProperty<FObjectPropertyBase>(UValhallaGameHUDWidget::StaticClass(), Name);
+		const UClass* Actual = Property ? static_cast<const UClass*>(Property->PropertyClass) : nullptr;
+		TestTrue(*FString::Printf(TEXT("%s is a %s"), Name, *Expected->GetName()), Actual == Expected);
+	};
+	CheckType(TEXT("VitalsPanel"), UPanelWidget::StaticClass());
+	CheckType(TEXT("HpBar"), UValhallaHUDBarWidget::StaticClass());
+	CheckType(TEXT("ManaBar"), UValhallaHUDBarWidget::StaticClass());
+	CheckType(TEXT("XpBar"), UValhallaHUDBarWidget::StaticClass());
+	CheckType(TEXT("ActionBarRow"), UPanelWidget::StaticClass());
+	CheckType(TEXT("ChatPanel"), UBorder::StaticClass());
+	CheckType(TEXT("ChatScroll"), UScrollBox::StaticClass());
+	CheckType(TEXT("ChatInput"), UEditableTextBox::StaticClass());
+	CheckType(TEXT("InventoryGrid"), UUniformGridPanel::StaticClass());
+	CheckType(TEXT("EquipmentPanel"), UPanelWidget::StaticClass());
+
+	// ── The bar clamps ──────────────────────────────────────────────────
+	TestEqual(TEXT("clamp 1.7 -> 1"), UValhallaHUDBarWidget::ClampFraction(1.7f), 1.f);
+	TestEqual(TEXT("clamp -0.3 -> 0"), UValhallaHUDBarWidget::ClampFraction(-0.3f), 0.f);
+	TestEqual(TEXT("clamp 0.25 -> 0.25"), UValhallaHUDBarWidget::ClampFraction(0.25f), 0.25f);
+	TestEqual(TEXT("clamp NaN -> 0"), UValhallaHUDBarWidget::ClampFraction(std::numeric_limits<float>::quiet_NaN()), 0.f);
+
+	// A bare bar (no tree, no Slate) keeps the clamped value and touches nothing.
+	UValhallaHUDBarWidget* Bar = NewObject<UValhallaHUDBarWidget>(GetTransientPackage(), NAME_None, RF_Transient);
+	Bar->SetFraction(1.5f);
+	TestEqual(TEXT("SetFraction(1.5) -> 1"), Bar->GetFraction(), 1.f);
+	Bar->SetFraction(-2.f);
+	TestEqual(TEXT("SetFraction(-2) -> 0"), Bar->GetFraction(), 0.f);
+	Bar->SetOverlayFraction(0.4f);
+	TestEqual(TEXT("SetOverlayFraction(0.4) -> 0.4"), Bar->GetOverlayFraction(), 0.4f);
+	TestFalse(TEXT("a bare bar has no designer tree"), Bar->HasDesignerTree());
 
 	return true;
 }

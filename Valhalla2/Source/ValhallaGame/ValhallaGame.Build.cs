@@ -60,6 +60,10 @@ public class ValhallaGame : ModuleRules
 				"Slate",
 				"SlateCore",
 
+				// B-07 step 2: UValhallaUISettings (Project Settings > Valhalla >
+				// UI, the game HUD class) is a UDeveloperSettings.
+				"DeveloperSettings",
+
 				// Phase 7b: UValhallaBackendSubsystem's client for the 1.0
 				// Express server. Private, so nothing that depends on
 				// ValhallaGame inherits an HTTP client it did not ask for —

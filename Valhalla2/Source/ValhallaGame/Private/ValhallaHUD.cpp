@@ -20,6 +20,7 @@
 #include "ValhallaPlayerController.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
+#include "ValhallaUISettings.h"
 
 namespace
 {
@@ -69,11 +70,14 @@ void AValhallaHUD::BeginPlay()
 	// server a HUD exists only for the host anyway; this is belt and braces.
 	if (PlayerOwner && PlayerOwner->IsLocalController() && !GameHUD)
 	{
-		GameHUD = CreateWidget<UValhallaGameHUDWidget>(PlayerOwner, UValhallaGameHUDWidget::StaticClass(), TEXT("ValhallaGameHUD"));
+		// B-07 step 2: Project Settings > Valhalla > UI (or valhalla.HudClass)
+		// may name a Widget Blueprint child; empty is the code-built HUD.
+		const TSubclassOf<UValhallaGameHUDWidget> HudClass = UValhallaUISettings::GetGameHUDClass();
+		GameHUD = CreateWidget<UValhallaGameHUDWidget>(PlayerOwner, HudClass, TEXT("ValhallaGameHUD"));
 		if (GameHUD)
 		{
 			GameHUD->AddToViewport(/*ZOrder=*/0);
-			UE_LOG(LogValhallaGame, Log, TEXT("game HUD widget created for %s"), *PlayerOwner->GetName());
+			UE_LOG(LogValhallaGame, Log, TEXT("game HUD widget %s created for %s"), *GetNameSafe(HudClass.Get()), *PlayerOwner->GetName());
 		}
 		else
 		{

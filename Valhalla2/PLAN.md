@@ -1101,9 +1101,57 @@ panel keys. The code-built panel shows them in the meantime.
       `critChance` / `critDamage` / `blockRating` / `dodgeRating` bonus in
       [0, 1]). Not yet built or run: the new replicated UPROPERTY needs a
       full rebuild with the editor closed (not Live Coding).
-- [ ] **Step 2 — groundwork:** a C++ base class for the Blueprint panels
-      (bindable view-model getters, the drag/drop and tooltip plumbing the
-      code-built HUD owns today).
+- [x] **Step 2 — groundwork (2026-09-24):** the C++ HUD can be laid out by a
+      Widget Blueprint child while C++ keeps filling and running it; with no
+      Blueprint nothing changes. Not yet built or run (the editor was open
+      with other work); Kevin rebuilds.
+      - `UValhallaHUDSlotWidget` and the new `UValhallaHUDBarWidget` are
+        `Blueprintable` with `BindWidgetOptional` parts (cell: `Sizer`
+        `Frame` `Fill` `Stack` `Icon` `SkillTile` `Abbrev` `CooldownSizer`
+        `CooldownFill` `CooldownBar` `CooldownText` `KeyLabel` `QuantityText`
+        `SelectionRing`; bar: `Frame` `Background` `Sizer` `FillSizer` `Fill`
+        `FillBar` `OverlaySizer` `OverlayFill` `OverlayBar` `Label`). No
+        designer tree: they build themselves in code as before (in
+        `NativeOnInitialized`; PreConstruct runs after the Slate tree is
+        made). A designer tree keeps its look; parts it lacks are hidden
+        stand-ins, so `SetIcon` / `SetCooldown` / `SetFraction` / `SetLabel`
+        ... work either way. Every `MakeBar` (HP, mana/energy, cast, target,
+        party, XP, and the pooled nameplates) is now a bar widget; `FBar` is
+        gone.
+      - `UValhallaGameHUDWidget` binds designer panels by name: required
+        (`BindWidget`) `VitalsPanel` `HpBar` `ManaBar` `ActionBarRow`
+        `ChatPanel` `ChatScroll` `ChatInput`; optional the rest (target,
+        party + invite, combat log, loot, skills, character / equipment / XP /
+        stats, inventory + `InventoryGrid` (a Uniform Grid Panel), tooltip,
+        drop confirm, death). `SlotWidgetClass` / `BarWidgetClass` pick the
+        cell and bar classes C++ makes. `BuildAll` is `BindDesignerPanels` +
+        `PopulateDesignerPanels` for a complete designer tree (a subclass, a
+        Canvas Panel root, every required widget), else the code build; an
+        incomplete tree logs what is missing and falls back to code. The
+        code build assigns the same members, and the cells, rows and tokens
+        are made by shared `Add*` helpers for both paths. Designer buttons
+        are `UValhallaHUDButton` with `Action` (now editable) set; the combat
+        log's right-click filter menu and the nameplate / floater layer stay
+        C++'s.
+      - Click-through: after binding, layout panels and panels with nothing
+        clickable in them become SelfHitTestInvisible, whatever the designer
+        left; a border holding buttons / inputs / cells keeps eating clicks.
+      - `UValhallaUISettings` (Project Settings > Valhalla > UI > Game HUD
+        Class, empty = the code HUD) and `valhalla.HudClass <path>` for the
+        next HUD; `AValhallaHUD::BeginPlay` creates that class.
+      - Editor tools (`ValhallaUITools`, `valhalla_tools/hud_blueprints.py`):
+        `create_hud_blueprints` (WBP_HUDSlot / WBP_HUDBar / WBP_GameHUD in
+        `/Game/Valhalla/UI/HUD`, check-before-create, empty),
+        `layout_hud_from_config` (WBP_GameHUD's tree from ui-config.json with
+        the binding names), `describe_hud_blueprint`. Python drives the
+        engine's `UMGToolSet` (`AddWidget`, `RenameWidget`,
+        `CompileWidgetBlueprint`, ...) through `call_method`: 5.8's Python
+        cannot touch `UWidgetBlueprint::WidgetTree` directly, and no C++
+        editor module was needed.
+      - Test `Valhalla.Game.UI.HudBlueprintGroundwork`: the setting defaults
+        empty and resolves to the C++ HUD, the C++ class never lays out from
+        a Blueprint, every panel name is a widget property with the right
+        Bind meta and type, the bar clamps its fraction.
 - [ ] **Step 3 — Blueprints:** Widget Blueprints for the character /
       inventory panel (uses `ClientStats`, `GetXpFraction`, the weapon fields
       `minDamage` / `maxDamage` / `attackSpeedMs`), then the other panels.

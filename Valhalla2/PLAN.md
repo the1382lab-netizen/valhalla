@@ -1424,14 +1424,14 @@ panel keys. The code-built panel shows them in the meantime.
         they are not in this commit. Until they are committed a clean checkout
         shows the Blueprints' frames without art.
 
-## B-21 — In-game options menu and HUD customization, steps 1–5 (2026-09-24)
+## B-21 — In-game options menu and HUD customization, steps 1–6 (2026-09-24)
 
 Kevin's decisions: settings are per character and synced through the backend
 (saved when changed, loaded at login); the UI is locked by default; Escape
 opens the options menu when nothing else is open; a cog button bottom right is
 the other way in. Steps 1–2 are the foundation (settings model, sync, layout
-apply); steps 3–5 the edit mode, the menu and live style; step 6 (with the
-backend) is still to do.
+apply); steps 3–5 the edit mode, the menu and live style; step 6 verified the
+backend sync end to end (real account, front end, two characters).
 
 - [x] **Settings model (ValhallaCore).** `FValhallaUserUISettings`
       (`ValhallaUserUISettings.h`, BlueprintType): `Version` 1, `UpdatedAt`
@@ -1701,7 +1701,69 @@ backend) is still to do.
       - Known: two PIE clients share `settings_offline.json` (character 0);
         the last to save wins. The tab bar's "current tab" tint is faint on
         the bronze plates.
-- [ ] Step 6 — verification (front end -> world with the backend: load at login, save on change, two characters).
+- [x] **Step 6 — verification with the backend (2026-09-24).** Run as B-14
+      did: `npm run dev:server` (repo root; `secrets.local.env` applied, so
+      production mode on 127.0.0.1:2567, `server/valhalla.db` kept), PIE from
+      `L_FrontEnd`, Play Standalone, Launch Separate Server, Run Under One
+      Process, **1 client** for the run (put back to 2 afterwards),
+      `valhalla.AutoLogin` with the throwaway account `b21tester` (userId 17,
+      registered through `POST /api/auth/register`; characters `Bsyncwar`
+      warrior id 41 and `Bsyncwiz` wizard id 42 through `POST
+      /api/characters`; account and characters left in the dev db, password
+      only in the gitignored `Saved/ClaudeOps/b21/creds.json`). Each run went
+      front end -> login -> character select -> Enter World -> the PIE
+      server's token verify -> in world. Screenshots `Saved/ClaudeOps/b21/30_`..`35_`,
+      API responses `31_api_get_*.json`, `34_api_get_*.json`, `36_*.json`.
+      - Load at login, nothing saved: `UI settings: character 41 from the
+        defaults.` then `settings get char=41 : 404` -> `character 41 has none
+        saved; the defaults.` (`30`).
+      - Save on change: a real click (SlateInspector) on the cog, then on the
+        menu's Combat log box (hidden), then `valhalla.UI movepanel Chat 300
+        -8` and `opacity 0.5`: 2 s later each time `saved .../Saved/UI/settings_41.json
+        (updated 2026-09-24T18:40:55.111Z)` and `settings put char=41 : 200
+        ok` (`31`). `GET /api/characters/41/settings` (the account's JWT):
+        200, `PanelOpacity` 0.5, `Panels.Chat.Position` [300, -8],
+        `Panels.CombatLog.bVisible` false, `UpdatedAt` as logged; 42 still 404.
+      - Cache deleted (moved to `b21/32_settings_41_cache_moved_away.json`),
+        new PIE as Bsyncwar: `from the defaults` (no file) -> `settings get
+        char=41 : 200 ok` -> `character 41 from the backend (updated
+        …18:40:55.111Z)` -> `player layout applied (2 panel(s) placed, UI scale
+        1.00, panel opacity 0.50)`, the cache file written again; the menu
+        shows Combat log unticked and 50 % (`32`).
+      - Second character: Bsyncwiz got its own defaults (`character 42 from the
+        defaults`, 404, 0 panels, opacity 1.00; `33`); `uiscale 1.3` +
+        `movepanel CombatLog -12 240` -> `settings_42.json` + `put char=42 :
+        200` (`34`); the GETs then: 42 UiScale 1.3 with only CombatLog placed,
+        41 unchanged (same `UpdatedAt`, opacity 0.5).
+      - Back to Bsyncwar: `from .../settings_41.json (updated …18:40:55.111Z)`,
+        2 panels / 0.50 at once, then the GET tie -> `from the backend` (same
+        value); HUD as in `31` (`35`).
+      - Newer local copy (the token-expired case): `settings_41.json` edited
+        offline (`bChatTimestamps` true, `UpdatedAt` 18:43:45) -> login:
+        `character 41's local copy (2026-09-24T18:43:45.000Z) is newer than the
+        backend's (2026-09-24T18:40:55.111Z); sending it.` + `put char=41 :
+        200 ok`; the GET then has the timestamps flag and 18:43:45. No token:
+        401.
+      - No fixes were needed. `Valhalla.` suite afterwards: 39 tests, 38 pass,
+        the known `Valhalla.Core.Data.MeshIdFallback` fails. Backend stopped,
+        the test caches moved out of `Saved/UI` (`b21/37_final_*`),
+        `settings_offline.json` unchanged, `valhalla.AutoLogin` cleared,
+        `L_World` reopened.
+      - Not driven: typing a login into the front end's own text boxes
+        (AutoLogin runs the same login / select / Enter World calls); two
+        characters in one client session (there is no in-world "back to
+        character select", so every switch is a new login, which is what a
+        player does); a backend that is down mid-session (the code keeps the
+        cache; the newer-local path above is what the next login does).
+      - Known limits: two offline PIE clients share `settings_offline.json`
+        (character 0; last save wins). A token that expires mid-session (24 h)
+        makes the PUTs 401; changes stay in the cache file and the next login
+        sends them (the newer-local rule above). Character
+        delete leaves `character_action_bar` rows (pre-existing, found in step
+        1: sql.js `export()` resets `PRAGMA foreign_keys`, so no `ON DELETE
+        CASCADE` fires; `character_settings` is deleted explicitly). The
+        `valhalla.AutoLogin` cvar echo puts the dev password in the local
+        editor log (`Saved/Logs`, gitignored).
 
 ## Backlog
 

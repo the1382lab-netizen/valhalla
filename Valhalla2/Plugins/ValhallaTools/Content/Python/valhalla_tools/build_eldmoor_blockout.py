@@ -89,6 +89,8 @@ KITS = {
                 "VB_ScorchedWall", "VB_Thicket_A", "VB_Thicket_B"],
 }
 MESH_PATH = {m: "/Game/Valhalla/Environment/{0}/{1}/StaticMeshes/{1}".format(k, m) for k, ms in KITS.items() for m in ms}
+MESH_PATH["SM_CliffCleft_Mid"] = "/Game/Valhalla/Environment/Eldmoor/SM_CliffCleft_Mid/StaticMeshes/SM_CliffCleft_Mid"
+PLUG_DY = 80.0  # cleft screen plug: cm south of the two boulders' mean position
 MESH_PATH["SM_PortalMarker"] = "/Game/Valhalla/Props/SM_PortalMarker/StaticMeshes/SM_PortalMarker"
 MESH_PATH["Plane"] = "/Engine/BasicShapes/Plane"
 MESH_PATH["Cube"] = "/Engine/BasicShapes/Cube"
@@ -96,11 +98,8 @@ MESH_PATH["Cube"] = "/Engine/BasicShapes/Cube"
 T = 64.0  # design tile, cm
 
 #: Zone entries are found by id across the whole world (AValhallaZoneEntry::Find),
-#: so the layout's ids ("entry_from_grasslands" is also the Desert's entry from
-#: the Grasslands, "entry_from_desert" the Grasslands' from the Desert) would
-#: collide. Every Eldmoor-related entry is prefixed with the zone it stands in.
-ENTRY_IDS = {"entry_from_grasslands": "eldmoor_from_grasslands", "entry_from_desert": "eldmoor_from_desert"}
-PORTAL_TARGETS = {"portal_to_grasslands": "grasslands_from_eldmoor", "portal_to_desert": "desert_from_eldmoor"}
+#: so every entry id is prefixed with the zone it stands in; the layout carries
+#: those ids (`eldmoor_from_grasslands`, `grasslands_from_eldmoor`, ...).
 
 
 def _log(msg):
@@ -485,12 +484,9 @@ class Builder(object):
         self.place("SM_KeepGate", "Gatehouse", f + "/Curtain", 4608, 2176, z=z)
         self.place("SM_KeepGate", "InnerGate", f + "/InnerWall", 4608, 1536, z=z)
         self.place("SM_KeepGate", "Postern", f + "/Curtain", 3200, 1216, z=z, yaw=90.0, scale=(0.5, 1.0, 0.62))
-        for t in C["towers"]:
+        for t in C["towers"]:   # T_W at (50,16): the postern door (tiles 18-20) opens beside it
             x, y = t["cm"]
-            if t["id"] == "T_W":
-                y = 1024   # moved 4 tiles north so the postern door (tiles 18-20) can open beside it
             self.place("VB_KeepTower", "Tower_" + t["id"], f + "/Towers", x, y, z=z)
-        self.notes["posternTowerMovedTo"] = [3200, 1024]
         for k, (x, y, yaw) in enumerate(((4608, 2176 + 45, 0.0), (4608, 1536 + 45, 0.0), (3200 - 45, 1216, 90.0))):
             self.place("SM_KeepBanner", "Banner_Ashvane_%d" % k, f + "/Curtain", x, y, z=z + 380, yaw=yaw)
 
@@ -532,6 +528,7 @@ class Builder(object):
                 if 4224 < x < 4864 and y < 448:
                     continue
                 self.instance("SM_Stone_Floor", x, y, z=z, folder=f + "/GreatHall/Floor")
+        self.hall_seams()
         self.place("SM_StoneRamp", "Undercroft_Ramp", f + "/Undercroft", 4544, 384, z=z + FLOOR_T, yaw=0.0)
         for k in range(5):
             self.place("SM_KeepParapetLow", "Undercroft_Parapet_%d" % k, f + "/Undercroft", 4288 + 128 * k, 448 + 10,
@@ -628,6 +625,15 @@ class Builder(object):
         self.place_t("SM_Brazier", "KeepGate_Brazier_W", f + "/Approach", 69.5, 35.6)
         self.place_t("SM_Brazier", "KeepGate_Brazier_E", f + "/Approach", 74.5, 35.6)
 
+    def cleft_screen_plug(self):
+        """The two screen boulders are rounded: at eye height their silhouettes leave a 40-60 cm sight slit
+        in front of the cleft mouth even though their bounds overlap. One VB boulder just south of the seam
+        closes it without narrowing the cliff-foot passage (review A1)."""
+        bs = [s["cm"] for s in self.layout["hiddenEntrance"]["screen"] if "oulder" in s["prop"]]
+        x = sum(c[0] for c in bs) / len(bs)
+        y = sum(c[1] for c in bs) / len(bs) + PLUG_DY
+        self.place("VB_BoulderLarge_B", "Cleft_ScreenPlug", "Highlands/CleftScreen", x, y, yaw=90.0, scale=1.25)
+
     def greyfell(self):
         f = "Highlands"
         # Tor south face (y 26), 6.5 modules x 0-26; the cleft at x = 6 tiles
@@ -636,7 +642,8 @@ class Builder(object):
             if x > 1664:
                 break
             if k == 1:
-                self.place("SM_CliffCleft", "Tor_Cleft", f + "/Tor", 384, 1600, z=300.0, yaw=0.0)
+                # the 400 cm cleft module, flush with the Mid faces (review A2)
+                self.place("SM_CliffCleft_Mid", "Tor_Cleft", f + "/Tor", 384, 1600, z=300.0, yaw=0.0)
                 continue
             self.place("VB_CliffFace_Mid", "Tor_FaceS_%d" % k, f + "/Tor", min(x, 1536), 1600, z=300.0, yaw=0.0)
         for k in range(7):
@@ -652,9 +659,10 @@ class Builder(object):
         for k in range(7):
             x = 128 + 256 * k
             self.place("VB_CliffFace_Tall", "Tor_FaceN_%d" % k, f + "/Tor", x, -64, z=0.0, yaw=180.0)
-        # unmarked cleft trigger placeholder (Phase 2 hidden portal -> cave_dungeon / entry_from_eldmoor)
-        trig = self.cls(unreal.TriggerBox, "PH_Portal_GreyfellCleft", f + "/Tor", 384, 1610, z=360.0)
-        trig.tags = [TAG, "PH_HiddenPortal", "target:cave_dungeon", "entry:entry_from_eldmoor"]
+        # unmarked cleft trigger placeholder (Phase 2 hidden portal -> cave_dungeon / greyfell_from_eldmoor)
+        tx_, ty_ = self.layout["hiddenEntrance"]["trigger"]["cm"]
+        trig = self.cls(unreal.TriggerBox, "PH_Portal_GreyfellCleft", f + "/Tor", tx_, ty_, z=360.0)
+        trig.tags = [TAG, "PH_HiddenPortal", "target:cave_dungeon", "entry:greyfell_from_eldmoor"]
         trig.set_actor_scale3d(unreal.Vector(1.2, 0.8, 2.0))
         # the screen (design section 8)
         scr = self.layout["hiddenEntrance"]["screen"]
@@ -663,13 +671,14 @@ class Builder(object):
              "stump": "SM_Stump", "rock (small) x6 scree": "SM_Rock_A"}
         for k, s in enumerate(scr):
             x, y = s["cm"]
-            mesh = m[s["prop"]]
+            mesh = m[s["prop"]] if s["prop"] in m else ("VB_BoulderLarge_A" if "VB_BoulderLarge_A" in s["prop"] else None)
             if mesh == "SM_Rock_A":
                 for r in range(6):
                     self.place(mesh, "Cleft_Scree_%d" % r, f + "/CleftScreen", x + (rnd(r) - 0.5) * 300,
                                y + (rnd(r + 9) - 0.5) * 220, yaw=360 * rnd(r + 3), scale=0.7 + 0.5 * rnd(r + 5))
             else:
-                self.place(mesh, "Cleft_{}_{}".format(mesh[3:], k), f + "/CleftScreen", x, y, yaw=37.0 * k)
+                self.place(mesh, "Cleft_{}_{}".format(mesh[3:], k), f + "/CleftScreen", x, y, yaw=s.get("yaw", 37.0 * k))
+        self.cleft_screen_plug()
         # ridge north cliff and the keep plateau's north edge (to nothing), x 26-98, two rows
         for k in range(28):
             x = 1664 + 128 + 256 * k
@@ -758,6 +767,7 @@ class Builder(object):
             self.place_t("SM_ScorchedBeams", name + "_Beams", f + "/" + name, (i0 + i1) / 2.0, (j0 + j1) / 2.0, yaw=25.0)
 
         farm("MillersStead", 130, 1, 136, 6, gaps={("S", 1), ("W", 1), ("E", 0)})
+        self.stead_back_fence()
         farm("Farmstead_West", 102, 3, 108, 7, gaps={("S", 1), ("E", 1)})
         farm("Farmstead_East", 122, 12, 128, 16, gaps={("N", 1), ("S", 2)})
         # C10 foragers' yard: fence ring with a gate gap on the south at (113,14)
@@ -929,6 +939,61 @@ class Builder(object):
                     "SM_FlowersA" if r < 0.6 else "SM_FlowersB" if r < 0.72 else "SM_GrassTuft")
             self.instance(mesh, x, y, yaw=360 * rnd(k), scale=0.8 + 0.5 * rnd(k + 3), folder="Downs/Scatter")
         self.notes["treeLine"] = n
+        self.edge_trees_east()
+
+    def edge_trees_east(self):
+        """Review A4: the east edge and the north-east corner (Burnt Steadings, the Desert
+        landing) get trees too - an inner row where there is room and two rows on the
+        Landscape border outside the zone, so the camera never looks into the void. A
+        4-tile gap is left at the Desert portal so the rune-stone stays clear."""
+        L = self.layout
+        river = L["river"]["centreline"]
+        portal = [(p["x"], p["y"]) for p in L["portalsAndEntries"] if p["id"] == "portal_to_desert"][0]
+        stead = (129 * T, 0, 137 * T, 7 * T)
+        rows = [((9152 - 150, 0), (9152 - 150, 2800), 170.0),       # inner, east edge north of the old line
+                ((9400, -400), (9400, 9500), 190.0),                  # border, east
+                ((9580, -400), (9580, 9500), 230.0),
+                ((6300, -200), (9600, -200), 190.0),                  # border, north-east
+                ((6300, -390), (9600, -390), 230.0)]
+        n = 0
+        for r, ((ax, ay), (bx, by), step) in enumerate(rows):
+            d = math.hypot(bx - ax, by - ay)
+            for k in range(int(d // step)):
+                t = (k + 0.5) * step / d
+                x = ax + (bx - ax) * t + (rnd(k * 5 + ax + r) - 0.5) * 110
+                y = ay + (by - ay) * t + (rnd(k * 11 + ay + r) - 0.5) * 110
+                if poly_dist(x, y, river) < 320 or math.hypot(x - portal[0], y - portal[1]) < 4 * T:
+                    continue
+                if r == 0 and stead[0] <= x <= stead[2] and stead[1] <= y <= stead[3]:
+                    continue
+                self.instance("SM_Tree_A" if rnd(k + ax + r) < 0.5 else "SM_Tree_B", x, y, yaw=360 * rnd(k + r),
+                              scale=0.95 + 0.45 * rnd(k + 2 + r), folder="Edges/TreeLineEast")
+                n += 1
+        self.notes["treeLineEast"] = n
+
+    def stead_back_fence(self):
+        """Review A4: the stead's back fence, 1.5 tiles in from the north edge, x 125-143."""
+        f = "Steadings/BackFence"
+        for k, (mesh, tx) in enumerate((("VB_ScorchedWall", 125.0), ("VB_ScorchedWall", 127.0), ("SM_ScorchedPost", 128.9),
+                                        ("SM_ScorchedPost", 137.3), ("VB_ScorchedWall", 139.0), ("SM_ScorchedPost", 140.4),
+                                        ("VB_ScorchedWall", 142.0))):
+            self.place_t(mesh, "BackFence_%d" % k, f, tx, 1.5, yaw=180.0)
+
+    def hall_seams(self):
+        """Review A5: the sunk undercroft terrain drops over one 32 cm quad just outside
+        the pit (x 61-77, y 5-13); cover that strip at hall-floor level so neither a slit
+        in the courtyard / barracks / hall nor daylight into the cellar shows."""
+        f = "Keep/GreatHall/Seams"
+        for a in range(19):
+            x = 3840 + 32 + 64 * a
+            for y in (288.0, 864.0):
+                if y == 288.0 and 4224 < x < 4864:
+                    continue   # the ramp slot stays open
+                self.instance("SM_Stone_Floor", x, y, z=HALL_Z, folder=f)
+        for b in range(8):
+            y = 320 + 32 + 64 * b
+            for x in (3872.0, 4960.0):
+                self.instance("SM_Stone_Floor", x, y, z=HALL_Z, folder=f)
 
     def edges(self):
         S = 9152.0
@@ -948,19 +1013,19 @@ class Builder(object):
         f = "Gameplay"
         pe = {p["id"]: p for p in self.layout["portalsAndEntries"] if not p.get("phase")}
         yaws = {"portal_to_grasslands": 0.0, "portal_to_desert": 90.0,
-                "entry_from_grasslands": -90.0, "entry_from_desert": 180.0}
+                "eldmoor_from_grasslands": -90.0, "eldmoor_from_desert": 180.0}
         for pid, p in pe.items():
             x, y = p["x"], p["y"]
             if p["type"] == "portal":
                 a = self.cls(unreal.ValhallaPortal, "Portal_to_" + p["targetZone"], f, x, y, yaw=yaws[pid])
                 a.set_editor_property("target_zone_id", p["targetZone"])
-                a.set_editor_property("target_entry_id", PORTAL_TARGETS[pid])
+                a.set_editor_property("target_entry_id", p["targetEntry"])
                 mk = a.get_editor_property("marker")
                 if mk.get_editor_property("static_mesh") is None:
                     mk.set_editor_property("static_mesh", self.mesh("SM_PortalMarker"))
             else:
-                a = self.cls(unreal.ValhallaZoneEntry, "Entry_" + ENTRY_IDS[pid], f, x, y, yaw=yaws[pid])
-                a.set_editor_property("entry_id", ENTRY_IDS[pid])
+                a = self.cls(unreal.ValhallaZoneEntry, "Entry_" + pid, f, x, y, yaw=yaws[pid])
+                a.set_editor_property("entry_id", pid)
                 a.set_editor_property("from_zone_id", p["fromZone"])
         # the scaffold's four starts -> the Grasslands-side arrival
         starts = sorted([a for a in EAS.get_all_level_actors()
@@ -1024,22 +1089,31 @@ def build():
 
 # ── the other zones' ends, and lights ───────────────────────────────────────
 
-NEIGHBOURS = {
-    "L_Grasslands_Gameplay": [
-        ("portal", "Portal_to_grasslands_v2", 2048.0, 96.0, 0.0, ("grasslands_v2", "eldmoor_from_grasslands")),
-        ("entry", "Entry_grasslands_from_eldmoor", 2048.0, 380.0, 90.0, ("grasslands_from_eldmoor", "grasslands_v2")),
-    ],
-    "L_Desert_Gameplay": [
-        ("portal", "Portal_to_grasslands_v2", 3968.0, 864.0, 90.0, ("grasslands_v2", "eldmoor_from_desert")),
-        ("entry", "Entry_desert_from_eldmoor", 3616.0, 864.0, 180.0, ("desert_from_eldmoor", "grasslands_v2")),
-    ],
-}
+def _neighbours(layout):
+    """The Grasslands / Desert ends of the Eldmoor portals, from the layout."""
+    g, d = layout["grasslandsSide"], layout["desertSide"]
+    return {
+        "L_Grasslands_Gameplay": [
+            ("portal", "Portal_to_grasslands_v2", float(g["portal"]["x"]), float(g["portal"]["y"]), 0.0,
+             ("grasslands_v2", "eldmoor_from_grasslands")),
+            ("entry", "Entry_" + g["entry"]["id"], float(g["entry"]["x"]), float(g["entry"]["y"]), 90.0,
+             (g["entry"]["id"], "grasslands_v2")),
+        ],
+        "L_Desert_Gameplay": [
+            ("portal", "Portal_to_grasslands_v2", float(d["portal"]["x"]), float(d["portal"]["y"]), 90.0,
+             ("grasslands_v2", "eldmoor_from_desert")),
+            ("entry", "Entry_" + d["entry"]["id"], float(d["entry"]["x"]), float(d["entry"]["y"]), 180.0,
+             (d["entry"]["id"], "grasslands_v2")),
+        ],
+    }
 
 
 def add_neighbour_portals():
     out = {}
     marker = unreal.EditorAssetLibrary.load_asset(MESH_PATH["SM_PortalMarker"])
-    for level_name, items in NEIGHBOURS.items():
+    layout = json.load(open(os.path.join(build_zone.repo_root(), "Docs", "Zones", "Eldmoor", "eldmoor_layout.json"),
+                            encoding="utf-8"))
+    for level_name, items in _neighbours(layout).items():
         world, sl = _streaming(level_name)
         off = sl.get_editor_property("level_transform").translation
         unreal.EditorLevelUtils.make_level_current(sl)

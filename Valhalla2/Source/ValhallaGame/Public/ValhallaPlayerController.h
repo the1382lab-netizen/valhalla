@@ -373,7 +373,7 @@ protected:
 
 	void HandlePrimaryClick();
 	void HandleToggleSkills();
-	/** I and B: the combined character + inventory panel, as in 1.0. */
+	/** I: the combined character + inventory panel. */
 	void HandleToggleInventory();
 	/** Enter: open the chat box. */
 	void HandleOpenChat();
@@ -411,13 +411,12 @@ protected:
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> PrimaryClickAction;
 
-	/** Phase 8b: I — inventory. */
+	/**
+	 * Phase 8b: I — the combined character + inventory panel. B-07 removed
+	 * 1.0's second key for it (B, IA_Character): one panel, one key.
+	 */
 	UPROPERTY(Transient)
 	TObjectPtr<UInputAction> InventoryAction;
-
-	/** Phase 8b: B — character (the same combined panel as I, as in 1.0). */
-	UPROPERTY(Transient)
-	TObjectPtr<UInputAction> CharacterAction;
 
 	/** Phase 8b: Enter — open the chat box. */
 	UPROPERTY(Transient)

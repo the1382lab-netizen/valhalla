@@ -48,6 +48,7 @@
 #include "ValhallaPlayerController.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
+#include "ValhallaStats.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaHUD);
 
@@ -1387,7 +1388,7 @@ void UValhallaGameHUDWidget::BuildInventoryPanel()
 	CharPanel->SetContent(CharBox);
 	UVerticalBox* CharColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
 	CharBox->SetContent(CharColumn);
-	CharColumn->AddChildToVerticalBox(MakeText(TEXT("Character  (B)"), 10, I.TitleColor, true))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
+	CharColumn->AddChildToVerticalBox(MakeText(TEXT("Character  (I)"), 10, I.TitleColor, true))->SetPadding(FMargin(0.f, 0.f, 0.f, 4.f));
 
 	for (int32 Index = 0; Index < ValhallaEquipSlotCount; ++Index)
 	{
@@ -1402,9 +1403,17 @@ void UValhallaGameHUDWidget::BuildInventoryPanel()
 		EquipCells.Add(Cell);
 		EquipLabels.Add(Label);
 	}
+	// B-07: level + XP, a thin XP bar, then the owner's resolved stats
+	// (AValhallaPlayerState::GetClientStats). Interim — step 3 rebuilds this
+	// panel as a Widget Blueprint.
+	CharacterLevel = MakeText(FString(), 7, I.ValueColor);
+	CharColumn->AddChildToVerticalBox(CharacterLevel)->SetPadding(FMargin(0.f, 6.f, 0.f, 2.f));
+	CharXpBar = MakeBar(FMath::Max(40.f, I.CharPanelWidth - 8.f), 5.f, Srgb(0xff, 0xaa, 0x00), FLinearColor::Black, 0.8f, false, 6);
+	CharXpBar.Root->SetToolTipText(AsText(TEXT("Experience to the next level")));
+	CharColumn->AddChildToVerticalBox(CharXpBar.Root)->SetPadding(FMargin(0.f, 0.f, 0.f, 2.f));
 	CharacterStats = MakeText(FString(), 7, I.ValueColor);
 	CharacterStats->SetAutoWrapText(true);
-	CharColumn->AddChildToVerticalBox(CharacterStats)->SetPadding(FMargin(0.f, 6.f, 0.f, 0.f));
+	CharColumn->AddChildToVerticalBox(CharacterStats)->SetPadding(FMargin(0.f, 2.f, 0.f, 0.f));
 	Pair->AddChildToHorizontalBox(CharPanel)->SetPadding(FMargin(0.f, 0.f, I.PanelGap, 0.f));
 
 	// ── inventory grid ──────────────────────────────────────────────────
@@ -1983,7 +1992,6 @@ void UValhallaGameHUDWidget::TickInventoryPanel()
 		Cell->SetQuantity(Item.Quantity);
 	}
 
-	FValhallaStatBlock Bonus;
 	for (UValhallaHUDSlotWidget* Cell : EquipCells)
 	{
 		const EValhallaEquipSlot EquipSlot = ValhallaEquipSlotFromIndex(Cell->Index);
@@ -2004,21 +2012,56 @@ void UValhallaGameHUDWidget::TickInventoryPanel()
 		Cell->SetAbbrev(Texture ? FString() : Template->Name.Left(2), RarityColour(Template->Rarity));
 		EquipLabels[Cell->Index]->SetText(AsText(FString::Printf(TEXT("%s  %s"), *SlotName, *Template->Name)));
 		EquipLabels[Cell->Index]->SetColorAndOpacity(FSlateColor(RarityColour(Template->Rarity)));
-
-		const FValhallaStatBlock& S = Template->StatBonuses;
-		Bonus.Hp += S.Hp; Bonus.Mana += S.Mana; Bonus.Strength += S.Strength; Bonus.Stamina += S.Stamina;
-		Bonus.Dexterity += S.Dexterity; Bonus.Intelligence += S.Intelligence; Bonus.Wisdom += S.Wisdom;
-		Bonus.PhysicalResist += S.PhysicalResist; Bonus.SpellResist += S.SpellResist;
 	}
 
-	// The resolved block is server-only (AValhallaPlayerState's class
-	// comment), so the panel shows the vitals the client *is* told and the
-	// gear's own bonuses, which it can compute from items.json.
+	// B-07: the owner's read-only copy of its resolved stats (class base +
+	// level growth + gear, exactly what the server fights with). Rates are
+	// 0-1 decimals; the resists and defense are flat ratings, not percentages.
+	const FValhallaResolvedStats& S = PS->GetClientStats();
+	auto Pct = [](float Rate) { return FString::Printf(TEXT("%.0f%%"), Rate * 100.f); };
+
+	const int32 XpNeeded = PS->GetXpToNextLevel();
+	const float XpFraction = PS->GetXpFraction();
+	CharacterLevel->SetText(AsText(XpNeeded > 0
+		? FString::Printf(TEXT("Level %d   XP %d / %d (%.0f%%)"), PS->Level, PS->Xp, XpNeeded, XpFraction * 100.f)
+		: FString::Printf(TEXT("Level %d   XP max"), PS->Level)));
+	CharXpBar.Set(XpFraction);
+
+	// The main-hand weapon's roll and swing, from items.json (EquipWeapon is
+	// public), the swing with this player's DEX applied as the server does.
+	FString WeaponLine = TEXT("Weapon  —");
+	if (const FValhallaItemTemplate* Weapon = PS->EquipWeapon.IsNone() ? nullptr : Data->FindItem(PS->EquipWeapon))
+	{
+		float MinDamage = 0.f, MaxDamage = 0.f;
+		Weapon->GetDamageRange(MinDamage, MaxDamage);
+		const FString Damage = MaxDamage <= 0.f ? FString(TEXT("—"))
+			: FMath::IsNearlyEqual(MinDamage, MaxDamage) ? FString::Printf(TEXT("%.0f"), MaxDamage)
+			: FString::Printf(TEXT("%.0f–%.0f"), MinDamage, MaxDamage);
+		WeaponLine = FString::Printf(TEXT("Weapon  %s dmg"), *Damage);
+		if (Weapon->bHasAttackSpeed && Weapon->AttackSpeedMs > 0.f)
+		{
+			const double Swing = Valhalla::Stats::ComputeAutoAttackSpeed(Weapon->AttackSpeedMs, S.Dexterity);
+			WeaponLine += FString::Printf(TEXT("   %.1fs (%.1fs w/ DEX)"), Weapon->AttackSpeedMs / 1000.f, Swing / 1000.0);
+		}
+	}
+
+	const FString Pool = PS->MaxMana > 0.f
+		? FString::Printf(TEXT("Mana %.0f/%.0f"), PS->Mana, PS->MaxMana)
+		: FString::Printf(TEXT("Energy %.0f/%.0f"), PS->Energy, PS->MaxEnergy);
+
 	CharacterStats->SetText(AsText(FString::Printf(
-		TEXT("Level %d   XP %d\nHP %.0f/%.0f   %s\nGear: STR +%.0f  STA +%.0f  DEX +%.0f\n      INT +%.0f  WIS +%.0f  PR +%.0f  SR +%.0f"),
-		PS->Level, PS->Xp, PS->Hp, PS->MaxHp,
-		PS->MaxMana > 0.f ? *FString::Printf(TEXT("MP %.0f/%.0f"), PS->Mana, PS->MaxMana) : *FString::Printf(TEXT("EP %.0f/%.0f"), PS->Energy, PS->MaxEnergy),
-		Bonus.Strength, Bonus.Stamina, Bonus.Dexterity, Bonus.Intelligence, Bonus.Wisdom, Bonus.PhysicalResist, Bonus.SpellResist)));
+		TEXT("HP %.0f/%.0f   %s\n")
+		TEXT("STR %.0f  STA %.0f  DEX %.0f  INT %.0f  WIS %.0f\n")
+		TEXT("Phys Def %.0f   Phys Resist %.0f   Spell Resist %.0f\n")
+		TEXT("Block %s   Dodge %s   Crit %s / x%.2f\n")
+		TEXT("%s\n")
+		TEXT("Speed %.0f   Vision %.0f"),
+		PS->Hp, PS->MaxHp, *Pool,
+		S.Strength, S.Stamina, S.Dexterity, S.Intelligence, S.Wisdom,
+		S.PhysicalDefense, S.PhysicalResist, S.SpellResist,
+		*Pct(S.BlockRating), *Pct(S.DodgeRating), *Pct(S.CritChance), 1.f + S.CritDamage,
+		*WeaponLine,
+		S.Speed, PS->VisionRange)));
 }
 
 void UValhallaGameHUDWidget::TickTooltip()
@@ -2976,6 +3019,17 @@ void UValhallaGameHUDWidget::ShowItemTooltip(FName ItemId, int32 Quantity)
 	Stat(TEXT("HP"), S.Hp); Stat(TEXT("Mana"), S.Mana); Stat(TEXT("Strength"), S.Strength); Stat(TEXT("Stamina"), S.Stamina);
 	Stat(TEXT("Dexterity"), S.Dexterity); Stat(TEXT("Intelligence"), S.Intelligence); Stat(TEXT("Wisdom"), S.Wisdom);
 	Stat(TEXT("Physical resist"), S.PhysicalResist); Stat(TEXT("Spell resist"), S.SpellResist);
+	Stat(TEXT("Physical defense"), S.PhysicalDefense);
+	// Rates are 0-1 decimals (items.json): +0.03 blockRating reads "+3% Block".
+	auto Rate = [&Body](const TCHAR* Label, float Value)
+	{
+		if (!FMath::IsNearlyZero(Value))
+		{
+			Body += FString::Printf(TEXT("\n%s%.0f%% %s"), Value > 0.f ? TEXT("+") : TEXT(""), Value * 100.f, Label);
+		}
+	};
+	Rate(TEXT("Block"), S.BlockRating); Rate(TEXT("Dodge"), S.DodgeRating);
+	Rate(TEXT("Crit chance"), S.CritChance); Rate(TEXT("Crit damage"), S.CritDamage);
 	{
 		float MinDamage = 0.f, MaxDamage = 0.f;
 		Item->GetDamageRange(MinDamage, MaxDamage);

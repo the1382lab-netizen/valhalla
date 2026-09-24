@@ -250,17 +250,13 @@ void AValhallaPlayerController::SetupInputComponent()
 	CameraZoomAction->ValueType = EInputActionValueType::Axis1D;
 	ValhallaMappingContext->MapKey(CameraZoomAction, EKeys::MouseWheelAxis);
 
-	// Phase 8b: the HUD's panels. I and B open the same combined character +
-	// inventory panel, as 1.0's GameScene did; Enter opens the chat box, and
+	// Phase 8b: the HUD's panels. I opens the combined character + inventory
+	// panel (1.0 also bound B to it; B-07 dropped that); Enter opens the chat box, and
 	// Escape closes whatever is on top. While the chat box has focus the
 	// controller is in UI-only input mode, so none of these (nor WASD) fire.
 	InventoryAction = NewObject<UInputAction>(this, TEXT("IA_Inventory"));
 	InventoryAction->ValueType = EInputActionValueType::Boolean;
 	ValhallaMappingContext->MapKey(InventoryAction, EKeys::I);
-
-	CharacterAction = NewObject<UInputAction>(this, TEXT("IA_Character"));
-	CharacterAction->ValueType = EInputActionValueType::Boolean;
-	ValhallaMappingContext->MapKey(CharacterAction, EKeys::B);
 
 	ChatAction = NewObject<UInputAction>(this, TEXT("IA_Chat"));
 	ChatAction->ValueType = EInputActionValueType::Boolean;
@@ -286,7 +282,6 @@ void AValhallaPlayerController::SetupInputComponent()
 	EnhancedInput->BindAction(CameraLookAction, ETriggerEvent::Triggered, this, &AValhallaPlayerController::HandleCameraLook);
 	EnhancedInput->BindAction(CameraZoomAction, ETriggerEvent::Triggered, this, &AValhallaPlayerController::HandleCameraZoom);
 	EnhancedInput->BindAction(InventoryAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleToggleInventory);
-	EnhancedInput->BindAction(CharacterAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleToggleInventory);
 	EnhancedInput->BindAction(ChatAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleOpenChat);
 	EnhancedInput->BindAction(EscapeAction, ETriggerEvent::Started, this, &AValhallaPlayerController::HandleEscape);
 
@@ -296,8 +291,8 @@ void AValhallaPlayerController::SetupInputComponent()
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>())
 		{
 			Subsystem->AddMappingContext(ValhallaMappingContext, MappingContextPriority);
-			UE_LOG(LogValhallaGame, Log, TEXT("Enhanced Input ready: WASD + 1-8 + K + I/B + Enter + Esc + mouse + RMB orbit + wheel zoom (%d actions, built in code)."),
-				ActionBarActions.Num() + 10);
+			UE_LOG(LogValhallaGame, Log, TEXT("Enhanced Input ready: WASD + 1-8 + K + I + Enter + Esc + mouse + RMB orbit + wheel zoom (%d actions, built in code)."),
+				ActionBarActions.Num() + 9);
 		}
 	}
 }

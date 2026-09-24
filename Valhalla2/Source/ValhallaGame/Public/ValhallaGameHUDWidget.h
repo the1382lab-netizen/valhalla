@@ -425,6 +425,9 @@ private:
 	// inventory
 	UPROPERTY(Transient) TObjectPtr<UWidget> InventoryRoot;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> InventoryTitle;
+	/** B-07: "Level n   XP x / y (z%)" above CharXpBar, then CharacterStats below it. */
+	UPROPERTY(Transient) TObjectPtr<UTextBlock> CharacterLevel;
+	FBar CharXpBar;
 	UPROPERTY(Transient) TObjectPtr<UTextBlock> CharacterStats;
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDSlotWidget>> InventoryCells;
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDSlotWidget>> EquipCells;

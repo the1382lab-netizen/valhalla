@@ -183,12 +183,12 @@ public:
 	 *     because line 4291 spreads `baseStats` (in which `maxHp` is already a
 	 *     separate, already-computed key) and then adds into the `StatBlock`
 	 *     names only. No item in the catalog has one, so nothing exercises it.
-	 *   - `blockRating` is a 0..1 probability, and `iron_buckler` /
-	 *     `iron_kite_shield` in items.json give +3 and +5 of it. That is a data
-	 *     bug in 1.0 that was invisible while nothing summed the bonuses, and it
-	 *     becomes a 100%-block shield the moment something does. Left as-is and
-	 *     flagged rather than silently rescaled: 2.0 does not get to retune 1.0's
-	 *     balance data from the port.
+	 *   - `blockRating` (like `critChance`, `critDamage`, `dodgeRating`) is a
+	 *     0..1 decimal and is summed as-is. 1.0's `iron_buckler` /
+	 *     `iron_kite_shield` gave +3 / +5 of it — a 100%-block shield once
+	 *     anything summed the bonuses; the shared items.json now carries 0.03 /
+	 *     0.05, and `Valhalla.Core.Data.StatBonusRates` keeps every rate
+	 *     field in [0, 1].
 	 */
 	static FValhallaResolvedStats ComputeStatsWithEquipment(
 		const FValhallaClassTemplate& ClassTemplate,

@@ -623,4 +623,54 @@ bool FValhallaDataLoadsTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Core.Data.StatBonusRates — every rate in items.json is a decimal
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaDataStatBonusRatesTest,
+	"Valhalla.Core.Data.StatBonusRates",
+	VALHALLA_TEST_FLAGS)
+
+bool FValhallaDataStatBonusRatesTest::RunTest(const FString& Parameters)
+{
+	using namespace ValhallaTests;
+
+	FValhallaDataTables Tables;
+	if (!LoadRealTables(*this, Tables))
+	{
+		return false;
+	}
+
+	// The rate fields of FValhallaStatBlock are 0-1 decimals (0.05 == 5%), and
+	// equipment bonuses are summed straight into the resolved block. A whole
+	// number here — 1.0 shipped shields with `blockRating: 3` — is a 300% rate
+	// once summed. The flat ratings (resists, defense, attributes) are not
+	// rates and are not checked.
+	int32 Checked = 0;
+	for (const TPair<FName, FValhallaItemTemplate>& Pair : Tables.Items)
+	{
+		const FValhallaStatBlock& S = Pair.Value.StatBonuses;
+		struct FRate { const TCHAR* Key; float Value; };
+		const FRate Rates[] = {
+			{ TEXT("critChance"),  S.CritChance },
+			{ TEXT("critDamage"),  S.CritDamage },
+			{ TEXT("blockRating"), S.BlockRating },
+			{ TEXT("dodgeRating"), S.DodgeRating },
+		};
+		for (const FRate& Rate : Rates)
+		{
+			++Checked;
+			if (Rate.Value < 0.f || Rate.Value > 1.f)
+			{
+				AddError(FString::Printf(TEXT("items.json '%s' statBonuses.%s = %.4f is outside [0, 1] (rates are decimals: 0.05 == 5%%)."),
+					*Pair.Key.ToString(), Rate.Key, Rate.Value));
+			}
+		}
+	}
+	TestTrue(TEXT("some items were checked"), Checked > 0);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -56,6 +56,7 @@ void AValhallaPlayerState::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>&
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, Inventory, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, PartyId, COND_OwnerOnly);
 	DOREPLIFETIME_CONDITION(AValhallaPlayerState, PartyMemberNames, COND_OwnerOnly);
+	DOREPLIFETIME_CONDITION(AValhallaPlayerState, ClientStats, COND_OwnerOnly);
 	DOREPLIFETIME(AValhallaPlayerState, bAdminFrozen);
 }
 
@@ -347,6 +348,7 @@ void AValhallaPlayerState::CopyProperties(APlayerState* PlayerState)
 		Other->PartyMemberNames = PartyMemberNames;
 
 		Other->Stats = Stats;
+		Other->ClientStats = ClientStats;
 		Other->SkillCooldownExpiry = SkillCooldownExpiry;
 		Other->ActiveBuffs = ActiveBuffs;
 
@@ -370,6 +372,7 @@ void AValhallaPlayerState::InitializeFromClass(const FValhallaClassTemplate& Cla
 
 	// GameRoom.ts:607 — the stat block is the single source for every pool.
 	Stats = Valhalla::Stats::ComputeDerivedStats(ClassTemplate, Level);
+	ClientStats = Stats;
 
 	MaxHp = Stats.MaxHp;
 	MaxMana = Stats.MaxMana;
@@ -466,6 +469,32 @@ void AValhallaPlayerState::RecomputeStats()
 	Hp = FMath::Min(Hp, MaxHp);
 	Mana = FMath::Min(Mana, MaxMana);
 	Energy = FMath::Min(Energy, MaxEnergy);
+
+	// B-07: the owner's read-only copy for its character panel. Last, so it is
+	// exactly what the server will fight with. Nothing server-side reads it.
+	ClientStats = Stats;
+}
+
+int32 AValhallaPlayerState::XpToNextLevelFor(int32 InLevel)
+{
+	// stats.ts:199 — +Infinity at the cap, which an int cannot hold.
+	const double Needed = Valhalla::Stats::XpRequiredForLevel(FMath::Max(1, InLevel));
+	if (!FMath::IsFinite(Needed))
+	{
+		return INDEX_NONE;
+	}
+	// 100 * 2^23 at level 24 is the largest value, well inside int32.
+	return FMath::RoundToInt32(Needed);
+}
+
+float AValhallaPlayerState::XpFractionFor(int32 InLevel, int32 InXp)
+{
+	const int32 Needed = XpToNextLevelFor(InLevel);
+	if (Needed <= 0)
+	{
+		return 1.f;
+	}
+	return FMath::Clamp(static_cast<float>(InXp) / static_cast<float>(Needed), 0.f, 1.f);
 }
 
 bool AValhallaPlayerState::AwardXp(int32 Amount)

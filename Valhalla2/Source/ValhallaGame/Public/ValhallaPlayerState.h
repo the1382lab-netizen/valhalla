@@ -20,10 +20,17 @@ struct FValhallaItemTemplate;
  * because it is an anti-cheat boundary and not a bandwidth optimisation:
  *
  *   replicated   identity, level, the vitals a health bar needs, vision range
- *   server-only  the resolved stat block, skill cooldowns, active buffs
+ *   owner-only   a read-only copy of this player's own resolved stat block
+ *                (ClientStats, B-07), for the character panel
+ *   server-only  the authoritative stat block, skill cooldowns, active buffs
  *
  * A client that knew the defender's DodgeRating could predict the outcome of
- * a swing before the server resolved it, so it does not get to know.
+ * a swing before the server resolved it, so it does not get to know — about
+ * anyone else. Since B-07 the owning client does receive its *own* resolved
+ * stats (COND_OwnerOnly), because a character sheet needs them and a player
+ * knowing their own dodge chance gives nothing away. The server never reads
+ * ClientStats back: all combat math still runs on `Stats`, which stays
+ * private and unreplicated.
  *
  * Position, rotation and velocity are NOT here. In 1.0 they lived on the
  * schema; in 2.0 they belong to the character's replicated movement.
@@ -59,9 +66,27 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Identity")
 	int32 Level = 1;
 
-	/** PlayerState.ts:41 `xp`. */
+	/** PlayerState.ts:41 `xp`. The amount within the current level; spent on level-up. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Identity")
 	int32 Xp = 0;
+
+	/**
+	 * XP needed to go from the current Level to the next (stats.ts:199
+	 * `xpRequiredForLevel`), or INDEX_NONE (-1) at the level cap. A pure
+	 * function of the replicated Level, so it is right on every machine.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Valhalla|Identity")
+	int32 GetXpToNextLevel() const { return XpToNextLevelFor(Level); }
+
+	/** Xp / GetXpToNextLevel(), clamped to [0, 1]; 1 at the level cap. For the XP bar. */
+	UFUNCTION(BlueprintPure, Category = "Valhalla|Identity")
+	float GetXpFraction() const { return XpFractionFor(Level, Xp); }
+
+	/** GetXpToNextLevel for an arbitrary level. Static so tests need no actor. */
+	static int32 XpToNextLevelFor(int32 InLevel);
+
+	/** GetXpFraction for an arbitrary level and in-level XP. */
+	static float XpFractionFor(int32 InLevel, int32 InXp);
 
 	/** PlayerState.ts:42 `zoneId`. */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Identity")
@@ -110,6 +135,16 @@ public:
 	 */
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Vision")
 	float VisionRange = 1200.f;
+
+	// ── Replicated, owner only: own resolved stats ──────────────────────
+
+	/**
+	 * The owning client's read-only copy of its own resolved stat block (B-07),
+	 * for the character panel. Written only by the server, at the end of every
+	 * recompute; the server itself never reads it — combat uses `Stats`. See
+	 * the class comment for why the owner may know this and nobody else may.
+	 */
+	const FValhallaResolvedStats& GetClientStats() const { return ClientStats; }
 
 	// ── Replicated: inventory ───────────────────────────────────────────
 
@@ -231,7 +266,7 @@ public:
 
 	// ── Server-only ─────────────────────────────────────────────────────
 
-	/** The full resolved stat block. Never replicated — see the class comment. */
+	/** The full resolved stat block. Never replicated (the owner gets ClientStats) — see the class comment. */
 	const FValhallaResolvedStats& GetStats() const { return Stats; }
 
 	/** Skill id (or cooldown group) -> server time in seconds when it comes off cooldown. */
@@ -354,6 +389,13 @@ protected:
 private:
 	/** stats.ts `ResolvedStats`. Server-only; see the class comment. */
 	FValhallaResolvedStats Stats;
+
+	/**
+	 * A copy of Stats for the owning client (COND_OwnerOnly). Private so only
+	 * the server's recompute paths write it; C++ reads it via GetClientStats().
+	 */
+	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Stats", meta = (AllowPrivateAccess = "true"))
+	FValhallaResolvedStats ClientStats;
 
 	/** The selection, as everything except the replication layer sees it. */
 	TWeakObjectPtr<AActor> TargetActor;

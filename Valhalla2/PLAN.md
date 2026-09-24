@@ -355,7 +355,7 @@ canvas HUD is behind `valhalla.DebugHud 1`.
       while typing), `/g /world /p /w <name> /invite /accept /decline /leave`
       (`ValhallaChatCommands`, pure and tested), Tab cycles the channel, idle
       lines fade. Kept clear of the action bar on narrow viewports.
-- [x] Character + inventory panel (I or B; `inventory.*`): 1.0 item icons
+- [x] Character + inventory panel (I; B too until B-07; `inventory.*`): 1.0 item icons
       imported to `/Game/Valhalla/UI/Icons/Items` (`import_ui_icons.py`, 68
       textures, check-before-create), tooltips, click to equip/unequip, drag to
       move/equip, right-click drop with a confirm.
@@ -1056,6 +1056,59 @@ Checklist for a session with outside players: [deploy/GOING_LIVE.md](../deploy/G
         must re-clone or hard-reset; old hashes in PLAN.md and docs go stale;
         GitHub keeps the old objects reachable through caches and forks until
         support purges them, so the hashes must be treated as leaked anyway.
+
+## B-07 — HUD → Widget Blueprint, step 1: stats, XP, keybinds (2026-09-24)
+
+Groundwork for moving the code-built HUD (`UValhallaGameHUDWidget`) to Widget
+Blueprints: give the client the numbers a character sheet needs, and tidy the
+panel keys. The code-built panel shows them in the meantime.
+
+- [x] **Owner-only resolved stats.** `AValhallaPlayerState::ClientStats`
+      (`FValhallaResolvedStats`, `Replicated`, `COND_OwnerOnly`, private,
+      `BlueprintReadOnly` via `AllowPrivateAccess`; C++ reads
+      `GetClientStats()`). The server copies `Stats` into it at the end of
+      `RecomputeStats`, in `InitializeFromClass` and in `CopyProperties`, and
+      never reads it back; `Stats` stays private and unreplicated. Class
+      comment updated: the owner may know its own dodge/block/crit, nobody
+      else may.
+- [x] **XP to next level.** `GetXpToNextLevel()` (`XpRequiredForLevel(Level)`,
+      `INDEX_NONE` at the cap) and `GetXpFraction()` (Xp / needed, clamped
+      0–1, 1 at the cap), both `BlueprintPure` over the replicated Level/Xp,
+      plus static `XpToNextLevelFor` / `XpFractionFor` for tests.
+- [x] **Keybinds.** B no longer opens the panel: `IA_Character` removed
+      (member, action, mapping, binding); I alone opens the combined
+      Character + Inventory panel, titled "Character  (I)". Input log line
+      and comments updated.
+- [x] **Character panel (interim, code-built).** The "Gear:" bonus sum is
+      replaced by the resolved stats: "Level n   XP x / y (z%)" (or "XP
+      max") over a thin XP bar (`MakeBar`, from `GetXpFraction`); HP; Mana or
+      Energy; STR STA DEX INT WIS; Phys Def, Phys Resist, Spell Resist (flat
+      ratings, not percentages); Block / Dodge / Crit % and crit multiplier;
+      main-hand weapon damage min–max and swing (base and with DEX), "—"
+      with no weapon; Speed; Vision. Item tooltips add Physical defense and
+      Block / Dodge / Crit chance / Crit damage as percentages.
+- [x] **Block-rate data.** Checked: `shared/data/items.json` already holds
+      `blockRating` 0.03 / 0.05 (fixed when the data moved into this repo),
+      and every other rate bonus (`dodgeRating` 0.01) is a decimal; no data
+      change needed. The stale "known data bug" note on
+      `UValhallaInventoryLibrary::ComputeStatsWithEquipment` is rewritten.
+      The item editor's steps for rate fields are 0.01; the stats fixtures
+      (`Tools/fixtures/generate.ts`) do not read items.json, so nothing to
+      regenerate.
+- [x] **Tests:** `Valhalla.Game.PlayerState.XpToNextLevel`,
+      `Valhalla.Game.PlayerState.ClientStatsOwnerOnly` (reads the CDO's
+      lifetime props) and `Valhalla.Core.Data.StatBonusRates` (every
+      `critChance` / `critDamage` / `blockRating` / `dodgeRating` bonus in
+      [0, 1]). Not yet built or run: the new replicated UPROPERTY needs a
+      full rebuild with the editor closed (not Live Coding).
+- [ ] **Step 2 — groundwork:** a C++ base class for the Blueprint panels
+      (bindable view-model getters, the drag/drop and tooltip plumbing the
+      code-built HUD owns today).
+- [ ] **Step 3 — Blueprints:** Widget Blueprints for the character /
+      inventory panel (uses `ClientStats`, `GetXpFraction`, the weapon fields
+      `minDamage` / `maxDamage` / `attackSpeedMs`), then the other panels.
+- [ ] **Step 4 — switch-over and cleanup:** the HUD creates the Blueprints,
+      the code-built panels and their `ui-config.json` knobs go.
 
 ## Backlog
 

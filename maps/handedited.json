@@ -3,11 +3,13 @@
   "levels": [
     "/Game/Valhalla/Maps/L_World",
     "/Game/Valhalla/Maps/Zones/L_Grasslands",
-    "/Game/Valhalla/Maps/Zones/L_Desert"
+    "/Game/Valhalla/Maps/Zones/L_Desert",
+    "/Game/Valhalla/Maps/Zones/L_Grasslands_Gameplay",
+    "/Game/Valhalla/Maps/Zones/L_Desert_Gameplay"
   ],
   "overlays": [
     "grasslands",
     "desert"
   ],
-  "note": "Listed levels/overlays are hand-edited; the rebuild tool refuses to overwrite them without force=True"
+  "note": "Listed levels/overlays are hand-edited and nothing regenerates them (B-19). ValhallaLevelTools.scaffold_zone adds each new zone here; remove an entry only by hand."
 }

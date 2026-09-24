@@ -1,18 +1,19 @@
-"""Build the whole Phase 3 world: two zone sublevels and the level that hosts them.
+"""How the Phase 3 world was built: two zone sublevels and the level that hosts them.
 
-Run from the editor console:
+**RETIRED as a rebuild tool (B-19).** This used to replace `L_World`,
+`L_Grasslands` and `L_Desert` from scratch. They are hand-edited now, so
+`build_all()` refuses unconditionally (there is no `force`, and the MCP tool
+`build_world_levels` is gone), and `_open_empty_level` refuses any level that
+already exists, so nothing here can empty one. The file stays as the record of
+the streaming layout below, and `npc_setup.py` still uses its constants and
+`ensure_gameplay_levels`.
 
-    py "<project>/Plugins/ValhallaTools/Content/Python/valhalla_tools/build_world.py"
-
-Replaces `L_World`, `L_Grasslands` and `L_Desert` in that order, and writes both
-zones' overlay files as a side effect of building them. Anything unsaved in
-whatever level is open is lost, so save first.
-
-**B-05: hand-edited levels are protected.** Every level and overlay listed in
-`<repo>/maps/handedited.json` — today all three levels and both overlays — is
-skipped unless `build_all(force=True)`, and a forced run backs the old files up
-to `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/` first. See `build_all` and
-`valhalla_tools/level_protection.py`.
+* A new zone: `ValhallaLevelTools.scaffold_zone` (`scaffold_zone.py`), then
+  add it to `L_World` by hand in the editor (Levels panel: add the streaming
+  sub-level, always loaded, at its offset).
+* An old layout back: git history for the `.umap`, `Saved/LevelBackups/`, or
+  `build_grasslands.build(zone_id=...)` / `build_desert.build(zone_id=...)` into a
+  new empty level under a new zone id.
 
 ## The structure, and why it is this one
 
@@ -68,7 +69,7 @@ zone bounds: the box is a level actor, so it arrives already offset.
 
 import unreal
 
-from valhalla_tools import build_desert, build_grasslands, level_protection
+from valhalla_tools import level_protection
 from valhalla_tools.build_zone import ZONE_CM
 
 WORLD_PATH = "/Game/Valhalla/Maps/L_World"
@@ -131,26 +132,6 @@ def _actors():
 # ── The two zone sublevels ──────────────────────────────────────────────
 
 
-#: Actors a level cannot be without, skipped when clearing one.
-#:
-#: Deliberately short, and `unreal.Brush` is deliberately **not** in it. The
-#: obvious way to write this list is "WorldSettings, Brush, AbstractNavData",
-#: because the default builder brush is an `ABrush` and cannot be destroyed —
-#: but every *volume* is also an `ABrush`, `APostProcessVolume` included, so
-#: skipping `Brush` silently exempts the global post-process volume from being
-#: cleared. It then survives every rebuild and the level accumulates one more
-#: each time; three of them were in `L_World` before this was noticed, and
-#: three unbound post-process volumes at the same priority is a coin toss over
-#: which one wins.
-#:
-#: The builder brush is handled instead by `destroy_actor` simply returning
-#: False for it, which is what it does, and costs a line in nobody's log.
-_UNDELETABLE = (
-    unreal.WorldSettings,
-    unreal.AbstractNavData,
-)
-
-
 def _make_persistent_level_current():
     """Put the editor's "current level" back to the persistent one.
 
@@ -181,57 +162,25 @@ def _make_persistent_level_current():
 
 
 def _open_empty_level(level_path):
-    """Open `level_path` empty, whether or not it already exists.
+    """Create `level_path` as a new, empty level and open it. Refuses an existing one.
 
-    `ULevelEditorSubsystem::NewLevel` **refuses a path that already holds a
-    level** and returns False rather than overwriting it, so "rebuild from
-    scratch" cannot be a single call. Deleting the asset first is not an answer
-    either: `delete_asset` on a `.umap` only marks the package for deletion, so
-    the file is still on disk, `does_asset_exist` still says yes, and
-    `new_level` still refuses.
+    B-19: this used to open an existing level and destroy every actor in it,
+    which is how a rebuild wiped hand edits. It now only creates. (Background:
+    `ULevelEditorSubsystem::NewLevel` refuses a path that already holds a
+    level, and `delete_asset` on a `.umap` only marks it for deletion.)
 
-    So: create it if it is new, and otherwise open it and empty it. Emptying
-    means detaching every streaming sublevel *first* — `get_all_level_actors`
-    reaches into loaded sublevels, and clearing `L_World` without detaching
-    would delete the contents of both zones — and then destroying everything
-    that can be destroyed.
-
-    Then it **confirms the editor really opened it**, which is the part that
-    matters most. A silent failure here does not error, it just means the next
-    `spawn_actor_from_class` goes into whatever level *was* open — which is
-    exactly how an earlier run of this script put `L_World`'s sun, sky, fog and
-    post-process volume inside `L_Desert`. Nothing errored; the shadows were
-    just wrong.
+    Then it **confirms the editor really opened it**. A silent failure here does
+    not error, it just means the next `spawn_actor_from_class` goes into
+    whatever level *was* open — which is exactly how an earlier run of this
+    script put `L_World`'s sun, sky, fog and post-process volume inside
+    `L_Desert`.
     """
-    existed = unreal.EditorAssetLibrary.does_asset_exist(level_path)
-
-    if not existed:
-        if not _levels().new_level(level_path):
-            raise RuntimeError("new_level({}) returned False".format(level_path))
-    else:
-        if not _levels().load_level(level_path):
-            raise RuntimeError("load_level({}) returned False".format(level_path))
-
-        world = unreal.EditorLevelLibrary.get_editor_world()
-
-        # Sublevels before actors. See the docstring.
-        detached = 0
-        for level in unreal.EditorLevelUtils.get_levels(world)[1:]:
-            unreal.EditorLevelUtils.remove_level_from_world(level)
-            detached += 1
-        if detached:
-            _levels().set_current_level_by_name(level_path.rsplit("/", 1)[-1])
-
-        actors = _actors()
-        destroyed = 0
-        for actor in actors.get_all_level_actors():
-            if isinstance(actor, _UNDELETABLE):
-                continue
-            if actors.destroy_actor(actor):
-                destroyed += 1
-
-        _log("emptied existing {}: {} sublevel(s) detached, {} actor(s) destroyed".format(
-            level_path, detached, destroyed))
+    if unreal.EditorAssetLibrary.does_asset_exist(level_path):
+        raise RuntimeError(
+            "{} already exists; B-19 retired rebuilding existing levels "
+            "(recover from git history or Saved/LevelBackups/)".format(level_path))
+    if not _levels().new_level(level_path):
+        raise RuntimeError("new_level({}) returned False".format(level_path))
 
     current = _levels().get_current_level()
     current_path = current.get_outer().get_path_name() if current else "<none>"
@@ -243,19 +192,16 @@ def _open_empty_level(level_path):
     return current_path
 
 
-def build_zone_level(level_path, builder_module, force=False):
-    """Create one zone sublevel from scratch and run its builder into it.
+def build_zone_level(level_path, builder_module):
+    """Create one zone sublevel (a NEW path only) and run its builder into it.
 
-    The caller (`build_all`) has already refused a protected level and made the
-    backup; `force` here only decides whether a protected *overlay* is written.
+    Unused since B-19: the only callers were the retired rebuild, and
+    `_open_empty_level` refuses a path that exists.
     """
     _log("building {}".format(level_path))
 
     _open_empty_level(level_path)
-    # The builder class directly, not `builder_module.build()`: the level is
-    # now empty, so re-checking it against the marker would be checking the
-    # rebuild this call was already allowed to make.
-    result = builder_module.BUILDER(force=force).build()
+    result = builder_module.BUILDER().build()
 
     if not _levels().save_current_level():
         raise RuntimeError("could not save {}".format(level_path))
@@ -475,133 +421,22 @@ def build_world():
     return {"world": WORLD_PATH, "sublevels": added, "zoneSizeCm": ZONE_CM}
 
 
-# ── Everything ──────────────────────────────────────────────────────────
+# ── Everything: retired ─────────────────────────────────────────────
 
 
-#: Somewhere to park the editor before rebuilding.
-#:
-#: Necessary, not tidiness. `EditorStartupMap` is `L_World`, so a freshly opened
-#: editor has `L_Grasslands` and `L_Desert` *loaded* — they are always-loaded
-#: streaming sublevels, that is the whole design — and `new_level` on a level
-#: that is currently loaded returns False. So the first thing a rebuild has to
-#: do is open a level that has no sublevels at all. The greybox is the obvious
-#: choice: it is a fixture, nothing here touches it, and it is small.
-PARK_LEVEL = "/Game/Valhalla/Maps/L_GreyBox"
+def build_all(**_ignored):
+    """RETIRED (B-19). Refuses unconditionally and touches nothing.
 
+    `L_World`, `L_Grasslands` and `L_Desert` are hand-edited; regenerating
+    them is not something any tool does any more (there is no `force`). New
+    zone: `ValhallaLevelTools.scaffold_zone`. Old layout: git history for the
+    `.umap`, `Valhalla2/Saved/LevelBackups/<timestamp>/`, or a retired zone
+    script run under a new zone id (`build_grasslands.build(zone_id=...)`).
 
-#: `(zone id, builder module)`, in build order. A new zone from the Blender
-#: kit is one more line here; it is not in `maps/handedited.json`, so it builds.
-ZONE_BUILDERS = [
-    ("grasslands", build_grasslands),
-    ("desert", build_desert),
-]
-
-
-def plan_rebuild(force=False, marker=None):
-    """What `build_all(force)` would build and skip. Pure: touches nothing.
-
-    B-05. A level or overlay listed in `maps/handedited.json` is skipped unless
-    `force`. A skipped zone level writes no overlay either (the overlay is a
-    by-product of building the level), and a built zone whose overlay is
-    listed is built without writing it.
+    Returns:
+        ``{"ok": False, "refused": {...}, "message": str}``.
     """
-    marker = marker if marker is not None else level_protection.load_marker()
-    zone_levels = [module.LEVEL_PATH for _zone, module in ZONE_BUILDERS]
-    all_levels = zone_levels + [WORLD_PATH]
-    all_overlays = [zone for zone, _module in ZONE_BUILDERS]
-
-    if force:
-        skipped_levels, skipped_overlays = [], []
-    else:
-        skipped_levels = [p for p in all_levels if level_protection.is_level_protected(p, marker)]
-        skipped_overlays = [z for z in all_overlays
-                            if level_protection.is_overlay_protected(z, marker)]
-
-    zones = [(zone, module) for zone, module in ZONE_BUILDERS
-             if module.LEVEL_PATH not in skipped_levels]
-    return {
-        "zones": zones,
-        "buildWorld": WORLD_PATH not in skipped_levels,
-        "levels": [m.LEVEL_PATH for _z, m in zones]
-                  + ([WORLD_PATH] if WORLD_PATH not in skipped_levels else []),
-        "overlays": [z for z, _m in zones if z not in skipped_overlays],
-        "skipped": {"levels": skipped_levels, "overlays": skipped_overlays},
-        "marker": marker["path"],
-    }
-
-
-def build_all(force=False):
-    """The sublevels first, then the level that references them.
-
-    **B-05: hand-edited levels are protected.** Any level or overlay listed in
-    `<repo>/maps/handedited.json` (today `L_World`, `L_Grasslands`,
-    `L_Desert` and both overlays) is skipped — not opened, not emptied, not
-    saved — unless `force=True`; the result's `skipped` names each one and
-    everything unlisted still builds. With nothing left to build this returns
-    before touching the editor at all. A forced run first copies every
-    existing target `.umap` / `_BuiltData.uasset` / overlay JSON to
-    `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/` (paths kept relative to
-    the repo root) and returns that folder as `backup`.
-
-    Order matters: `add_level_to_world_with_transform` needs the sublevel asset
-    to exist, and building a zone *after* attaching it would mean opening the
-    sublevel on its own, which detaches it from the editor's idea of the world
-    and is the usual way a streaming setup ends up with an empty sublevel.
-    """
-    plan = plan_rebuild(force)
-    result = {"force": bool(force), "skipped": plan["skipped"],
-              "built": plan["levels"], "overlaysWritten": plan["overlays"]}
-    if plan["skipped"]["levels"] or plan["skipped"]["overlays"]:
-        result["message"] = level_protection.refusal_message(
-            plan["skipped"]["levels"], plan["skipped"]["overlays"],
-            level_protection.load_marker(plan["marker"]))
-        unreal.log_warning("VALHALLA_WORLD " + result["message"])
-
-    if not plan["levels"]:
-        _log("nothing to build; every target is hand-edited. Changed nothing.")
-        return result
-
-    # Get off `L_World` first, or its two always-loaded sublevels are the two
-    # levels this is about to replace. See `PARK_LEVEL`.
-    _levels().load_level(PARK_LEVEL)
-    _log("parked on {}".format(PARK_LEVEL))
-
-    # And nothing may be dirty, because `NewLevel` offers to save before it
-    # overwrites and an unattended script declines that prompt, failing the
-    # whole call. So commit anything outstanding first — and with
-    # `EditorLoadingAndSavingUtils`, not `save_all_dirty_levels`, which only
-    # reaches the levels of the world that happens to be open and would
-    # therefore silently skip the very level a failed earlier run left dirty.
-    #
-    # Saving rather than refusing is safe: a level this run rebuilds is about
-    # to be replaced anyway, and a dirty hand-edited level it skips (B-05) is
-    # only saved, never emptied — committing Kevin's edit, not losing it.
-    dirty = [p.get_name() for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()]
-    if dirty:
-        _log("committing {} unsaved level(s) before rebuilding: {}".format(
-            len(dirty), ", ".join(dirty)))
-        unreal.EditorLoadingAndSavingUtils.save_dirty_packages(
-            save_map_packages=True, save_content_packages=False)
-
-        still_dirty = [p.get_name()
-                       for p in unreal.EditorLoadingAndSavingUtils.get_dirty_map_packages()]
-        if still_dirty:
-            raise RuntimeError(
-                "could not save {}; `NewLevel` will refuse to overwrite while they "
-                "are dirty. Restart the editor and run this again.".format(
-                    ", ".join(still_dirty)))
-
-    # After the commit above, so the backup holds any unsaved edit too.
-    if force:
-        backup = level_protection.backup_targets(plan["levels"], plan["overlays"])
-        result["backup"] = backup["folder"]
-        _log("forced rebuild; previous files backed up to {}".format(backup["folder"]))
-
-    for zone, module in plan["zones"]:
-        result[zone] = build_zone_level(module.LEVEL_PATH, module, force=force)
-    result["gameplayLevelsCreated"] = ensure_gameplay_levels()
-    if plan["buildWorld"]:
-        result["world"] = build_world()
-
-    _log("VALHALLA_WORLD_DONE " + str(result))
-    return result
+    targets = [path for path, _offset in SUBLEVELS] + [WORLD_PATH]
+    message = level_protection.refusal_message(levels=targets)
+    unreal.log_warning("VALHALLA_WORLD " + message)
+    return {"ok": False, "refused": {"levels": targets}, "message": message}

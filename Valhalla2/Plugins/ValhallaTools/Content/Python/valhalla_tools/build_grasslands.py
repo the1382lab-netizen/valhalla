@@ -1,8 +1,11 @@
-"""Build `/Game/Valhalla/Maps/Zones/L_Grasslands` from scratch, and its overlay.
+"""Build `/Game/Valhalla/Maps/Zones/L_Grasslands` from scratch, and its overlay — RETIRED.
 
-Run from the editor console:
-
-    py "<project>/Plugins/ValhallaTools/Content/Python/valhalla_tools/build_grasslands.py"
+**B-19: this no longer runs against `L_Grasslands`.** The zone is hand-edited now;
+`build()` refuses its own target level unconditionally (no `force`) and only
+lays the historical layout out under a *new* zone id, into a new empty level.
+New zones: `ValhallaLevelTools.scaffold_zone`. Recovering the old `L_Grasslands`:
+git history for the `.umap`, or `Valhalla2/Saved/LevelBackups/<timestamp>/`.
+Kept on disk as the record of how the zone was first built.
 
 ## What this is a port of
 
@@ -566,19 +569,25 @@ class Grasslands(ZoneBuilder):
         self.write_overlay()
 
 
-#: The builder class, for `build_world.build_zone_level`.
+#: The builder class (history; `build_world.build_zone_level` no longer rebuilds existing zones).
 BUILDER = Grasslands
 
 
-def build(force=False, backup=True):
-    """Build the zone into the open level and write its overlay.
+def build(zone_id=None):
+    """RETIRED (B-19): never rebuilds ``L_Grasslands``; builds this layout only as a NEW zone.
 
-    B-05: refuses (places nothing, returns ``{"ok": False, "refused": ...}``)
-    when the open level is listed in ``maps/handedited.json``, and skips the
-    overlay when ``grasslands`` is listed there, unless ``force=True`` — which first
-    backs both up to ``Saved/LevelBackups/<timestamp>/``. See
-    ``build_zone.run_builder``.
+    Refuses unconditionally — places nothing, writes nothing, returns
+    ``{"ok": False, "refused": ...}`` — when the open level is ``L_Grasslands`` or
+    any level in ``maps/handedited.json``, and when ``zone_id`` is missing,
+    ``"grasslands"``, or an overlay that already exists. There is no ``force``.
+
+    With a new ``zone_id`` and a new, empty level open (create it by hand), it
+    lays out the historical grasslands there and writes
+    ``overlays-2.0/<zone_id>.json``; see ``build_zone.run_builder``. For a new
+    zone use ``ValhallaLevelTools.scaffold_zone`` instead. To get the
+    hand-edited ``L_Grasslands`` back as it was, use git history for the ``.umap`` or
+    ``Valhalla2/Saved/LevelBackups/<timestamp>/``.
     """
-    result = run_builder(Grasslands, force=force, backup=backup)
+    result = run_builder(Grasslands, LEVEL_PATH, zone_id=zone_id)
     unreal.log("VALHALLA_GRASSLANDS " + str(result))
     return result

@@ -1,8 +1,11 @@
-"""Build `/Game/Valhalla/Maps/Zones/L_Desert` from scratch, and its overlay.
+"""Build `/Game/Valhalla/Maps/Zones/L_Desert` from scratch, and its overlay — RETIRED.
 
-Run from the editor console:
-
-    py "<project>/Plugins/ValhallaTools/Content/Python/valhalla_tools/build_desert.py"
+**B-19: this no longer runs against `L_Desert`.** The zone is hand-edited now;
+`build()` refuses its own target level unconditionally (no `force`) and only
+lays the historical layout out under a *new* zone id, into a new empty level.
+New zones: `ValhallaLevelTools.scaffold_zone`. Recovering the old `L_Desert`:
+git history for the `.umap`, or `Valhalla2/Saved/LevelBackups/<timestamp>/`.
+Kept on disk as the record of how the zone was first built.
 
 ## What this is a port of
 
@@ -449,19 +452,25 @@ class Desert(ZoneBuilder):
         self.write_overlay()
 
 
-#: The builder class, for `build_world.build_zone_level`.
+#: The builder class (history; `build_world.build_zone_level` no longer rebuilds existing zones).
 BUILDER = Desert
 
 
-def build(force=False, backup=True):
-    """Build the zone into the open level and write its overlay.
+def build(zone_id=None):
+    """RETIRED (B-19): never rebuilds ``L_Desert``; builds this layout only as a NEW zone.
 
-    B-05: refuses (places nothing, returns ``{"ok": False, "refused": ...}``)
-    when the open level is listed in ``maps/handedited.json``, and skips the
-    overlay when ``desert`` is listed there, unless ``force=True`` — which first
-    backs both up to ``Saved/LevelBackups/<timestamp>/``. See
-    ``build_zone.run_builder``.
+    Refuses unconditionally — places nothing, writes nothing, returns
+    ``{"ok": False, "refused": ...}`` — when the open level is ``L_Desert`` or
+    any level in ``maps/handedited.json``, and when ``zone_id`` is missing,
+    ``"desert"``, or an overlay that already exists. There is no ``force``.
+
+    With a new ``zone_id`` and a new, empty level open (create it by hand), it
+    lays out the historical desert there and writes
+    ``overlays-2.0/<zone_id>.json``; see ``build_zone.run_builder``. For a new
+    zone use ``ValhallaLevelTools.scaffold_zone`` instead. To get the
+    hand-edited ``L_Desert`` back as it was, use git history for the ``.umap`` or
+    ``Valhalla2/Saved/LevelBackups/<timestamp>/``.
     """
-    result = run_builder(Desert, force=force, backup=backup)
+    result = run_builder(Desert, LEVEL_PATH, zone_id=zone_id)
     unreal.log("VALHALLA_DESERT " + str(result))
     return result

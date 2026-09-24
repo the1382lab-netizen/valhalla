@@ -885,7 +885,7 @@ in place for `valhalla.Visual.BodyProfile 0`.
       it in `skipped` / `message`, and still build anything unmarked (a new
       zone). With everything marked the MCP call changes nothing: verified by
       `.umap` mtimes and overlay md5s before/after.
-- [x] **To force:** `build_world_levels(force=True)` (or `build(force=True)`).
+- [x] **To force** (retired by B-19; no longer exists): `build_world_levels(force=True)` (or `build(force=True)`).
       Only when Kevin asks for his hand edits to be discarded. It first copies
       the old `.umap` / `_BuiltData.uasset` / overlay JSONs to
       `Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`, paths relative to the repo root,
@@ -945,6 +945,47 @@ the same routes the Live Dashboard uses.
 - Known: `FrontEndClientCounter` is static, so a second PIE run deals the
       `valhalla.AutoLogin` entries in the other order (client 3 got entry 1).
       Harmless for two throwaway accounts.
+
+## B-19 — zone rebuild tools retired; `scaffold_zone` for new zones (2026-09-23)
+
+`L_World`, `L_Grasslands` and `L_Desert` are hand-edited, so the from-scratch
+builders were only a way to destroy them. Kevin's call: keep the generator as
+a scaffold for new zones only.
+
+- [x] **Retired.** The MCP tool `ValhallaLevelTools.build_world_levels` is
+      gone, and with it every `force` path. `build_world.build_all()` refuses
+      unconditionally; `build_world._open_empty_level` refuses any level that
+      exists (it no longer empties one); `build_grasslands.build()` /
+      `build_desert.build()` refuse their own level and any marked level, and
+      otherwise only lay the old layout out under a new `zone_id` into a new
+      empty level. The scripts stay on disk as history.
+- [x] **New zone:** `ValhallaLevelTools.scaffold_zone(zone_id, theme="grassland",
+      size_tiles=64)` (`valhalla_tools/scaffold_zone.py`, built on
+      `build_zone.ZoneBuilder`). Themes `grassland`, `desert`, `town` (cave
+      later); 8–128 tiles. Creates `Zones/L_<ZoneId>` (theme floor, zone
+      volume, fog bounds, four tagged player starts), an empty
+      `Zones/L_<ZoneId>_Gameplay` for NPC Spawn Points, and
+      `maps/overlays-2.0/<zone_id>.json`; registers each in
+      `maps/handedited.json` as soon as it exists; reopens the level that was
+      open. Refuses (creates nothing) if either level, the overlay or a marker
+      entry exists, or a map is unsaved. No `force`.
+- [x] **Hand steps after a scaffold:** open `L_World`, Levels panel, add
+      `L_<ZoneId>` and `L_<ZoneId>_Gameplay` as always-loaded streaming
+      sub-levels at one offset clear of the other zones (grasslands X=0,
+      desert X=+40000 cm), save; then a `zones.json` entry and portals.
+- [x] **Recovering an old layout:** git history for the `.umap`;
+      `Valhalla2/Saved/LevelBackups/<timestamp>/` (B-05-era copies); or
+      `build_grasslands.build(zone_id="grasslands_v1")` /
+      `build_desert.build(zone_id=...)` with a new empty level open.
+- [x] **Marker** now also lists `L_Grasslands_Gameplay` / `L_Desert_Gameplay`.
+      `level_protection.register()` adds entries; nothing removes them (hand
+      edit only). Backups kept; no tool calls them now. `self_check()` 15/15.
+      `npc_setup.migrate_overlay_spawns(force)` is unchanged (overlay
+      migration, not a rebuild).
+- [x] **Verified:** `scaffold_zone("b19test", "grassland", 16)` created both
+      levels and the overlay and registered them; a second call refused with
+      all six reasons; test levels, overlay and marker entries then removed.
+      `Valhalla.` tests 26/27 (only the known `MeshIdFallback`).
 
 ## Backlog
 

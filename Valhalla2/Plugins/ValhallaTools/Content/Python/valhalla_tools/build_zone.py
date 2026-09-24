@@ -1,7 +1,9 @@
-"""Shared machinery for the Phase 3 zone builders.
+"""Shared machinery for the zone builders and for `scaffold_zone`.
 
-`build_grasslands.py` and `build_desert.py` are the *content*; this is the
-vocabulary they are written in. Keeping it in one place is what makes the two
+`build_grasslands.py` and `build_desert.py` are the *content* (retired as
+rebuild tools in B-19, kept for history); this is the vocabulary they are
+written in, and `scaffold_zone.py` uses the same vocabulary to start a NEW
+zone. Keeping it in one place is what makes the two
 zones structurally identical — same grid, same conventions, same actor
 categories, same overlay — so that a reader comparing them sees only the theme.
 
@@ -179,10 +181,11 @@ class ZoneBuilder(object):
     #: zone can draw on several kits — the town props live in their own.
     KITS = []
 
-    def __init__(self, force=False):
-        #: B-05: without it, `write_overlay` skips an overlay listed in
-        #: `maps/handedited.json`. See `valhalla_tools/level_protection.py`.
-        self.force = force
+    #: Zone is SIZE_TILES x SIZE_TILES tiles. The two Phase 3 zones are `N`;
+    #: `scaffold_zone` makes a subclass with the size it was asked for.
+    SIZE_TILES = N
+
+    def __init__(self):
         self.actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
         self._mesh_cache = {}
         self._fields = {}
@@ -365,27 +368,29 @@ class ZoneBuilder(object):
         on: an overlay point's Z comes from `Bounds.Min.Z`, so a tile at
         zone-local (0, 0) lands on the floor rather than metres under it.
         """
+        zone_cm = self.SIZE_TILES * TILE
+        extent = unreal.Vector(zone_cm / 2.0, zone_cm / 2.0, ZONE_EXTENT.z)
         volume = self.place_class(
             unreal.ValhallaZoneVolume, "ZoneVolume_{}".format(self.ZONE_ID), "Zone",
-            ZONE_CM / 2.0, ZONE_CM / 2.0, FLOOR_TOP + ZONE_EXTENT.z)
+            zone_cm / 2.0, zone_cm / 2.0, FLOOR_TOP + extent.z)
         volume.set_editor_property("zone_id", self.ZONE_ID)
         volume.set_editor_property("display_name", self.DISPLAY_NAME)
-        volume.set_editor_property("extent", ZONE_EXTENT)
+        volume.set_editor_property("extent", extent)
 
         # And onto the box directly. `OnConstruction` does the same thing, but
         # it is not guaranteed to re-run after a `set_editor_property` from
         # Python, and a zone volume whose box is still the class default is a
         # zone that quietly covers a quarter of what it should.
-        volume.get_editor_property("box").set_box_extent(ZONE_EXTENT, False)
+        volume.get_editor_property("box").set_box_extent(extent, False)
 
         # The default spawn arrow is a child component, so it is positioned
         # relative to the box — hence the subtraction of the box's own centre.
         spawn_x, spawn_y = tile_xy(spawn_i, spawn_j)
         arrow = volume.get_editor_property("default_spawn")
         arrow.set_relative_location_and_rotation(
-            unreal.Vector(spawn_x - ZONE_CM / 2.0,
-                          spawn_y - ZONE_CM / 2.0,
-                          FLOOR_TOP - (FLOOR_TOP + ZONE_EXTENT.z)),
+            unreal.Vector(spawn_x - zone_cm / 2.0,
+                          spawn_y - zone_cm / 2.0,
+                          FLOOR_TOP - (FLOOR_TOP + extent.z)),
             unreal.Rotator(0.0, 0.0, spawn_yaw), False, False)
 
         self.notes["defaultSpawn"] = [spawn_x, spawn_y, FLOOR_TOP]
@@ -499,16 +504,16 @@ class ZoneBuilder(object):
         position by `ValidateOverlayPoint`, and the only way to keep those in
         step across a rebuild is for one pass to emit both.
 
-        B-05: an overlay listed in `maps/handedited.json` is hand-edited and is
-        left alone unless the builder was made with `force=True`; the skip is
-        recorded in `notes["overlaySkipped"]` and nothing is written.
+        B-05 / B-19: an overlay listed in `maps/handedited.json` is hand-edited
+        and is never overwritten; the skip is recorded in
+        `notes["overlaySkipped"]` and nothing is written.
         """
         from valhalla_tools import level_protection
 
         directory = overlay_dir()
         path = os.path.join(directory, "{}.json".format(self.ZONE_ID)).replace("\\", "/")
 
-        if not self.force and level_protection.is_overlay_protected(self.ZONE_ID):
+        if level_protection.is_overlay_protected(self.ZONE_ID):
             message = level_protection.refusal_message(overlays=[self.ZONE_ID])
             unreal.log_warning("VALHALLA_ZONE " + message)
             self.notes["overlaySkipped"] = path
@@ -523,7 +528,8 @@ class ZoneBuilder(object):
             "spawnPoints": self.overlay_points,
         }
 
-        with open(path, "w", encoding="utf-8") as handle:
+        # LF on every platform, as the overlays are committed.
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(document, handle, indent=2)
             handle.write("\n")
 
@@ -542,7 +548,7 @@ class ZoneBuilder(object):
         }
 
 
-# ── B-05: the guarded entry point ───────────────────────────────────────
+# ── B-05 / B-19: the guarded entry point ────────────────────────────────
 
 
 def _current_level_path():
@@ -550,40 +556,51 @@ def _current_level_path():
     return level.get_outer().get_path_name().split(".")[0] if level else ""
 
 
-def run_builder(builder_cls, force=False, backup=True):
-    """Run a zone builder into the open level, honouring `maps/handedited.json`.
+def run_builder(builder_cls, target_level, zone_id=None):
+    """Run a retired zone builder into the open level — only as a NEW zone.
 
-    What `build_grasslands.build()` / `build_desert.build()` call. The builder
-    places actors into *whatever level is current*, so:
+    What `build_grasslands.build()` / `build_desert.build()` call. B-19: these
+    scripts never regenerate their own zone any more, so this refuses (places
+    nothing, writes nothing, returns ``{"ok": False, "refused": ...}``) when
 
-    * current level listed in the marker and `force` False: refuse — nothing
-      is placed and nothing written; returns `{"ok": False, "refused": ...}`.
-    * the zone's overlay listed and `force` False: the level is built but the
-      overlay is not written (`notes["overlaySkipped"]`).
-    * `force` True and `backup` True: the current level's files and the
-      overlay are copied to `Saved/LevelBackups/<timestamp>/` first.
+    * the open level is the script's own target (`target_level`), or any level
+      listed in `maps/handedited.json` — unconditionally, there is no `force`;
+    * `zone_id` is missing, or is already a listed overlay, an existing
+      `overlays-2.0/<zone_id>.json`, or the builder's original zone id.
 
-    `build_world.build_all` makes these checks itself (it has to decide before
-    emptying the level) and calls this with `backup=False`.
+    Otherwise it rebuilds the historical layout into the open (new, empty)
+    level under `zone_id`, and writes `overlays-2.0/<zone_id>.json`. That is the
+    "recover an old layout" path: create an empty level by hand, open it, and
+    run ``build_grasslands.build(zone_id="grasslands_v1")``. Portals still
+    point at the original zones; fix them by hand. Prefer
+    `ValhallaLevelTools.scaffold_zone` for a genuinely new zone.
     """
     from valhalla_tools import level_protection
 
     marker = level_protection.load_marker()
     current = _current_level_path()
-    zone_id = builder_cls.ZONE_ID
+    original = builder_cls.ZONE_ID
+    target_level = target_level.split(".")[0]
 
-    if not force and current and level_protection.is_level_protected(current, marker):
-        message = level_protection.refusal_message(levels=[current], marker=marker)
+    def refuse(message, **refused):
         unreal.log_warning("VALHALLA_ZONE " + message)
-        return {"ok": False, "zoneId": zone_id, "refused": {"levels": [current]},
+        return {"ok": False, "zoneId": zone_id or original, "refused": refused,
                 "message": message}
 
-    backup_folder = None
-    if force and backup:
-        backup_folder = level_protection.backup_targets(
-            [current] if current.startswith("/Game/") else [], [zone_id])["folder"]
+    if not current:
+        return refuse("refused: no level is open", levels=[])
+    if current == target_level or level_protection.is_level_protected(current, marker):
+        return refuse(level_protection.refusal_message(levels=[current], marker=marker),
+                      levels=[current])
+    if not zone_id or zone_id == original:
+        return refuse("refused: {} is retired (B-19) and only builds its layout as a NEW "
+                      "zone id, e.g. build(zone_id=\"{}_v1\"); use "
+                      "ValhallaLevelTools.scaffold_zone for a new zone".format(
+                          builder_cls.__name__, original), overlays=[original])
+    if (level_protection.is_overlay_protected(zone_id, marker)
+            or os.path.isfile(level_protection.overlay_file(zone_id))):
+        return refuse("refused: overlay overlays-2.0/{}.json already exists or is listed in "
+                      "{}".format(zone_id, marker["path"]), overlays=[zone_id])
 
-    result = builder_cls(force=force).build()
-    if backup_folder:
-        result["backup"] = backup_folder
-    return result
+    renamed = type(builder_cls.__name__ + "_" + zone_id, (builder_cls,), {"ZONE_ID": zone_id})
+    return renamed().build()

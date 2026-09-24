@@ -2,9 +2,12 @@
 
 The generic MCP toolsets can place actors into a level and can save assets, but
 they cannot *create* a level or author a material, both of which Phase 2a needs
-and both of which are one call to an editor subsystem. They live here rather
-than in a throwaway script so that rebuilding the greybox is a tool call and
-not a hunt through the editor UI.
+and both of which are one call to an editor subsystem.
+
+B-19: no tool here regenerates an existing zone. ``L_World``, ``L_Grasslands``
+and ``L_Desert`` are hand-edited (``<repo>/maps/handedited.json``); the old
+``build_world_levels`` is gone and the scripts behind it refuse their target
+levels. New zones start from ``scaffold_zone``.
 
 Multiplayer Play-In-Editor settings are deliberately not here.
 ULevelEditorPlaySettings is not exposed to Python (`unreal.LevelEditorPlaySettings`
@@ -38,10 +41,16 @@ def _fail(message: str, **kwargs) -> str:
 
 @unreal.uclass()
 class ValhallaLevelTools(unreal.ToolsetDefinition):
-    """Level creation and saving, and simple material authoring.
+    """Level creation and saving, new-zone scaffolding, and simple material authoring.
 
-    Levels and overlays listed in ``<repo>/maps/handedited.json`` are
-    hand-edited: ``build_world_levels`` skips them unless ``force=True`` (B-05).
+    B-19: nothing here rebuilds an existing zone. Levels and overlays listed in
+    ``<repo>/maps/handedited.json`` (``L_World``, ``L_Grasslands``,
+    ``L_Desert``, their ``_Gameplay`` sub-levels, the ``grasslands`` /
+    ``desert`` overlays, and every zone ``scaffold_zone`` has made) are
+    hand-edited: edit them in place in the editor. ``scaffold_zone`` makes a
+    NEW zone and refuses anything that exists. Old layouts: git history for
+    the ``.umap``, ``Valhalla2/Saved/LevelBackups/``, or a retired script
+    (``build_grasslands.build(zone_id=...)``) run into a new level.
     """
 
     @toolset_registry.tool_call
@@ -86,55 +95,65 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
 
     @toolset_registry.tool_call
     @staticmethod
-    def build_world_levels(force: bool = False) -> str:
-        """Rebuild `L_World`, `L_Grasslands` and `L_Desert`, and both overlays — except hand-edited ones.
+    def scaffold_zone(zone_id: str, theme: str = "grassland", size_tiles: int = 64) -> str:
+        """Create a NEW zone: its sub-levels, zone volume, fog bounds, starts and overlay.
 
-        HAND-EDITED LEVELS ARE PROTECTED (B-05). Every level or overlay listed
-        in ``<repo>/maps/handedited.json`` — today ``L_World``,
-        ``L_Grasslands``, ``L_Desert`` and the ``grasslands`` / ``desert``
-        overlays, i.e. everything this tool builds — is SKIPPED unless
-        ``force=True``: not opened, not emptied, not saved. The result's
-        ``skipped`` names each one; anything not listed (a new zone) still
-        builds. With nothing left to build it returns without touching the
-        editor. Do not pass ``force=True`` unless Kevin explicitly asks for
-        his hand edits to be thrown away. A forced run first copies the
-        existing ``.umap`` / ``_BuiltData.uasset`` / overlay JSON files to
-        ``Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`` (paths relative to
-        the repo root) and returns that folder as ``backup``. To protect or
-        release a level, edit the marker file.
+        For new zones only (B-19). It never touches an existing level: it
+        REFUSES, creating nothing, if ``/Game/Valhalla/Maps/Zones/L_<ZoneId>``
+        or ``L_<ZoneId>_Gameplay`` exists, if
+        ``<repo>/maps/overlays-2.0/<zone_id>.json`` exists, if
+        ``maps/handedited.json`` lists any of them, or if any map has unsaved
+        changes. There is no force option. Existing zones (``L_Grasslands``,
+        ``L_Desert``, ``L_World``) are edited by hand in the editor.
 
-        An unprotected level is replaced from scratch, and building a zone
-        writes ``<repo>/maps/overlays-2.0/<zone>.json`` as a side effect
-        (unless that overlay is protected), because the overlay's portal
-        coordinates are checked against the level's portal actors and the only
-        way to keep those in step across a rebuild is for one pass to emit
-        both.
+        Creates, with ``build_zone.ZoneBuilder`` (same grid and conventions as
+        the Phase 3 zones; zone-local coordinates, min corner at the origin,
+        64 cm tiles):
 
-        Replaces whatever level is currently open when anything is built, so
-        save first. See ``valhalla_tools/build_world.py`` for the streaming
-        layout, ``build_grasslands.py`` / ``build_desert.py`` for the two
-        themes and ``level_protection.py`` for the marker.
+        * ``L_<ZoneId>`` (``north_woods`` -> ``L_NorthWoods``): a floor of the
+          theme's ground tiles, an ``AValhallaZoneVolume`` with the zone id and
+          a default spawn at the centre, an ``AValhallaFogBounds`` hugging the
+          zone, four ``PlayerStart`` tagged with the zone id;
+        * ``L_<ZoneId>_Gameplay``: empty, for hand-placed NPC Spawn Points;
+        * ``overlays-2.0/<zone_id>.json`` with the four player spawns.
+
+        Each is added to ``maps/handedited.json`` as soon as it exists, so it is
+        protected from then on (a second call refuses). The editor reopens the
+        level that was open before; that level is not modified or saved.
+
+        It does NOT add the zone to ``L_World``. Wiring a new zone into
+        ``L_World`` is a hand step in the editor: open ``L_World``, Levels
+        panel, add ``L_<ZoneId>`` and ``L_<ZoneId>_Gameplay`` as always-loaded
+        streaming sub-levels at one offset clear of the other zones
+        (grasslands X=0, desert X=+40000 cm), then save. A ``zones.json`` entry
+        and portals are hand steps too. See ``valhalla_tools/scaffold_zone.py``.
 
         Args:
-            force: Overwrite levels and overlays listed in
-                ``maps/handedited.json`` (after backing them up). Default
-                False.
+            zone_id: New zone id: lower case letters, digits, underscores,
+                starting with a letter, e.g. ``north_woods``.
+            theme: Kit for the ground: ``grassland``, ``desert`` or ``town``
+                (cave comes later).
+            size_tiles: Zone is ``size_tiles`` x ``size_tiles`` tiles of 64 cm,
+                8 to 128. The Phase 3 zones are 64.
 
         Returns:
-            A JSON object as text with keys ``ok``, ``force``, ``skipped``
-            (``levels`` and ``overlays`` left alone), ``built``,
-            ``overlaysWritten``, ``message`` (when anything was skipped),
-            ``backup`` (forced runs), and per built zone ``grasslands`` /
-            ``desert`` plus ``world`` — each carrying its actor counts per
-            outliner folder and the measured positions the gate needs.
+            A JSON object as text. Refused: ``ok`` false and ``refused`` (the
+            reasons); nothing was created. Created: ``ok``, ``zoneId``,
+            ``level``, ``gameplayLevel``, ``overlay``, ``marker``,
+            ``registered``, ``counts`` (actors per outliner folder), ``notes``,
+            ``reopened`` and ``nextSteps``.
         """
-        from valhalla_tools import build_world
+        from valhalla_tools import scaffold_zone as scaffold
 
         try:
-            return _ok(**build_world.build_all(force=force))
+            result = scaffold.scaffold(zone_id, theme, int(size_tiles))
         except Exception as exc:  # noqa: BLE001 - reported, never raised at MCP
             import traceback
             return _fail(str(exc), traceback=traceback.format_exc().splitlines()[-12:])
+        if not result.get("ok"):
+            return _fail("refused; nothing was created", **result)
+        result.pop("ok", None)
+        return _ok(**result)
 
     @toolset_registry.tool_call
     @staticmethod

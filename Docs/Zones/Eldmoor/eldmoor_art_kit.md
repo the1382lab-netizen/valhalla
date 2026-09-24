@@ -82,6 +82,18 @@ The thicket blocks movement as well as sight, as decision 8 asks. The corridors 
 | `SM_Cart` | 233 x 112 x 83 | A two-wheeled farm cart at rest on its shafts (the shafts point to local +X), loaded with sacks | BlockAll, convex hull | 1,936 | C10 Steadings Foragers ("loading a cart"), the stables corner |
 | `SM_BindStone` | 132 x 132 x 126 | The SM_PortalMarker rune-stone with a green-white glow instead of the portal glow. It stands on a round flagstone dais ringed by five low stones and has **no trigger**. | BlockAll, convex hull | 1,052 | Harrow's Rest bind point at (48,110) |
 
+## 6. Open archways (level builder request, 2026-09-24)
+
+These replace the closed doors until clickable doors land (B-23). Each keeps the footprint, pivot, facing and materials of the wall it sits in, so it butts straight against that wall. The clear opening is **100 cm wide (local X -50..+50) from the floor to at least 150 cm**. The **jambs are X -64..-50 and +50..+64** (14 cm each). There is a 3 cm threshold and no leaf. Collision is SM_, BlockAll and per-triangle (in `import_kit.WALKABLE`), with no VisionBlocker, so the builder adds hidden VB boxes on the jambs.
+
+| Asset | Footprint (cm) | Opening | Collision | Tris | Replaces |
+|---|---|---|---|---|---|
+| `/Game/Valhalla/Environment/Town/SM_HouseWall_Arch/StaticMeshes/SM_HouseWall_Arch` | 128 x 28 x 180 | 100 wide to 150 cm; timber head brackets above 150; **166 cm clear at the centre** (under the top plate: the house wall is only 180 cm tall, so 180 cm clear is not possible without cutting the plate) | BlockAll, per-triangle | 296 | `VB_HouseWall_Door` |
+| `/Game/Valhalla/Environment/Tavern/SM_TavernWall_Arch/StaticMeshes/SM_TavernWall_Arch` | 128 x 30 x 360 | 100 wide to 150 cm, round arch, **198 cm clear at the centre**; the stone head rises through the jetty line to 214 cm, then timber and plaster | BlockAll, per-triangle | 832 | `VB_TavernWall_Door` |
+| `/Game/Valhalla/Environment/Keep/SM_KeepWall_Arch/StaticMeshes/SM_KeepWall_Arch` | 128 x 70 x 425 | 100 wide to 150 cm, round-arched passage through the 50 cm curtain (battered footing), **198 cm clear at the centre**; wall walk, parapet and merlons as VB_KeepWall; outside is -Y as VB_KeepWall | BlockAll, per-triangle | 628 | the 0.5-scaled `SM_KeepGate` postern in the west curtain |
+
+Source: `eldmoor_kit.py` `build_arches()`. GLBs are in `Import/Environment/Town|Tavern|Keep`.
+
 ## What section 12 lists that is not here, and why
 
 - **Brazier (section 12.5):** it already exists. `SM_Brazier` in `/Game/Valhalla/Environment/Temple` has a real light through `fire_lights`. Use it for the gate braziers, the keep gate and the Lantern Tower.

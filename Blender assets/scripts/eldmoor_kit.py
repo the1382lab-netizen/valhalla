@@ -991,3 +991,115 @@ def layout(gap=0.6, cols=7):
         ref = bpy.data.objects.new("ScaleRef", me)
         bpy.context.scene.collection.objects.link(ref)
     return [o.name for o in objs]
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  B-06 archways (level builder request, 2026-09-24): open, walk-through wall
+#  modules replacing the closed doors (clickable doors are B-23). Each keeps
+#  the footprint, pivot and materials of the wall it sits in, so it butts
+#  against VB_HouseWall / VB_TavernWall / VB_KeepWall. Clear opening 100 cm
+#  wide (local X -50..50) from the floor to at least 150 cm, 14 cm jambs
+#  (X +-50..64), a 3 cm threshold, no leaf. SM_ with per-triangle collision
+#  (import_kit.WALKABLE); the builder adds hidden VisionBlocker boxes on the
+#  jambs. The set folders are the wall kits' own (Town, Tavern, Keep).
+# ═════════════════════════════════════════════════════════════════════════════
+
+ARCH_HW = 0.5                      # half the clear opening
+TOWN_OUT = os.path.join(kit.IMPORT, "Environment", "Town")
+TAVERN_OUT = os.path.join(kit.IMPORT, "Environment", "Tavern")
+KEEP_OUT = os.path.join(kit.IMPORT, "Environment", "Keep")
+
+
+def _spandrels(b, cx, zc, r, x_half, z_top, mat, y0, y1, n=8):
+    """Masonry above a round arch: the rectangle |x| <= x_half, zc..z_top
+    minus the circle of radius r, as two concave prisms."""
+    for s in (1, -1):
+        arc = [(s * r * math.cos(math.radians(a)), zc + r * math.sin(math.radians(a)))
+               for a in [90 - 90 * k / n for k in range(1, n)]]
+        pts = [(s * r, zc), (s * x_half, zc), (s * x_half, z_top), (0.0, z_top), (0.0, zc + r)] + arc
+        if s < 0:
+            pts = pts[::-1]
+        b.prism_xz(pts, y0, y1, mat)
+
+
+def house_wall_arch():
+    """VB_HouseWall_Door's frame with the leaf and the step taken out: 14 cm
+    door posts on the stone plinth, the top plate running through, curved
+    timber brackets in the head corners above 150 cm. 128 x 25 x 180; clear
+    100 wide to 150 cm, 166 cm (under the plate) at the centre: the wall is
+    only 180 cm tall, so the plate cannot go higher."""
+    w1 = _load("wave1_buildings")
+    b = MB("SM_HouseWall_Arch")
+    H, T, PL, PLATE = w1.H, w1.T, w1.PLINTH, w1.PLATE
+    for s in (-1, 1):
+        x0, x1 = sorted((s * 0.64, s * ARCH_HW))
+        b.box((x0, -T, 0.0), (x1, T, PL), w1.STONE, bevel=0.012)                       # plinth
+        b.box((x0, -0.13, PL), (x1, 0.13, PLATE), w1.TIMBER, bevel=0.006)              # door post
+        br = [(s * ARCH_HW, 1.5), (s * ARCH_HW, PLATE), (s * 0.3, PLATE), (s * 0.4, PLATE - 0.035), (s * 0.47, 1.56)]
+        b.prism_xz(br if s < 0 else br[::-1], -0.11, 0.11, w1.TIMBER)                 # head bracket
+    b.box((-0.64, -T, PLATE), (0.64, T, H), w1.TIMBER, bevel=0.008)                    # top plate
+    b.box((-ARCH_HW, -0.14, 0.0), (ARCH_HW, 0.14, 0.03), w1.STONE, bevel=0.008)       # threshold
+    return b.finish()
+
+
+def tavern_wall_arch():
+    """VB_TavernWall_Door opened up: stone jambs, a round arch of voussoirs
+    springing at 150 cm (crown 200 cm), a stone head rising through the
+    jetty line to 214 cm, then the timber-and-plaster storey with a
+    St Andrew's cross to 360. 128 x 25 x 360."""
+    b = MB("SM_TavernWall_Arch")
+    TW, TH = w5.TW, w5.TH
+    zc, r_in, r_out, top = 1.5, ARCH_HW, 0.62, 2.14
+    for s in (-1, 1):
+        x0, x1 = sorted((s * 0.64, s * ARCH_HW))
+        b.box((x0, -TW - 0.02, 0.0), (x1, TW + 0.02, 0.2), STONE, bevel=0.012)       # footing
+        b.box((x0, -TW, 0.2), (x1, TW, zc), STONE, bevel=0.006)                      # jamb
+    w5._arch(b, 0.0, zc, r_in, r_out, 0.0, math.pi, 9, -TW - 0.01, TW + 0.01, STONE)
+    b.box((-0.07, -TW - 0.025, zc + r_in - 0.02), (0.07, TW + 0.025, zc + r_out + 0.02), STONE, bevel=0.01)  # keystone
+    _spandrels(b, 0.0, zc, r_out, 0.64, top, STONE, -TW, TW)
+    b.box((-0.64, -TW - 0.015, top - 0.06), (0.64, TW + 0.015, top), STONE, bevel=0.01)   # head course
+    b.box((-0.64, -TW + 0.025, top), (0.64, TW - 0.025, TH - 0.1), PLASTER)
+    b.box((-0.64, -TW, top), (0.64, TW, top + 0.1), TIMBER, bevel=0.006)             # sill
+    b.box((-0.64, -TW, TH - 0.12), (0.64, TW, TH), TIMBER, bevel=0.006)              # top plate
+    for x in (-0.64, -0.035, 0.57):
+        b.box((x, -TW, top + 0.1), (x + 0.07, TW, TH - 0.12), TIMBER, bevel=0.005)   # posts
+    for x0, x1 in ((-0.57, -0.035), (0.035, 0.57)):
+        for sgn in (1, -1):
+            xa, xb = (x0, x1) if sgn > 0 else (x1, x0)
+            for side in (-1, 1):
+                y0, y1 = (TW - 0.025, TW) if side > 0 else (-TW, -TW + 0.025)
+                b.prism_xz([(xa, top + 0.12), (xa + 0.06 * sgn, top + 0.12), (xb, TH - 0.14), (xb - 0.06 * sgn, TH - 0.14)],
+                           y0, y1, TIMBER)
+    b.box((-ARCH_HW, -TW - 0.02, 0.0), (ARCH_HW, TW + 0.02, 0.03), STONE, bevel=0.008)   # threshold
+    return b.finish()
+
+
+def keep_wall_arch():
+    """A postern through the keep curtain: VB_KeepWall's battered 50 cm body,
+    wall walk, parapet and merlons, pierced by a round-arched passage 100 cm
+    wide (springing 150, crown 200) with a keystone and a 3 cm threshold.
+    128 wide, pivot and facing as VB_KeepWall (outside = -Y)."""
+    b = MB("SM_KeepWall_Arch")
+    KT, KH = w5.KT, w5.KH
+    zc, r_in, r_out = 1.5, ARCH_HW, 0.64                # the ring stays inside the 128 cm module
+    w5._keep_body(b, -0.64, -ARCH_HW)
+    w5._keep_body(b, ARCH_HW, 0.64)
+    w5._arch(b, 0.0, zc, r_in, r_out, 0.0, math.pi, 11, -KT - 0.03, KT + 0.03, KEEP)
+    b.box((-0.08, -KT - 0.05, zc + r_in - 0.02), (0.08, KT + 0.05, zc + r_out + 0.03), KEEP, bevel=0.012)  # keystone
+    _spandrels(b, 0.0, zc, r_out, ARCH_HW, KH, KEEP, -KT, KT)
+    w5._keep_top(b, -0.64, 0.64)
+    b.box((-ARCH_HW, -KT - 0.1, 0.0), (ARCH_HW, KT + 0.1, 0.03), KEEP, bevel=0.008)   # threshold
+    return b.finish()
+
+
+ARCHES = [(house_wall_arch, TOWN_OUT), (tavern_wall_arch, TAVERN_OUT), (keep_wall_arch, KEEP_OUT)]
+
+
+def build_arches(export=True):
+    out = []
+    for fn, folder in ARCHES:
+        obj = fn()
+        if export:
+            kit.export_glb(obj, os.path.join(folder, obj.name + ".glb"))
+        out.append(_stats(obj))
+    return out

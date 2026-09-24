@@ -105,10 +105,18 @@ bool FValhallaPlayerStateClientStatsOwnerOnlyTest::RunTest(const FString& /*Para
 	// UPROPERTY could be replicated by accident; a plain member cannot.
 	TestNull(TEXT("Stats is not a UPROPERTY"), FindFProperty<FProperty>(AValhallaPlayerState::StaticClass(), TEXT("Stats")));
 
+	// RepIndex is only assigned once the class's runtime replication data has
+	// been set up, which the engine does lazily on first network use. Without
+	// this every property reports RepIndex 0 and the registration below trips
+	// the engine's duplicate-entry assert (bIsPushBased mismatch) and crashes
+	// the editor.
+	AValhallaPlayerState::StaticClass()->SetUpRuntimeReplicationData();
+
 	TArray<FLifetimeProperty> Lifetime;
 	GetDefault<AValhallaPlayerState>()->GetLifetimeReplicatedProps(Lifetime);
 
 	const uint16 RepIndex = Property->RepIndex;
+	TestTrue(TEXT("replication data was set up (ClientStats has a non-zero RepIndex)"), RepIndex != 0);
 	const FLifetimeProperty* Entry = Lifetime.FindByPredicate([RepIndex](const FLifetimeProperty& Candidate)
 	{
 		return Candidate.RepIndex == RepIndex;

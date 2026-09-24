@@ -1919,6 +1919,65 @@ per player drives everything:
 - **Web editor:** the Zones page has the three fields and a per-class preview
   table (clear / fully fogged / sent to) computed with `resolveZoneVision`.
 
+## B-06 Phase 1, steps 1.4-1.5 — Eldmoor Grasslands level, Landscape and blockout (2026-09-24)
+
+- [x] **Levels:** `scaffold_zone("grasslands_v2", "grassland", 143)` made `Zones/L_GrasslandsV2` and
+      `Zones/L_GrasslandsV2_Gameplay` (both in `maps/handedited.json`); streamed into `L_World`
+      always-loaded at **X = +80000 cm** (zone volume world X 80000-89152, Y 0-9152). The scaffold's
+      floor tiles were removed (the Landscape is the floor); display name "Eldmoor Grasslands".
+- [x] **Landscape:** 5 x 5 components of 63 quads (1 section), **316 x 316 vertices, 32 cm a quad**
+      (10080 cm; the zone plus 4.5 m of border), Z scale 10 (0.078 cm a step), actor at
+      (79552, -448, 0). Heights from `valhalla_tools/eldmoor_terrain.py` (pure Python, reads
+      `eldmoor_layout.json`; outputs committed in `Docs/Zones/Eldmoor/terrain/`): river channel -0.7 m,
+      banks +0.5 m, vale floor, downs +1..+3 m, knoll and keep plateau flat +4 m, glacis ~28 deg,
+      Kingsbarrow mound, ridge +4 m with the 1.2 m scarp (a 12 deg ramp where the highland path
+      crosses), scree +3 -> +1 m, Greyfell Tor +7 m with one-quad S/E faces, cliffs to nothing beyond
+      the north edge. Material `/Game/Valhalla/Materials/Landscape/M_EldmoorLandscape`
+      (`eldmoor_landscape.build_material()`): weight-blended Grass / Moss / Dirt / Rock on the kit's
+      texture sets and sizes, macro variation, Landscape Visibility Mask on Opacity Mask. Layer infos
+      in `Zones/L_GrasslandsV2_sharedassets/`. Imported through Landscape mode > New > Import from File
+      (no Python API creates Landscape components); **never give the `__LANDSCAPE_VISIBILITY__` layer a
+      file or a layer info in that dialog** — in 5.8 that asserts in
+      `LandscapeEditLayerTargetTypeState.cpp:182` and takes the editor down.
+- [x] **Undercroft:** the Landscape under x 61-77 / y 5-13 is sunk to the cellar floor (+1 m, 3 m under
+      the hall) instead of a painted hole: the room walls (keep modules, BlockAll so the fog does not
+      draw them through the hall), stone floor, `SM_StoneRamp` (verified walkable both ways),
+      `SM_KeepParapetLow`, cell bars and torches stand in the pit and the hall floor covers it. The
+      material already carries the visibility mask, so a hole can be painted later (Landscape mode >
+      Sculpt > Visibility, small brush) without changing anything else.
+- [x] **Blockout:** `valhalla_tools/build_eldmoor_blockout.py` — `build()` places everything from
+      `eldmoor_layout.json` (refuses if the level already has an actor tagged `EldmoorBlockout`),
+      `add_neighbour_portals()` adds the Grasslands / Desert ends, `light_fires()` lights this level's
+      fires, braziers, forges, torches and lamp posts only. About 1,100 actors + 1,000 instances
+      (trees, scatter, bank strips, floors in `AValhallaTileField`s). Uses the Eldmoor art kit
+      everywhere it exists (cliffs, SM_CliffCleft, palisade and gates, thickets, forge, hay, training
+      posts, cell bars, ramp, parapet, scorched timber, cart, bind stone, torches).
+      Placeholders/markers: `PH_Portal_GreyfellCleft` (TriggerBox, no portal, no glow),
+      `PH_Mist_M1..M6` (TargetPoints scaled to the pocket radii; the mist volume is fog work),
+      `PH_CreatureCamp_P1/P2`, `GuardPost_*` / `GuardPatrol_*`. River: pawn-only `InvisibleWall`
+      bank walls, gaps only at the two bridges. Zone edges: pawn-only walls + tree line.
+- [x] **Portals:** Grasslands (2048, 96) <-> Eldmoor (5120, 8896), Desert (3968, 864) <-> Eldmoor
+      (8896, 512), SM_PortalMarker rune-stones, entries 4.5 m inside; the Grasslands / Desert ends are
+      in their `_Gameplay` levels. **Entry ids are zone-prefixed** (`eldmoor_from_grasslands`,
+      `eldmoor_from_desert`, `grasslands_from_eldmoor`, `desert_from_eldmoor`): entries are found by
+      id across the whole world, and the layout's `entry_from_*` names collided with the existing
+      Grasslands / Desert entries. Overlays and `zones.json` (`defaultSpawn` = Harrow's Rest, 3200,
+      7168 = the bind point; the four starts are at the Grasslands arrival) updated.
+- [x] **Fog / nav:** `FogBounds_grasslands_v2` covers the zone (z -400..1100 for the tor and cleft);
+      `NavMeshBounds_grasslands_v2` over the zone for B-16 (nav not built).
+- [x] **Verified in PIE** (standalone clients): Grasslands -> Eldmoor -> Grasslands, Desert -> Eldmoor
+      -> Desert all arrive at the right entries; the zone atmosphere blends in on entry; glacis ->
+      gate -> bailey -> inner gate, the knoll road to the east gate, the highland path up the scarp
+      gap and the undercroft ramp (down to +1.7 m and back) are walkable; the tor's S and E faces
+      stop a walking player; the river cannot be forded off the bridges; the cleft passage can be
+      entered from the cliff foot. Line of sight (Visibility traces filtered to the VisionBlocker
+      profile): blocked by TH1, TH4, the palisade, the keep curtain and the tor face; clear through
+      TH1's gap and across open downs.
+- Deviations: postern tower moved from y 20 to y 16 so the postern door (y 18-20) can open beside it;
+  the hall fireplace is at (80, 5), because the design's (76, 5) is the top of the ramp; the entry ids
+  above; no roof-hide / hall-floor-hide exists in code yet (the design assumes it), so a player in
+  the undercroft is under the hall floor.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

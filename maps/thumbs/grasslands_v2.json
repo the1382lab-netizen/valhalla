@@ -1,0 +1,15 @@
+{
+  "zoneId": "grasslands_v2",
+  "originX": 80000.0,
+  "originY": 0.0,
+  "sizeX": 9152.0,
+  "sizeY": 9152.0,
+  "pixelsPerCm": 0.22377622377622378,
+  "resolution": 2048,
+  "units": "cm",
+  "image": "grasslands_v2.png",
+  "imageRightAxis": "+X",
+  "imageDownAxis": "+Y",
+  "pixelToWorld": "worldX = originX + px / pixelsPerCm; worldY = originY + py / pixelsPerCm",
+  "pixelToZoneLocal": "x = px / pixelsPerCm; y = py / pixelsPerCm"
+}

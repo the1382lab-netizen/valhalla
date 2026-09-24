@@ -47,8 +47,8 @@
       "name": "Eldmoor Grasslands",
       "mapFile": "grasslands_v2.json",
       "defaultSpawn": {
-        "x": 2208,
-        "y": 1824
+        "x": 3200,
+        "y": 7168
       },
       "atmosphere": {
         "notes": "B-06 STARTING VALUES (2026-09-24), not playtested. Vision is relative: class range x 1.3333, so a 12 m class is clear to 10 m and fully fogged at 16 m (sent to 17 m); a ranger (18 m) is clear to 15 m, fogged at 24 m. Default view reaches ~7.4 m at its corners; max zoom-out (2400) ~12 m. Tune in playtest.",

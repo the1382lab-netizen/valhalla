@@ -1,0 +1,25 @@
+{
+  "verts": 316,
+  "quadCm": 32.0,
+  "originZoneLocalCm": -448.0,
+  "components": 5,
+  "quadsPerSection": 63,
+  "sectionsPerComponent": 1,
+  "zScale": 10.0,
+  "cmPerUnit": 0.078125,
+  "waterZ": 8.0,
+  "heightMinCm": -400.0,
+  "heightMaxCm": 708.8,
+  "layers": [
+    "Grass",
+    "Moss",
+    "Dirt",
+    "Rock"
+  ],
+  "holeTiles": [
+    61,
+    5,
+    77,
+    13
+  ]
+}

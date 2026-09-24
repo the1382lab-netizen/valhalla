@@ -47,6 +47,23 @@
       "y": 864.0,
       "fromZone": "desert",
       "label": "From Scorched Desert"
+    },
+    {
+      "id": "portal_to_grasslands_v2",
+      "type": "portal",
+      "x": 2048.0,
+      "y": 96.0,
+      "targetZone": "grasslands_v2",
+      "targetEntry": "eldmoor_from_grasslands",
+      "label": "Eldmoor Grasslands"
+    },
+    {
+      "id": "grasslands_from_eldmoor",
+      "type": "zone_entry",
+      "x": 2048.0,
+      "y": 380.0,
+      "fromZone": "grasslands_v2",
+      "label": "From Eldmoor Grasslands"
     }
   ]
 }

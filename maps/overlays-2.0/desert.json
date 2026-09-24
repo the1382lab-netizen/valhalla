@@ -47,6 +47,23 @@
       "y": 864.0,
       "fromZone": "grasslands",
       "label": "From Grasslands"
+    },
+    {
+      "id": "portal_to_grasslands_v2",
+      "type": "portal",
+      "x": 3968.0,
+      "y": 864.0,
+      "targetZone": "grasslands_v2",
+      "targetEntry": "eldmoor_from_desert",
+      "label": "Eldmoor Grasslands"
+    },
+    {
+      "id": "desert_from_eldmoor",
+      "type": "zone_entry",
+      "x": 3616.0,
+      "y": 864.0,
+      "fromZone": "grasslands_v2",
+      "label": "From Eldmoor Grasslands"
     }
   ]
 }

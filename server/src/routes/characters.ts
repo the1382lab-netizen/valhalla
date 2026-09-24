@@ -4,6 +4,7 @@
 
 import { Router } from 'express';
 import { authMiddleware } from '../middleware/authMiddleware.js';
+import { createCharacterLimiter } from '../middleware/rateLimit.js';
 import {
   getCharactersByUser,
   createCharacter,
@@ -32,8 +33,9 @@ charactersRouter.get('/', (req, res) => {
  * POST /api/characters
  * Body: { name: string, classId: string }
  * Creates a new character with starter equipment.
+ * Rate limited: 5 per minute per IP (429 + Retry-After).
  */
-charactersRouter.post('/', (req, res) => {
+charactersRouter.post('/', createCharacterLimiter, (req, res) => {
   try {
     const { name, classId } = req.body;
     if (!name || !classId) {

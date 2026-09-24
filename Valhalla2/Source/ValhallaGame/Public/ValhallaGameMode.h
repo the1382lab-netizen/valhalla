@@ -136,6 +136,18 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	//~ End AGameModeBase interface
 
+	/**
+	 * B-04: whether a server in this process must refuse to run on the public
+	 * dev secret (or none). True for a dedicated server outside the editor
+	 * (`UnrealEditor.exe -server` has GIsEditor false, so it counts) and for a
+	 * listen server in a non-editor build; false in the editor and PIE, which
+	 * keep the dev default. Pure, so the automation test can walk the cases.
+	 */
+	static bool RequiresRealServerSecret(ENetMode NetMode, bool bIsRunningDedicatedServer, bool bGIsEditor, bool bEditorBuild);
+
+	/** Join URL options with every `token=` value cut to its first 8 characters, for logs. */
+	static FString RedactJoinOptions(const FString& Options);
+
 	// ── Phase 7: accounts and persistence ───────────────────────────────
 
 	/**
@@ -312,6 +324,13 @@ protected:
 	static FString ParseTokenOption(const FString& JoinOptions);
 
 private:
+	/**
+	 * Set by InitGame when this server refused to start on the dev secret
+	 * (B-04): the exit is requested, and until the engine gets there every
+	 * PreLogin is turned away and the admin API is never started.
+	 */
+	bool bRefusedToHost = false;
+
 	/** Per-connection URL options, captured in InitNewPlayer for PostLogin. */
 	UPROPERTY(Transient)
 	TMap<TObjectPtr<APlayerController>, FString> PendingJoinOptions;

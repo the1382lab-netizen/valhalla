@@ -2,12 +2,14 @@
 
 #include "ValhallaGameMode.h"
 
+#include "CoreGlobals.h"
 #include "EngineUtils.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameSession.h"
 #include "GameFramework/PlayerStart.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformMisc.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
 #include "ValhallaAdminServer.h"
@@ -60,9 +62,77 @@ AValhallaGameMode::AValhallaGameMode()
 	bUseSeamlessTravel = false;
 }
 
+bool AValhallaGameMode::RequiresRealServerSecret(ENetMode NetMode, bool bIsRunningDedicatedServer, bool bGIsEditor, bool bEditorBuild)
+{
+	if (bGIsEditor)
+	{
+		return false; // the editor and PIE (in-process servers included) keep the dev default
+	}
+	const bool bDedicated = bIsRunningDedicatedServer || NetMode == NM_DedicatedServer;
+	const bool bPackagedListen = NetMode == NM_ListenServer && !bEditorBuild;
+	return bDedicated || bPackagedListen;
+}
+
+FString AValhallaGameMode::RedactJoinOptions(const FString& Options)
+{
+	static const FString Key(TEXT("token="));
+	FString Out;
+	int32 Pos = 0;
+	while (Pos <= Options.Len())
+	{
+		const int32 Found = Options.Find(Key, ESearchCase::IgnoreCase, ESearchDir::FromStart, Pos);
+		if (Found == INDEX_NONE)
+		{
+			Out += Options.Mid(Pos);
+			break;
+		}
+		const int32 ValueStart = Found + Key.Len();
+		int32 ValueEnd = ValueStart;
+		while (ValueEnd < Options.Len() && Options[ValueEnd] != TEXT('?') && Options[ValueEnd] != TEXT('&'))
+		{
+			++ValueEnd;
+		}
+		Out += Options.Mid(Pos, ValueStart - Pos);
+		Out += UValhallaBackendSubsystem::RedactToken(Options.Mid(ValueStart, ValueEnd - ValueStart));
+		Pos = ValueEnd;
+		if (Pos >= Options.Len())
+		{
+			break;
+		}
+	}
+	return Out;
+}
+
 void AValhallaGameMode::InitGame(const FString& MapName, const FString& Options, FString& ErrorMessage)
 {
 	Super::InitGame(MapName, Options, ErrorMessage);
+
+	// ── B-04: no internet-facing server on the public dev secret ─────────
+	//
+	// `dev-server-secret` is in this repository, so a server using it lets
+	// anybody call the backend's server-to-server routes as it and drive its
+	// admin API. The editor and PIE keep it (nothing outside this machine can
+	// reach them); a dedicated server, or a listen server in a packaged build,
+	// stops here instead of running unprotected. See GetServerSecret for where
+	// a real secret comes from.
+	if (RequiresRealServerSecret(GetNetMode(), IsRunningDedicatedServer(), GIsEditor, WITH_EDITOR != 0))
+	{
+		const FString Secret = UValhallaDataSettings::Get()->GetServerSecret();
+		if (Secret.IsEmpty() || UValhallaDataSettings::IsDevServerSecret(Secret))
+		{
+			bRefusedToHost = true;
+			UE_LOG(LogValhallaGame, Error,
+				TEXT("FATAL: this server resolved %s. A dedicated server outside the editor (or a packaged listen server) must not run on it: ")
+				TEXT("put a real VALHALLA_SERVER_SECRET in secrets.local.env at the repo root, set the environment variable, or pass -ValhallaServerSecret=. Exiting."),
+				Secret.IsEmpty() ? TEXT("no server secret") : TEXT("the public development secret 'dev-server-secret'"));
+			if (GLog)
+			{
+				GLog->Flush();
+			}
+			FPlatformMisc::RequestExitWithStatus(false, 1, TEXT("AValhallaGameMode::InitGame (dev server secret)"));
+			return;
+		}
+	}
 
 	const UValhallaDataSubsystem* Data = GetDataSubsystem();
 	if (!Data || !Data->IsLoaded())
@@ -329,6 +399,12 @@ void AValhallaGameMode::PreLoginAsync(const FString& Options, const FString& Add
 	// broadcast, the session's ApproveLogin. AGameModeBase::PreLoginAsync's
 	// contract says an override must still run them, and it is right: a banned
 	// account with a perfectly good JWT is still banned.
+	if (bRefusedToHost)
+	{
+		OnComplete.ExecuteIfBound(TEXT("This server is shutting down (no server secret configured)."));
+		return;
+	}
+
 	FString ErrorMessage;
 	Super::PreLogin(Options, Address, UniqueId, ErrorMessage);
 	if (!ErrorMessage.IsEmpty())
@@ -582,7 +658,7 @@ void AValhallaGameMode::InitializeJoiningPlayer(APlayerController* NewPlayer)
 	UE_LOG(LogValhallaGame, Log, TEXT("Join request: name='%s' class='%s'%s (options '%s')"),
 		*CharacterName, *ResolvedClassId.ToString(),
 		bLoadPending ? TEXT(" [provisional; a saved row is on its way]") : TEXT(""),
-		*JoinOptions);
+		*RedactJoinOptions(JoinOptions));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

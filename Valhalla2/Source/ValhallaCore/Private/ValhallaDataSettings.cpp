@@ -85,6 +85,9 @@ namespace ValhallaDataSettingsPrivate
 UValhallaDataSettings::UValhallaDataSettings()
 	: DataRoot(TEXT("../shared/data"))
 {
+	// B-04: the web editor's dev server (vite, editor/vite.config.ts).
+	AdminApiAllowedOrigins = { TEXT("http://localhost:5180"), TEXT("http://127.0.0.1:5180") };
+
 	// Phase 7: default the admin token check on where there is no editor proxy
 	// in front of the port, and off where there is. See the property's comment.
 #if UE_SERVER
@@ -188,49 +191,91 @@ FString UValhallaDataSettings::GetServerSecret() const
 	{
 		using namespace ValhallaDataSettingsPrivate;
 
-		FString Secret = CommandLineValue(TEXT("ValhallaServerSecret="));
-		if (!Secret.IsEmpty())
+		EValhallaSecretSource Source = EValhallaSecretSource::None;
+		const FString Secret = ResolveServerSecret(
+			CommandLineValue(TEXT("ValhallaServerSecret=")),
+			FPlatformMisc::GetEnvironmentVariable(TEXT("VALHALLA_SERVER_SECRET")).TrimStartAndEnd(),
+			ReadSecretsFileValue(TEXT("VALHALLA_SERVER_SECRET")),
+			ServerSecret.TrimStartAndEnd(),
+			/*bAllowDevDefault=*/ WITH_EDITOR != 0,
+			Source);
+
+		switch (Source)
 		{
+		case EValhallaSecretSource::CommandLine:
 			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from -ValhallaServerSecret."));
-			return Secret;
-		}
-
-		Secret = FPlatformMisc::GetEnvironmentVariable(TEXT("VALHALLA_SERVER_SECRET")).TrimStartAndEnd();
-		if (!Secret.IsEmpty())
-		{
+			break;
+		case EValhallaSecretSource::Environment:
 			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from the VALHALLA_SERVER_SECRET environment variable."));
-			return Secret;
-		}
-
-		Secret = ReadSecretsFileValue(TEXT("VALHALLA_SERVER_SECRET"));
-		if (!Secret.IsEmpty())
-		{
+			break;
+		case EValhallaSecretSource::SecretsFile:
 			UE_LOG(LogValhallaCore, Log, TEXT("Server secret: from %s."), *GetSecretsFilePath());
-			return Secret;
-		}
-
-		Secret = ServerSecret.TrimStartAndEnd();
-		if (!Secret.IsEmpty())
-		{
+			break;
+		case EValhallaSecretSource::LegacyIni:
 			UE_LOG(LogValhallaCore, Warning,
 				TEXT("Server secret: from the ServerSecret ini value. Every ini under Config/ is packaged into the client; move it to secrets.local.env and delete the ini line."));
-			return Secret;
+			break;
+		case EValhallaSecretSource::DevDefault:
+			UE_LOG(LogValhallaCore, Log,
+				TEXT("Server secret: the development default (no -ValhallaServerSecret, VALHALLA_SERVER_SECRET or %s). A backend running with NODE_ENV=production will refuse it, and a dedicated server outside the editor refuses to start with it."),
+				*GetSecretsFilePath());
+			break;
+		case EValhallaSecretSource::None:
+			UE_LOG(LogValhallaCore, Error,
+				TEXT("Server secret: none configured. Pass -ValhallaServerSecret=, set VALHALLA_SERVER_SECRET, or put it in %s. Logins will fail."),
+				*GetSecretsFilePath());
+			break;
 		}
 
-#if WITH_EDITOR
-		UE_LOG(LogValhallaCore, Log,
-			TEXT("Server secret: the development default (no -ValhallaServerSecret, VALHALLA_SERVER_SECRET or %s). A backend running with NODE_ENV=production will refuse it."),
-			*GetSecretsFilePath());
-		return FString(DevServerSecret);
-#else
-		UE_LOG(LogValhallaCore, Error,
-			TEXT("Server secret: none configured. Pass -ValhallaServerSecret=, set VALHALLA_SERVER_SECRET, or put it in %s. Logins will fail."),
-			*GetSecretsFilePath());
-		return FString();
-#endif
+		if (Source != EValhallaSecretSource::DevDefault && IsDevServerSecret(Secret))
+		{
+			UE_LOG(LogValhallaCore, Warning, TEXT("Server secret: the configured value is the public development default."));
+		}
+		return Secret;
 	}();
 
 	return Resolved;
+}
+
+FString UValhallaDataSettings::ResolveServerSecret(const FString& CommandLine, const FString& Environment, const FString& SecretsFile,
+	const FString& LegacyIni, bool bAllowDevDefault, EValhallaSecretSource& OutSource)
+{
+	// First match wins: the command line, the environment, secrets.local.env,
+	// the legacy ini slot, then (editor builds only) the dev default.
+	const TPair<const FString*, EValhallaSecretSource> Order[] = {
+		{ &CommandLine, EValhallaSecretSource::CommandLine },
+		{ &Environment, EValhallaSecretSource::Environment },
+		{ &SecretsFile, EValhallaSecretSource::SecretsFile },
+		{ &LegacyIni,   EValhallaSecretSource::LegacyIni },
+	};
+	for (const TPair<const FString*, EValhallaSecretSource>& Candidate : Order)
+	{
+		const FString Value = Candidate.Key->TrimStartAndEnd();
+		if (!Value.IsEmpty())
+		{
+			OutSource = Candidate.Value;
+			return Value;
+		}
+	}
+
+	if (bAllowDevDefault)
+	{
+		OutSource = EValhallaSecretSource::DevDefault;
+		return FString(GetDevServerSecret());
+	}
+
+	OutSource = EValhallaSecretSource::None;
+	return FString();
+}
+
+const TCHAR* UValhallaDataSettings::GetDevServerSecret()
+{
+	return ValhallaDataSettingsPrivate::DevServerSecret;
+}
+
+bool UValhallaDataSettings::IsDevServerSecret(const FString& Secret)
+{
+	return Secret.Equals(ValhallaDataSettingsPrivate::DevServerSecret, ESearchCase::CaseSensitive);
 }
 
 FName UValhallaDataSettings::GetCategoryName() const

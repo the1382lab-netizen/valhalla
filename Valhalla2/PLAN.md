@@ -621,14 +621,16 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
   not diagnosed.
 - A loot bag's 5-minute lifespan is not extended when a second kill merges
   into it, and its despawn is not logged.
-- The `Join request` log line prints the full JWT (`ValhallaGameMode.cpp:582`),
-  and so does the engine's `LogNet: Browse` line.
+- ~~The `Join request` log line prints the full JWT~~ (trimmed to 8 characters
+  in B-04). The engine's `LogNet: Browse` / `Login request` lines still print
+  the URL; game code can't change them.
 - Combat events go to every client as one reliable multicast from the game
   state, with no relevancy filter and no size cap (`ValhallaGameState.cpp:372`).
   That leaks fight positions past LoS, and a lagging client risks reliable-buffer
   overflow.
-- The admin API sends `Access-Control-Allow-Origin: *`, and the default secret
-  is the public `dev-server-secret`. Nothing refuses it on a Server build.
+- ~~The admin API sends `Access-Control-Allow-Origin: *`, and nothing refuses
+  the public `dev-server-secret` on a Server build.~~ Fixed in B-04
+  (`AdminApiAllowedOrigins`; servers outside the editor exit on the dev secret).
 - Damage paths outside the pipeline:
   - Magic Missile and Backstab skip `ResolveDamage`, i-frames and god mode.
   - Player DoTs ignore god mode and shield.
@@ -871,7 +873,8 @@ in place for `valhalla.Visual.BodyProfile 0`.
 - [ ] Not verified yet: a packaged client end to end (TLS to the IP cert
       through UE's bundled CA list, travel to the public game server).
 - [ ] The game connection (UDP 7777) is unencrypted and carries the JWT in the
-      join URL; the `Join request` log line still prints it in full.
+      join URL. (The `Join request` log line is trimmed since B-04.)
+- Going live: [deploy/GOING_LIVE.md](../deploy/GOING_LIVE.md) (B-04).
 
 ## B-05 — hand-edited level protection (2026-09-23)
 
@@ -986,6 +989,73 @@ a scaffold for new zones only.
       levels and the overlay and registered them; a second call refused with
       all six reasons; test levels, overlay and marker entries then removed.
       `Valhalla.` tests 26/27 (only the known `MeshIdFallback`).
+
+## B-04 — Production secrets and exposure (2026-09-23)
+
+Checklist for a session with outside players: [deploy/GOING_LIVE.md](../deploy/GOING_LIVE.md).
+
+- [x] **CORS allow-list.** Backend (`server/src/middleware/cors.ts`):
+      `CORS_ORIGINS`, default `http://localhost:5180,http://127.0.0.1:5180`.
+      An allowed origin gets itself echoed with credentials; a foreign Origin
+      gets 403 (preflight or not); no Origin (UE client/server) passes.
+      `X-Server-Secret` is no longer offered to browsers. The web editor's API
+      server (`editor/src/server.ts`, which writes data files and forwards
+      admin calls *with the secret*) was `cors()` = any origin; it now uses the
+      same list. Admin API: `AdminApiAllowedOrigins` in `UValhallaDataSettings`
+      (default the two editor origins) replaces `*`; foreign Origin 403, CORS
+      headers added by the route wrapper for allowed ones.
+- [x] **Rate limits** (`server/src/middleware/rateLimit.ts`, in-memory sliding
+      window, no new dependency): login and register 10/min per IP, `POST
+      /api/characters` 5/min, 429 + `Retry-After`. `X-Forwarded-For` (last
+      entry) is believed only from loopback (Caddy). Health, data and internal
+      routes unlimited. `RATE_LIMIT_WINDOW_MS` exists for the smoke test.
+- [x] **Servers refuse the dev secret.** `AValhallaGameMode::InitGame`: a
+      dedicated server outside the editor (`UnrealEditor.exe -server`
+      included: `GIsEditor` is false there) or a listen server in a non-editor
+      build that resolves `dev-server-secret` **or no secret** logs `FATAL: …`
+      and calls `FPlatformMisc::RequestExitWithStatus(false, 1)`; the admin API
+      is not started and PreLogin refuses joins until the exit. Editor and PIE
+      keep the dev default. Resolution order unchanged, now a pure
+      `UValhallaDataSettings::ResolveServerSecret` covered by
+      `Valhalla.Game.Security.ServerSecret`.
+- [x] **Tokens in logs.** `Join request` now logs `RedactJoinOptions(...)`
+      (every `token=` cut to 8 characters); the other Valhalla lines already
+      used `RedactToken`. Not fixable from game code: the engine's `LogNet:
+      Browse` (client) and `LogNet: Login request` (server) lines print the full
+      URL. Backend: no `console.*` prints a token or password.
+- [x] **Client secret audit:** `python Tools/audit_client_secrets.py [folder]`
+      (dev literal, `X-Server-Secret`, and the real secret values read from
+      `secrets.local.env` and never printed). `Valhalla2/Config` +
+      `shared/data` (no staged `Content/Data`, no `Saved/StagedBuilds` exist
+      yet): 11 files, 0 findings. Packaged client not audited: none exists.
+- [x] **Tests:** `server/scripts/smoke-security.ts` 30/30;
+      `smoke-internal.ts` 89/89 (its `spawn('npx')` failed on Windows with
+      ENOENT; it now runs `node --import tsx`).
+- [ ] **Old account database in the git history — Kevin to decide.**
+      `server/valhalla.db` (and a copy under
+      `node_modules/@valhalla/.server-ryxSsj3C/`) was committed from
+      `8230e4cd` (2026-02-16) to `3630d752` / `361b5dc4`: 14 distinct versions,
+      reachable only from `origin/archive` and tag `archive/1.0-final` (not
+      `dev`/`main`). **The GitHub repo `the1382lab-netizen/valhalla` is public.**
+      Contents: at most 14 users (`alpha`, `beta`, `insidious`,
+      `insidious0`–`3`, `salvo`, `probe_tmp`, `pt_0115690_1`–`4`, `ue_bantest`);
+      all 58 hashes are bcrypt `$2b$10$`; no plaintext passwords; the names are
+      handles and test accounts, not real people's names. **All 14 still exist
+      in today's `server/valhalla.db` with the same hashes**, so their password
+      hashes are public now.
+      - Option A, leave it: cost nothing. Risk: offline guessing of weak
+        passwords at bcrypt cost 10. Mitigate either way by deleting those
+        accounts or changing their passwords before going live (and never
+        reusing a real password on them).
+      - Option B, purge: `git filter-repo --path server/valhalla.db --path
+        node_modules/@valhalla/.server-ryxSsj3C/valhalla.db --invert-paths` on
+        a fresh mirror clone, then force-push every branch and the tag. Cost:
+        every commit hash from 2026-02-16 onward changes on `archive` and the
+        tag (and on `dev`/`main` only if they share that history, which they
+        do not); every clone (this one included, with its uncommitted work)
+        must re-clone or hard-reset; old hashes in PLAN.md and docs go stale;
+        GitHub keeps the old objects reachable through caches and forks until
+        support purges them, so the hashes must be treated as leaked anyway.
 
 ## Backlog
 

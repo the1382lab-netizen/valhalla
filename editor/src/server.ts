@@ -134,7 +134,25 @@ function validateOverlay2(body: any, zoneId: string): string[] {
 }
 
 const app = express();
-app.use(cors());
+
+// CORS: the editor's own front end only (B-04). This server writes the data
+// files and forwards admin actions to the game server *with the server secret
+// attached*, so a page on any other origin must not be able to call it from
+// the browser. Same CORS_ORIGINS list (and default) as the backend. A request
+// with a foreign Origin is refused outright; none (curl, scripts) passes.
+const CORS_ORIGINS = new Set(
+  (process.env.CORS_ORIGINS?.trim() || 'http://localhost:5180,http://127.0.0.1:5180')
+    .split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean),
+);
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && !CORS_ORIGINS.has(origin)) {
+    res.status(403).json({ error: 'Origin not allowed.' });
+    return;
+  }
+  next();
+});
+app.use(cors({ origin: [...CORS_ORIGINS] }));
 app.use(express.json({ limit: '10mb' }));
 
 // GET /api/data/:filename — read a JSON data file

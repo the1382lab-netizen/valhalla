@@ -18,6 +18,7 @@ import { charactersRouter } from './routes/characters.js';
 import { internalRouter } from './routes/internal.js';
 import { dataRouter } from './routes/data.js';
 import { logServerSecretStatus } from './middleware/serverSecret.js';
+import { corsAllowList, CORS_ORIGINS } from './middleware/cors.js';
 import { DataManager } from './systems/DataManager.js';
 
 // Initialize database (async — sql.js loads WASM) then start the server.
@@ -35,6 +36,7 @@ if (loadedFromSecretsFile.length > 0) {
 }
 console.log(`[env] NODE_ENV=${process.env.NODE_ENV ?? '(unset: development)'}`);
 logServerSecretStatus();
+console.log(`[cors] allowed origins: ${[...CORS_ORIGINS].join(', ')}`);
 
 // Listen port: PORT env wins, otherwise the shared default (2567)
 const PORT = Number.parseInt(process.env.PORT ?? '', 10) || SERVER_PORT;
@@ -50,21 +52,9 @@ const app = express();
 // JSON body parsing
 app.use(express.json());
 
-// CORS for dev — allow any origin on the LAN, with credentials
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, X-Server-Secret');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Credentials', 'true');
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(200);
-    return;
-  }
-  next();
-});
+// CORS: only the origins in CORS_ORIGINS (default: the web editor). Requests
+// with no Origin (the game client and server) pass; a foreign Origin gets 403.
+app.use(corsAllowList);
 
 // Health check
 app.get('/', (_req, res) => {

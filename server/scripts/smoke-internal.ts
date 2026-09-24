@@ -94,7 +94,9 @@ async function startServer(): Promise<void> {
   const dbPath = resolve(tmpDbDir, 'smoke.db');
 
   console.log(`\n[smoke] Starting server on port ${port} (db: ${dbPath})`);
-  child = spawn('npx', ['tsx', 'src/index.ts'], {
+  // node --import tsx rather than `npx tsx`: spawn() cannot run npx.cmd on
+  // Windows without a shell, and a direct child is one process to kill.
+  child = spawn(process.execPath, ['--import', 'tsx', 'src/index.ts'], {
     cwd: SERVER_DIR,
     env: { ...process.env, PORT: String(port), VALHALLA_DB: dbPath, NODE_ENV: 'development' },
     stdio: ['ignore', 'pipe', 'pipe'],

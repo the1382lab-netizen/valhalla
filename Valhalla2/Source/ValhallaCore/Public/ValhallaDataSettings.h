@@ -6,6 +6,17 @@
 #include "Engine/DeveloperSettings.h"
 #include "ValhallaDataSettings.generated.h"
 
+/** Where UValhallaDataSettings::ResolveServerSecret found the server secret. */
+enum class EValhallaSecretSource : uint8
+{
+	None,
+	CommandLine,
+	Environment,
+	SecretsFile,
+	LegacyIni,
+	DevDefault,
+};
+
 /**
  * Project settings for the Valhalla 1.0 data hand-off.
  *
@@ -76,6 +87,21 @@ public:
 	 */
 	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Admin API", meta = (DisplayName = "Admin API Requires Secret"))
 	bool bAdminApiRequireSecret = false;
+
+	/**
+	 * Browser origins the admin API answers with CORS headers (B-04). Exact
+	 * `scheme://host[:port]` strings; the default is the web editor,
+	 * `http://localhost:5180` and `http://127.0.0.1:5180`.
+	 *
+	 * The editor's proxy (editor/src/server.ts) is a Node process and sends no
+	 * Origin, so it is unaffected. A request that carries an Origin not on this
+	 * list, preflight or not, is refused with 403 before the token check: a
+	 * page on some other site must not be able to drive the API from a browser
+	 * on this machine. In the ini, quote each entry (`//` is a comment there):
+	 * `+AdminApiAllowedOrigins="http://localhost:5180"`.
+	 */
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = "Admin API", meta = (DisplayName = "Admin API Allowed Origins"))
+	TArray<FString> AdminApiAllowedOrigins;
 
 	// ── Phase 7: the 1.0 account backend ────────────────────────────────
 
@@ -166,10 +192,30 @@ public:
 	 *   4. the legacy ServerSecret ini value (warns)
 	 *   5. `dev-server-secret`, in an editor build only
 	 *
+	 * A server that has to face the internet (a dedicated server outside the
+	 * editor, `UnrealEditor.exe -server` included, or a listen server in a
+	 * non-editor build) refuses to start on the dev default or on nothing at
+	 * all: see AValhallaGameMode::InitGame. Editor and PIE keep the default.
+	 *
 	 * Always empty in a packaged client, which never needs it. Deliberately not
 	 * a UFUNCTION: nothing in Blueprint has any business reading it.
 	 */
 	FString GetServerSecret() const;
+
+	/**
+	 * The resolution order of GetServerSecret as a pure function of its inputs,
+	 * so the automation test can check the order without a process per case.
+	 * Each input is the (trimmed) value that source holds, or empty; the dev
+	 * default is only returned when bAllowDevDefault (editor builds).
+	 */
+	static FString ResolveServerSecret(const FString& CommandLine, const FString& Environment, const FString& SecretsFile,
+		const FString& LegacyIni, bool bAllowDevDefault, EValhallaSecretSource& OutSource);
+
+	/** The public development default, `dev-server-secret`. */
+	static const TCHAR* GetDevServerSecret();
+
+	/** True for the public development default (which is no protection at all). */
+	static bool IsDevServerSecret(const FString& Secret);
 
 	/** True in a cooked build that is not a dedicated server: what a tester runs. */
 	static bool IsPackagedClient();

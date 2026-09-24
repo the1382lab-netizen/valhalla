@@ -1,5 +1,9 @@
 # Hosting a test session
 
+Before a session with outside players, go through
+[GOING_LIVE.md](GOING_LIVE.md) (secrets, ports, CORS, rate limits, client
+audit, backups).
+
 Everything runs on this PC. Testers get a packaged client that already points at
 the public address (`PublicBackendUrl` / `PublicGameServerAddress` in
 `Valhalla2/Config/DefaultGame.ini`, currently `184.96.133.165`).
@@ -68,7 +72,15 @@ Launch options, for when the defaults don't fit:
 - The game connection itself (UDP 7777) is Unreal's normal unencrypted
   netcode. The login token travels in the join URL and is valid for 24 hours;
   fine for a friends test, worth revisiting (Unreal packet encryption) before a
-  public one.
+  public one. Valhalla's own log lines cut the token to 8 characters, but the
+  engine's `LogNet: Browse` / `Login request` lines print the whole URL, so
+  don't share raw logs.
+- Browser origins: the backend, the web editor's API server and the admin API
+  only answer the web editor's origins (`CORS_ORIGINS`,
+  `AdminApiAllowedOrigins`). Login and register are limited to 10 per minute per
+  IP, character creation to 5.
+- A game server started outside the editor (`start-gameserver.bat`) exits at
+  startup if its secret is missing or is `dev-server-secret`.
 - A residential IP can change. If it does, edit the `Caddyfile` and the two
   `Public*` lines in `DefaultGame.ini`, and send testers the new launch option
   or a new build.

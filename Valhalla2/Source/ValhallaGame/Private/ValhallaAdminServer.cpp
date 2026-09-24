@@ -119,22 +119,58 @@ namespace
 	}
 
 	/**
-	 * A JSON response with the CORS header on it.
-	 *
-	 * `Access-Control-Allow-Origin: *` even though the editor proxies through
-	 * its own Express server and never sees this origin: the header costs one
-	 * line and makes the API usable from a browser tab, a `curl`, or a future
-	 * editor that drops the proxy. It is not a security decision — a loopback
-	 * listener is reachable by anything already on the machine, header or not.
+	 * A JSON response. CORS headers are not added here but by the route
+	 * wrapper in BindAdminRoute, which knows the request's Origin: only an
+	 * origin in AdminApiAllowedOrigins gets them (B-04; it used to be `*`).
 	 */
 	TUniquePtr<FHttpServerResponse> MakeJsonResponse(const TSharedRef<FJsonObject>& Json, EHttpServerResponseCodes Code)
 	{
 		TUniquePtr<FHttpServerResponse> Response = FHttpServerResponse::Create(JsonToString(Json), TEXT("application/json"));
 		Response->Code = Code;
-		Response->Headers.Add(TEXT("Access-Control-Allow-Origin"), { TEXT("*") });
-		Response->Headers.Add(TEXT("Access-Control-Allow-Headers"), { TEXT("Content-Type, Authorization") });
-		Response->Headers.Add(TEXT("Access-Control-Allow-Methods"), { TEXT("GET, POST, OPTIONS") });
 		return Response;
+	}
+
+	/** The request's Origin header (FHttpServerRequest lower-cases header keys), trimmed, or empty. */
+	FString RequestOrigin(const FHttpServerRequest& Request)
+	{
+		const TArray<FString>* Values = Request.Headers.Find(TEXT("origin"));
+		FString Origin = (Values && Values->Num() > 0) ? (*Values)[0].TrimStartAndEnd() : FString();
+		while (Origin.EndsWith(TEXT("/")))
+		{
+			Origin.LeftChopInline(1);
+		}
+		return Origin;
+	}
+
+	/** True when a request with this Origin may be answered: none at all (the editor proxy, curl), or one on the list. */
+	bool IsOriginAllowed(const FString& Origin)
+	{
+		if (Origin.IsEmpty())
+		{
+			return true;
+		}
+		for (FString Allowed : UValhallaDataSettings::Get()->AdminApiAllowedOrigins)
+		{
+			Allowed.TrimStartAndEndInline();
+			while (Allowed.EndsWith(TEXT("/")))
+			{
+				Allowed.LeftChopInline(1);
+			}
+			if (Allowed.Equals(Origin, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The CORS headers for an allowed Origin, echoed back (never `*`). */
+	void AddCorsHeaders(FHttpServerResponse& Response, const FString& Origin)
+	{
+		Response.Headers.Add(TEXT("Access-Control-Allow-Origin"), { Origin });
+		Response.Headers.Add(TEXT("Vary"), { TEXT("Origin") });
+		Response.Headers.Add(TEXT("Access-Control-Allow-Headers"), { TEXT("Content-Type, Authorization") });
+		Response.Headers.Add(TEXT("Access-Control-Allow-Methods"), { TEXT("GET, POST, OPTIONS") });
 	}
 
 	/** `{ ok: true }` — the body every mutating route returns on success. */
@@ -764,17 +800,37 @@ bool UValhallaAdminServer::BindRoute(const FString& Path, uint16 Verbs, bool (UV
 				Request.Verb == EHttpServerRequestVerbs::VERB_POST ? TEXT("POST") : TEXT("OPTIONS"),
 				*FullPath, Request.Body.Num());
 
+			// B-04: a browser page on a foreign origin gets nothing, preflight
+			// or not; an allowed one gets its origin echoed on every answer.
+			const FString Origin = RequestOrigin(Request);
+			if (!IsOriginAllowed(Origin))
+			{
+				UE_LOG(LogValhallaAdmin, Warning, TEXT("refused %s from origin '%s' (not in AdminApiAllowedOrigins)."), *FullPath, *Origin);
+				OnComplete(MakeErrorResponse(EHttpServerResponseCodes::Forbidden, TEXT("Origin not allowed")));
+				return true;
+			}
+			const FHttpResultCallback Respond = Origin.IsEmpty()
+				? OnComplete
+				: FHttpResultCallback([OnComplete, Origin](TUniquePtr<FHttpServerResponse>&& Response)
+				{
+					if (Response.IsValid())
+					{
+						AddCorsHeaders(*Response, Origin);
+					}
+					OnComplete(MoveTemp(Response));
+				});
+
 			if (IsPreflight(Request))
 			{
 				const TSharedRef<FJsonObject> Empty = MakeShared<FJsonObject>();
-				OnComplete(MakeJsonResponse(Empty, EHttpServerResponseCodes::NoContent));
+				Respond(MakeJsonResponse(Empty, EHttpServerResponseCodes::NoContent));
 				return true;
 			}
 
 			TUniquePtr<FHttpServerResponse> Denied;
 			if (!Self->Authorize(Request, Denied))
 			{
-				OnComplete(MoveTemp(Denied));
+				Respond(MoveTemp(Denied));
 				return true;
 			}
 
@@ -783,7 +839,7 @@ bool UValhallaAdminServer::BindRoute(const FString& Path, uint16 Verbs, bool (UV
 				AppendAuditLine(FullPath, Request);
 			}
 
-			return (Self->*Handler)(Request, OnComplete);
+			return (Self->*Handler)(Request, Respond);
 		});
 
 	const FHttpRouteHandle Handle = Router->BindRoute(FHttpPath(FullPath), static_cast<EHttpServerRequestVerbs>(Verbs), Delegate);

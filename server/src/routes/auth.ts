@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import { register, login, AccountBannedError } from '../services/AuthService.js';
 import { getCharactersByUser } from '../services/CharacterService.js';
+import { loginLimiter, registerLimiter } from '../middleware/rateLimit.js';
 
 export const authRouter = Router();
 
@@ -12,8 +13,9 @@ export const authRouter = Router();
  * POST /api/auth/register
  * Body: { username: string, password: string }
  * Returns: { token, userId, username }
+ * Rate limited: 10 per minute per IP (429 + Retry-After), see middleware/rateLimit.ts.
  */
-authRouter.post('/register', async (req, res) => {
+authRouter.post('/register', registerLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {
@@ -42,8 +44,9 @@ authRouter.post('/register', async (req, res) => {
  * POST /api/auth/login
  * Body: { username: string, password: string }
  * Returns: { token, userId, username, characters: [...] }
+ * Rate limited: 10 per minute per IP (429 + Retry-After).
  */
-authRouter.post('/login', async (req, res) => {
+authRouter.post('/login', loginLimiter, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {

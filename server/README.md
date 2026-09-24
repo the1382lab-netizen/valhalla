@@ -22,6 +22,8 @@ different file. See `deploy/README.md` for hosting.
 | `HOST` | `0.0.0.0` | Listen address. `127.0.0.1` when hosting, so only Caddy (HTTPS) and the local game server reach it. |
 | `NODE_ENV` | unset (= development) | `production` disables both dev fallback secrets. |
 | `VALHALLA_DB` | `valhalla.db` (relative to cwd) | SQLite file path. Used by the smoke test to run against a throwaway DB. |
+| `CORS_ORIGINS` | `http://localhost:5180,http://127.0.0.1:5180` (the web editor) | Comma-separated browser origins allowed to call the API (`middleware/cors.ts`). A request with any other `Origin` gets 403; requests with no `Origin` (the game client and server) are unaffected. The web editor's API server (`editor/src/server.ts`) reads the same variable. |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window of the per-IP rate limits (`middleware/rateLimit.ts`): login and register 10 per window, `POST /api/characters` 5, then 429 with `Retry-After`. `X-Forwarded-For` is trusted only from loopback (Caddy). Only the smoke test changes the window. |
 
 ## Server-to-server API (Valhalla 2.0 / Unreal dedicated server)
 
@@ -188,3 +190,15 @@ then exercises health / secret enforcement / verify / load / save / load, the
 validation failures, and deletes the character. Set `SMOKE_BASE_URL=http://host:port`
 to run it against an already-running server instead — in that mode the throwaway
 *user row* stays behind, since there is no API to delete a user.
+
+```bash
+npx tsx server/scripts/smoke-security.ts
+```
+
+B-04 checks, each against its own throwaway server and database with no
+`secrets.local.env`: the CORS allow-list (editor origins allowed with
+credentials, a foreign origin 403 on preflight and POST, no Origin untouched),
+the login limit tripping at attempt 11 with `Retry-After` and clearing after it,
+the register and character-create limits, health and internal routes
+unlimited, the dev server secret refused (503) with `NODE_ENV=production`, and
+production refusing to start without `JWT_SECRET`.

@@ -11,7 +11,9 @@ things up is in [README.md](README.md). This page only lists what to check.
       (`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`),
       at least 32 characters each, and different from each other. Neither is
       `valhalla-dev-secret-change-in-production` or `dev-server-secret`.
-- [ ] `NODE_ENV=production` and `HOST=127.0.0.1` are in the same file.
+- [ ] `NODE_ENV=production` and `HOST=127.0.0.1` are in the same file, or
+      `HOST=0.0.0.0` if you set up home-network play (README, "Letting another
+      PC in the house connect") and its firewall rules are Private + LocalSubnet only.
 - [ ] `start-auth.bat` log shows `NODE_ENV=production`,
       `Server-to-server routes enabled (VALHALLA_SERVER_SECRET set)` and
       `[cors] allowed origins: ...` with only the origins you expect.
@@ -30,7 +32,8 @@ things up is in [README.md](README.md). This page only lists what to check.
       Never 2567 (backend), 2568 (admin API), 5180/5181 (web editor).
 - [ ] Windows firewall: `UnrealEditor.exe` and `caddy.exe` allowed. Nothing
       else listening on a public interface: `netstat -ano | findstr LISTENING`
-      shows 2567, 2568 and 5181 on `127.0.0.1` only.
+      shows 2567, 2568 and 5181 on `127.0.0.1` only (2567 on `0.0.0.0` is
+      expected with home-network play; 2568 and 5181 stay on `127.0.0.1`).
 - [ ] Admin API: loopback only, `bAdminApiRequireSecret=True` in
       `DefaultGame.ini` (a request without `Authorization: Bearer <secret>`
       gets 401). Its CORS list `AdminApiAllowedOrigins` is the web editor only.

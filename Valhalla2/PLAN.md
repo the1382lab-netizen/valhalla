@@ -2525,6 +2525,41 @@ right width; make the thickness an in-game option. Screenshots `Saved/ClaudeOps/
 - Build plan: backlog B-08a (login, character select with a rotating preview, party pane with class icons),
   waiting for Kevin's review.
 
+## B-27 — Client performance pass (2026-09-25)
+
+Plan: Drive, "B-27 · Client performance pass" (decisions confirmed by Kevin 2026-09-25: High default, hardware
+ray tracing off, graphics settings per account, unseen combat events not sent and party events only in the same
+zone, preloading, big fires only cast shadows, Graphics tab, VSync off / no cap, character animation LOD, server
+skips NPC animation, keep the profiling tools, combat first). Built so B-24 plugs into it.
+
+- [x] **Phase 0: profiling markers and benchmarks** (e31f8da7). `Valhalla_*` CPU trace scopes on the combat
+      event path, the HUD and the vision fog; CSV stat `Valhalla/CombatEventsReceived`. `Tools/perf`:
+      `standalone_bench.cmd` (town / Eldmoor), `combat_bench.cmd` (dedicated server, a profiled client and
+      three bot clients, all driven by the server's frame-timed console commands), `package_client.cmd`,
+      `csv_summary.py`.
+- [x] **Phase 0: baseline** (RTX 4070 SUPER, i5-13600KF, 1920×1080, Epic, vsync off, no cap):
+
+  | Run | Editor binaries | Packaged Development client |
+  |---|---|---|
+  | Standalone, old town | 44 fps (GT 22.7, GPU 10.1 ms) | 66 fps (GT 11.7, RT 14.8, GPU 12.7 ms) |
+  | Standalone, Harrow's Rest | 59 fps (GT 13.7, GPU 15.0 ms) | 58 fps (GT 7.8, RT 16.8, GPU 15.1 ms) |
+  | Networked client, town idle | 95 fps (GT 5.3, RT 10.5, GPU 8.2 ms) | 68 fps (GT 3.2, RT 14.6, GPU 12.8 ms) |
+  | Networked client, fighting at camp C2 | 89 fps (GT 4.6, RT 11.1, GPU 8.4 ms) | 64 fps (GT 3.5, RT 15.5, GPU 13.8 ms) |
+  | Worst frame on entering the fight | 921 ms (sync loads: effects 530, goblin 230) | 101 ms (sync loads) |
+  | Entering the world | | 363 + 253 + 247 ms frames (sync loads, new PSOs) |
+
+  Packaged process memory in the world: 2.8 GB (3.3 GB peak), from `memreport -full` (B-24 step 1 wants this
+  number). Map load 2.9 s; engine start to in-world about 5 s. The packaged client renders at full resolution
+  (`sg.ResolutionQuality=0` in its GameUserSettings) where the editor `-game` runs rendered at 73 %
+  (1400×788 TSR input), which is most of the GPU gap between the columns: Phase 4's resolution scale default
+  matters. Combat per event on the client: about 0.2 ms (effects 0.16); combat log rebuild 2.1 ms average,
+  4.8 ms worst, per new line. Captures: `Saved/ClaudeOps/perf`, packaged runs under
+  `Saved/ClaudeOps/perf/pkg/Windows/Valhalla2/Saved`.
+- Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
+  `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
+  the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in
+  use), hence `-IgnoreCookErrors`. A packaged Development client joins an editor-binary dedicated server.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

@@ -9,6 +9,7 @@ script runs the editor binaries (no packaged build needed), vsync off, no frame 
 | `standalone_bench.cmd town` | Standalone game (server + client in one process) idle in the old Grasslands town. Every NPC in every zone is local here, so this is the worst case for character cost. |
 | `standalone_bench.cmd eldmoor` | The same at Harrow's Rest in Eldmoor (walls, fires, fog). Add a second argument to change a setting at frame 900, e.g. `standalone_bench.cmd eldmoor "scalability 2"`. |
 | `combat_bench.cmd` | A dedicated server, one profiled client and three windowless bot clients fighting at three Eldmoor camps. Writes a CSV and an Insights trace of the profiled client. Needs about 15 GB of free memory. |
+| `package_client.cmd` | Stages the game data and packages a Development client into `Saved/Perf/pkg` (the editor can stay open). |
 | `csv_summary.py` | Summarises a CSV capture: fps, p99, hitches, game / render thread and GPU time, combat events per second (`--combat` splits the fight into 10 s windows, `--stats` prints any columns). |
 
 ## What is in the code for this
@@ -37,4 +38,6 @@ Times are seconds from the start of the trace. Divide `Incl` by the `Count` of
 - Standalone numbers include the server's work (NPC AI, NPC movement, the game state's
   fixed tick). For what a player's client costs, use `combat_bench.cmd`.
 - The editor binaries load assets more slowly than a packaged build, so loading hitches
-  look worse here; judge hitch targets on a packaged client (set `CLIENT_EXE`).
+  look worse here; judge hitch targets on a packaged client (`package_client.cmd`, then set
+  `CLIENT_EXE` to `Valhalla2\Saved\Perf\pkg\Windows\Valhalla2.exe`). A packaged client writes its CSVs and
+  logs under `Saved\Perf\pkg\Windows\Valhalla2\Saved`, not the engine folder.

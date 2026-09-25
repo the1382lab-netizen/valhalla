@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "ValhallaGameTypes.h"
+#include "ValhallaNPCPath.h"
 #include "ValhallaTypes.h"
 #include "ValhallaNPC.generated.h"
 
@@ -50,8 +51,8 @@ struct VALHALLAGAME_API FValhallaNPCBuffInfo
  * dragged straight into a level also works: it plays its template and stands
  * itself back up where it was placed after the template's respawn time.
  *
- * There is no AIController, no behaviour tree and no navmesh here, and that is
- * a decision rather than an omission. `NPCSystem.update` is a flat state machine
+ * There is no AIController and no behaviour tree here, and that is a decision
+ * rather than an omission. `NPCSystem.update` is a flat state machine
  * — respawn, aggro, chase, leash, attack — that runs for every NPC in one pass
  * at a fixed 60 Hz, and its behaviour is the balance data. Rebuilding it as a
  * behaviour tree would mean the 2.0 enemies no longer demonstrably match the 1.0
@@ -64,6 +65,11 @@ struct VALHALLAGAME_API FValhallaNPCBuffInfo
  * rather than 1.0's raw `x += dx * speed * dt`, so NPCs collide with the world
  * and with each other. `moveSpeed` becomes MaxWalkSpeed and the numbers carry
  * over unchanged, because a 1.0 pixel is a 2.0 centimetre.
+ *
+ * B-16: the chase and the walk home follow a nav-mesh path (FValhallaNPCPath,
+ * PlanAndSteer) instead of pushing in a straight line, so NPCs walk round walls
+ * and through doorways. Where the ground is clear they still steer straight at
+ * the target, so melee spacing and every authored range mean what they did.
  */
 UCLASS()
 class VALHALLAGAME_API AValhallaNPC : public ACharacter
@@ -446,4 +452,18 @@ private:
 
 	/** Resolved once from the template so the leash check is not a branch per tick. */
 	float LeashRange = 600.f;
+
+	/** B-16: the path being walked by the chase or the walk home. Server only. */
+	FValhallaNPCPath MovePath;
+
+	/**
+	 * B-16: the XY direction to push this step toward Goal — along a nav-mesh
+	 * path round obstacles, or straight at it when the ground between is clear
+	 * or there is no nav data. Re-plans at most every 0.5 s, or when Goal has
+	 * moved 50 cm. Server only.
+	 */
+	FVector PlanAndSteer(const FVector& Goal, double Now);
+
+	/** B-16: a chasing NPC this close to its target is never "stuck" (crowding at melee range is normal), cm beyond attack range. */
+	static constexpr double StuckIgnoreNearCm = 150.0;
 };

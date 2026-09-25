@@ -68,6 +68,10 @@ public class ValhallaGame : ModuleRules
 				// additive FCanvasTriangleItem, which needs GWhiteTexture.
 				"RenderCore",
 
+				// B-16: NPCs ask the nav mesh for paths (UNavigationSystemV1,
+				// FPathFindingQuery). No AIModule: there is no AI controller.
+				"NavigationSystem",
+
 				// Phase 7b: UValhallaBackendSubsystem's client for the 1.0
 				// Express server. Private, so nothing that depends on
 				// ValhallaGame inherits an HTTP client it did not ask for —

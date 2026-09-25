@@ -12,6 +12,8 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Materials/MaterialInterface.h"
+#include "NavigationData.h"
+#include "NavigationSystem.h"
 #include "Net/UnrealNetwork.h"
 #include "UObject/ConstructorHelpers.h"
 #include "ValhallaAnimComponent.h"
@@ -739,6 +741,7 @@ void AValhallaNPC::Respawn()
 	SyncedBuffs.Reset();
 
 	SetActorLocation(HomeLocation, false, nullptr, ETeleportType::TeleportPhysics);
+	MovePath.Reset();
 	OnRep_Alive();
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s respawned at %s with %.0f hp."),
@@ -1004,6 +1007,7 @@ void AValhallaNPC::ResetToHome()
 	ThreatTable.Reset();
 
 	SetActorLocation(HomeLocation, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+	MovePath.Reset();
 
 	// NPCSystem.ts:172 — a leashed NPC heals to full. Without it, a player could
 	// pull an enemy, run out of leash range, and repeat until it died of
@@ -1017,6 +1021,59 @@ void AValhallaNPC::ResetToHome()
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s leashed: reset to %s and healed to %.0f."),
 		*DisplayName, *HomeLocation.ToCompactString(), MaxHp);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  B-16 — steering along a nav-mesh path
+// ─────────────────────────────────────────────────────────────────────────────
+
+FVector AValhallaNPC::PlanAndSteer(const FVector& Goal, double Now)
+{
+	const FVector From = GetActorLocation();
+
+	if (FValhallaNPCPath::NeedsReplan(MovePath, Goal, Now))
+	{
+		UWorld* World = GetWorld();
+		UNavigationSystemV1* Nav = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+		const ANavigationData* NavData = Nav ? Nav->GetNavDataForProps(GetNavAgentPropertiesRef(), From) : nullptr;
+
+		if (!NavData)
+		{
+			// No nav mesh in this world (L_GreyBox, tests): the pre-B-16 chase.
+			FValhallaNPCPath::SetStraight(MovePath, FValhallaNPCPath::EMode::Fallback, Goal, Now);
+		}
+		else
+		{
+			// Clear walkable ground all the way: steer straight at the live goal,
+			// which is exactly the old behaviour and keeps melee spacing exact.
+			FVector HitLocation = FVector::ZeroVector;
+			const bool bBlocked = NavData->Raycast(From, Goal, HitLocation, NavData->GetDefaultQueryFilter(), this);
+
+			if (!bBlocked)
+			{
+				FValhallaNPCPath::SetStraight(MovePath, FValhallaNPCPath::EMode::Direct, Goal, Now);
+			}
+			else
+			{
+				FPathFindingQuery Query(this, *NavData, From, Goal, NavData->GetDefaultQueryFilter());
+				Query.SetAllowPartialPaths(true);
+				const FPathFindingResult Result = Nav->FindPathSync(GetNavAgentPropertiesRef(), Query);
+
+				TArray<FVector> Points;
+				if (Result.IsSuccessful() && Result.Path.IsValid())
+				{
+					for (const FNavPathPoint& Point : Result.Path->GetPathPoints())
+					{
+						Points.Add(Point.Location);
+					}
+				}
+				// Fewer than two points is stored as Fallback: steer straight.
+				FValhallaNPCPath::SetPath(MovePath, Points, Result.IsPartial(), Goal, Now);
+			}
+		}
+	}
+
+	return FValhallaNPCPath::SteerDirection(MovePath, From, Goal);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1096,6 +1153,8 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 			return 0.0;
 		}();
 
+		const double AttackRange = (Template.AttackRange > 0.f ? Template.AttackRange : 40.f) + CapsuleGap;
+
 		// ── Chase (NPCSystem.ts:177) ─────────────────────────────────────
 		if (Distance > StopChaseDistance + CapsuleGap)
 		{
@@ -1103,11 +1162,39 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 			// means the NPC collides with the world and with the player instead
 			// of walking through both, at the same MaxWalkSpeed the template asks
 			// for, so the tuning carries over and the behaviour improves.
-			AddMovementInput(ToTarget.GetSafeNormal(), 1.f);
+			//
+			// B-16: the direction comes off a nav-mesh path, so a wall between
+			// the two is walked round rather than pushed against. The distance
+			// checks above and below stay straight-line, so aggro, leash, stop
+			// and attack ranges keep their authored meaning.
+			const FVector Direction = PlanAndSteer(Target->GetActorLocation(), Now);
+			AddMovementInput(Direction.IsNearlyZero() ? ToTarget.GetSafeNormal() : Direction, 1.f);
+
+			// EverQuest's warp home: an NPC that cannot get to you gives up
+			// rather than grinding against a wall until the leash fires. Not
+			// near the target, where a pack crowding one player is normal.
+			if (Distance > AttackRange + StuckIgnoreNearCm)
+			{
+				if (FValhallaNPCPath::UpdateStuck(MovePath, MyLocation, Now))
+				{
+					UE_LOG(LogValhallaCombat, Log, TEXT("%s is stuck chasing %s (%.0f cm away); giving up."),
+						*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance);
+					ResetToHome();
+					TickBuffs(Now);
+					return;
+				}
+			}
+			else
+			{
+				FValhallaNPCPath::ClearStuck(MovePath);
+			}
+		}
+		else
+		{
+			FValhallaNPCPath::ClearStuck(MovePath);
 		}
 
 		// ── Attack (NPCSystem.ts:200) ────────────────────────────────────
-		const double AttackRange = (Template.AttackRange > 0.f ? Template.AttackRange : 40.f) + CapsuleGap;
 		const double AttackIntervalSeconds = (Template.AttackSpeedMs > 0.f ? Template.AttackSpeedMs : 1500.f) / 1000.0;
 
 		if (Distance <= AttackRange && Now >= LastAttackTime + AttackIntervalSeconds)
@@ -1161,7 +1248,25 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 
 		if (DistanceHome > 2.0)
 		{
-			AddMovementInput(ToHome.GetSafeNormal(), ReturnSpeedFraction);
+			// B-16: home by a path too, round whatever it chased you past.
+			const FVector Direction = PlanAndSteer(HomeLocation, Now);
+			AddMovementInput(Direction.IsNearlyZero() ? ToHome.GetSafeNormal() : Direction, ReturnSpeedFraction);
+
+			if (FValhallaNPCPath::UpdateStuck(MovePath, GetActorLocation(), Now))
+			{
+				UE_LOG(LogValhallaCombat, Log, TEXT("%s is stuck walking home (%.0f cm away); warping home."),
+					*DisplayName, DistanceHome);
+				SetActorLocation(HomeLocation, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+				if (UCharacterMovementComponent* Movement = GetCharacterMovement())
+				{
+					Movement->StopMovementImmediately();
+				}
+				MovePath.Reset();
+			}
+		}
+		else if (MovePath.Mode != FValhallaNPCPath::EMode::None)
+		{
+			MovePath.Reset();
 		}
 	}
 

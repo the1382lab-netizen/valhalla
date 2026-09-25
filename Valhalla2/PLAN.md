@@ -2057,6 +2057,42 @@ first eight of `classSkills[classId]` and was never saved.
   for an action cell dropped on a non-action cell). Right-click also clears a
   slot. Keys 1–8 on an empty slot do nothing.
 
+## B-16 — NPC pathfinding: nav mesh and path steering (B-06 step 1.8, 2026-09-24)
+
+NPCs walk round walls, houses and through doorways instead of pushing in a straight line. The
+1.0 state machine stays the brain (aggro, leash, attack, walk home, all unchanged); only the
+direction the chase and the walk home push changes.
+
+- **No AI controller** (a change from the B-16 doc). A path follower would move NPCs on the frame
+  clock outside the fixed 60 Hz step, and possessing them changes their owner, which the
+  visibility code walks. Instead `AValhallaNPC::PlanAndSteer` asks the nav mesh directly:
+  - every 0.5 s, or when the goal has moved 50 cm, it re-plans: a nav raycast first; clear
+    ground means steer straight at the live target (exactly the old behaviour, so melee spacing
+    and attack range are exact); otherwise `FindPathSync` (partial paths allowed);
+  - each fixed step it steers at the next corner (`FValhallaNPCPath`, reached within 30 cm), then
+    at the live goal once the corners run out;
+  - no nav data (L_GreyBox, tests) or no path: steer straight, as before.
+- **Stuck = warp home.** A chasing NPC more than attack range + 150 cm from its target that moves
+  less than 25 cm in 3 s gives up (`ResetToHome`: teleport, heal, clear threat), EverQuest style;
+  one walking home that is stuck teleports the rest of the way. Crowding at melee range never
+  counts.
+- **Nav data.** NavMeshBoundsVolumes in L_Grasslands, L_Desert and L_GrasslandsV2 (each covers
+  the zone volume plus 2 m). RecastNavMesh-Default (L_World): agent radius 30, height 120 (the
+  character capsule), step 45, slope 44, **cell size 5 cm** (19 cm closed the 1 m archways:
+  erosion plus rasterisation ate the whole opening), **runtime generation Dynamic**, so the
+  editor rebuilds edited tiles itself and the "NAVMESH NEEDS TO BE REBUILT" message is gone.
+  DefaultEngine.ini carries the same agent (`SupportedAgents`) and RecastNavMesh defaults.
+- **Tests.** `Valhalla.Game.NPC.PathSteering` pins re-planning, corner following, the live goal
+  at the end, direct/fallback steering and the stuck clock. Suite: all pass except the known
+  `MeshIdFallback`.
+- **PIE checks (standalone, Grasslands town):** a Test Enemy aggroed next to a building, player
+  moved 3 m away behind it: the NPC walked the 9–11 m path round the building and stopped at
+  89–90 cm and attacked, twice (two buildings). After the player died it walked home round the
+  same building to within 2 cm. Nav queries through all 12 Eldmoor archways and gates
+  (palisade gate, keep gates, keep/tavern/house arches) find straight, complete paths.
+- **Not done here:** patrol routes and roaming (B-10 / population), crowd avoidance (NPCs still
+  just collide), the L_LoSTest doorway check (the town checks cover the same case).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

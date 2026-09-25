@@ -53,9 +53,11 @@ things up is in [README.md](README.md). This page only lists what to check.
 
 ## Data
 
-- [ ] Back up `server/valhalla.db` before the session and after it
-      (copy it with the backend stopped, or right after a save; keep a few
-      dated copies off this PC). It holds every account and character.
+- [ ] Back up `server/valhalla.db` before the session and after it. It holds
+      every account and character. `start-all.bat` and `stop-all.bat` do this
+      for you (to `%USERPROFILE%\ValhallaBackups`, newest 14 kept); if you start
+      the servers one by one, copy it yourself with the backend stopped. Keep a
+      copy off this PC now and then (B-17 L5 automates that).
 - [ ] Dev and test accounts: the accounts in the 1.0 git history
       (`alpha`, `beta`, `insidious*`, `salvo`, `probe_tmp`, `pt_*`,
       `ue_bantest`) are still in the live database **with the same bcrypt

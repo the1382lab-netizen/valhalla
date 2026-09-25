@@ -15,6 +15,9 @@ the public address (`PublicBackendUrl` / `PublicGameServerAddress` in
 | Game server (Unreal, dedicated) | `start-gameserver.bat` | UDP 7777 | testers' clients |
 | Web editor + admin API | `npm run dev:editor`, 2568 | loopback only | you |
 
+`start-all.bat` starts the first three in one go (with a database backup
+first) and `stop-all.bat` stops them; see [Each session](#each-session).
+
 ## One-time setup
 
 1. **Secrets.** `secrets.local.env` at the repo root (gitignored) holds
@@ -38,14 +41,40 @@ the public address (`PublicBackendUrl` / `PublicGameServerAddress` in
 
 ## Each session
 
-1. `start-auth.bat`: its log should show `NODE_ENV=production` and
+**Start: double-click `start-all.bat`.** It refuses to start if anything
+already holds TCP 2567, TCP 443 or UDP 7777 (a dev backend from
+`npm run dev:server`, a running session, or Play in the editor); stop that
+first. Then, in order:
+
+1. Backs up `server/valhalla.db` to `%USERPROFILE%\ValhallaBackups\valhalla-<date>-<time>-start.db`
+   (`backup-db.ps1`; set `VALHALLA_BACKUP_DIR` to use another folder). The
+   newest 14 copies are kept. Copy one off this PC now and then; B-17 L5 adds an
+   automatic off-site copy.
+2. Starts the auth server (`start-auth.bat`, own window) and waits until
+   `http://127.0.0.1:2567/api/health` answers. If it doesn't within 90 s, it
+   stops there. Its window should show `NODE_ENV=production` and
    `Server-to-server routes enabled`.
-2. `start-https.bat`: the first run fetches the certificate. Check it by
-   opening https://184.96.133.165/api/health in a browser (no certificate warning).
-3. `start-gameserver.bat`: the log should show `Server secret: from ...secrets.local.env`.
-   Don't press Play in the editor while it runs (both want admin port 2568).
-4. The web editor works as usual; its **Reload data** and auto-reload reach
-   this server.
+3. Starts Caddy (`start-https.bat`, own window) and waits for port 443. The
+   first run fetches the certificate. If `caddy.exe` is missing it says so in
+   red: the session then works on this PC but testers can't log in.
+4. Starts the game server in a restart loop (`gameserver-loop.ps1`, own
+   window, which runs `start-gameserver.bat`): if the server stops, it starts
+   again after 10 s. If it stops within 2 minutes three times in a row the loop
+   gives up (a startup failure such as the FATAL server-secret check).
+   Its log should show `Server secret: from ...secrets.local.env`.
+5. Prints the public health address to check from a phone on mobile data:
+   https://184.96.133.165/api/health should open with no certificate warning.
+
+**Stop: double-click `stop-all.bat`.** It asks first (players still online lose
+anything since their last save), stops the restart loop and the game server
+(only the `UnrealEditor.exe -server` process; an open editor is left alone),
+Caddy and the auth server, checks the ports are free, and takes a second
+backup (`...-stop.db`). Both scripts log to `deploy\logs\` (gitignored).
+
+The single scripts still work on their own (`start-auth.bat`,
+`start-https.bat`, `start-gameserver.bat`). Don't press Play in the editor
+while the game server runs (both want admin port 2568). The web editor works as
+usual; its **Reload data** and auto-reload reach this server.
 
 ## Letting another PC in the house connect
 

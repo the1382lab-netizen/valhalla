@@ -2,6 +2,7 @@
 
 #include "ValhallaFogRenderer.h"
 
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Camera/CameraComponent.h"
 #include "CanvasItem.h"
 #include "Components/LightComponent.h"
@@ -614,10 +615,17 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	// ground where the server has stopped sending the NPCs standing on it.
 	const float Range = UValhallaVisibilitySubsystem::GetVisionRangeFor(Pawn);
 
-	GatherBlockerSegments(Location, Range, SegmentScratch);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_GatherSegments);
+		GatherBlockerSegments(Location, Range, SegmentScratch);
+	}
 
-	const TArray<FVector2D> Polygon = ValhallaVisibility::ComputeVisibilityPolygon(
-		Origin, SegmentScratch, Range, ValhallaVisibility::DefaultArcRays);
+	TArray<FVector2D> Polygon;
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_VisibilityPolygon);
+		Polygon = ValhallaVisibility::ComputeVisibilityPolygon(
+			Origin, SegmentScratch, Range, ValhallaVisibility::DefaultArcRays);
+	}
 
 	BuildTriangles(Origin, Polygon);
 	if (PendingTriangles.Num() == 0)
@@ -627,7 +635,10 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 
 	// This frame's polygon: the canvas clears to black first, so what is left
 	// is exactly what is visible now.
-	VisibleRT->UpdateResource();
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_VisibleRT);
+		VisibleRT->UpdateResource();
+	}
 
 	// The same fan again into the explored mask, without a clear. See the
 	// header for why union is the accumulation, not an approximation of it.
@@ -636,6 +647,7 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	FVector2D CanvasSize = FVector2D::ZeroVector;
 	FDrawToRenderTargetContext Context;
 
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_ExploredRT);
 	UKismetRenderingLibrary::BeginDrawCanvasToRenderTarget(World, ExploredRT, Canvas, CanvasSize, Context);
 	if (Canvas)
 	{

@@ -2,6 +2,7 @@
 
 #include "ValhallaGameHUDWidget.h"
 
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Blueprint/DragDropOperation.h"
 #include "Blueprint/SlateBlueprintLibrary.h"
 #include "Blueprint/WidgetLayoutLibrary.h"
@@ -2711,6 +2712,7 @@ void UValhallaGameHUDWidget::BuildWorldLayer()
 
 void UValhallaGameHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTime)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_Tick);
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
 	if (!bBuilt)
@@ -2784,6 +2786,7 @@ void UValhallaGameHUDWidget::TickConfigWatcher(float DeltaTime)
 
 void UValhallaGameHUDWidget::TickVitals()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_Vitals);
 	const AValhallaPlayerState* PS = GetValhallaPlayerState();
 	if (!PS)
 	{
@@ -2834,6 +2837,7 @@ void UValhallaGameHUDWidget::TickVitals()
 
 void UValhallaGameHUDWidget::TickActionBar()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_ActionBar);
 	const AValhallaCharacter* Pawn = GetValhallaPawn();
 	const UValhallaSkillComponent* Skills = Pawn ? Pawn->GetSkillComponent() : nullptr;
 	const AValhallaPlayerState* PS = GetValhallaPlayerState();
@@ -2909,6 +2913,7 @@ void UValhallaGameHUDWidget::TickCastBar()
 
 void UValhallaGameHUDWidget::TickTargetFrame()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_TargetFrame);
 	const AValhallaPlayerState* PS = GetValhallaPlayerState();
 	AActor* Target = PS ? PS->GetTargetActor() : nullptr;
 	const FValhallaCombatant Info = UValhallaCombatLibrary::DescribeCombatant(Target);
@@ -3084,6 +3089,7 @@ void UValhallaGameHUDWidget::TickChat(float /*DeltaTime*/)
 
 void UValhallaGameHUDWidget::RefreshChatLines()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_RefreshChatLines);
 	const AValhallaPlayerController* PC = GetValhallaController();
 	if (!PC || !ChatScroll)
 	{
@@ -3412,6 +3418,7 @@ void UValhallaGameHUDWidget::TickDeathOverlay()
 
 void UValhallaGameHUDWidget::TickWorldLayer(float /*DeltaTime*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_WorldLayer);
 	APlayerController* PC = GetOwningPlayer();
 	UWorld* World = GetWorld();
 	if (!PC || !World)
@@ -3528,6 +3535,7 @@ const TArray<FName>& UValhallaGameHUDWidget::GetLogFilterKeys()
 
 void UValhallaGameHUDWidget::HandleCombatEvent(const FValhallaCombatEvent& Event)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_HandleCombatEvent);
 	const AActor* Me = GetValhallaPawn();
 	const AValhallaPlayerState* PS = GetValhallaPlayerState();
 	const UValhallaDataSubsystem* Data = GetData();
@@ -3693,6 +3701,7 @@ void UValhallaGameHUDWidget::PushCombatLog(const FString& Text, const FLinearCol
 
 void UValhallaGameHUDWidget::RefreshCombatLog()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_RefreshCombatLog);
 	bCombatLogDirty = false;
 	if (!CombatLogScroll)
 	{
@@ -3782,6 +3791,7 @@ FString UValhallaGameHUDWidget::GetLogFilterLabel(FName Key)
 
 void UValhallaGameHUDWidget::SpawnFloater(const FValhallaCombatEvent& Event)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_SpawnFloater);
 	// B-21 step 5: the player turned floating combat text off.
 	if (!bShowFloatingText)
 	{

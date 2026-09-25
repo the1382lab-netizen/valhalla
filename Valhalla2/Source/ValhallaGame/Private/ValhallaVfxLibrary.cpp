@@ -2,6 +2,7 @@
 
 #include "ValhallaVfxLibrary.h"
 
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/GameInstance.h"
@@ -406,6 +407,7 @@ UValhallaVfxSubsystem* UValhallaVfxSubsystem::Find(const UObject* WorldContext)
 
 void UValhallaVfxSubsystem::DispatchCombatEvent(const UObject* WorldContext, const FValhallaCombatEvent& Event)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Vfx_Dispatch);
 	if (UValhallaVfxSubsystem* Subsystem = Find(WorldContext))
 	{
 		Subsystem->HandleCombatEvent(Event);

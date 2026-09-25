@@ -2,6 +2,8 @@
 
 #include "ValhallaGameState.h"
 
+#include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 #include "Engine/GameInstance.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
@@ -25,6 +27,8 @@
 #include "ValhallaSpellProjectile.h"
 #include "ValhallaVfxLibrary.h"
 #include "ValhallaZoneSubsystem.h"
+
+CSV_DEFINE_CATEGORY(Valhalla, true);
 
 #if !UE_BUILD_SHIPPING
 namespace
@@ -399,6 +403,9 @@ void AValhallaGameState::FlushCombatEvents()
 
 void AValhallaGameState::MulticastCombatEvents_Implementation(const TArray<FValhallaCombatEvent>& Events)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvents);
+	// Every client gets every batch (a GameState multicast): how many per frame, for the CSV profiler.
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsReceived, Events.Num(), ECsvCustomStatOp::Accumulate);
 	for (const FValhallaCombatEvent& Event : Events)
 	{
 		RecordCombatEvent(Event);
@@ -451,16 +458,25 @@ void AValhallaGameState::RecordCombatEvent(const FValhallaCombatEvent& Event)
 	// on every end — the authority, the listen host and each client — so a
 	// simulated proxy swings, flinches and dies off exactly the information the
 	// combat log is written from, with nothing extra on the wire.
-	UValhallaAnimComponent::DispatchCombatEvent(this, Event);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvent_Anim);
+		UValhallaAnimComponent::DispatchCombatEvent(this, Event);
+	}
 
 	// Phase 8a: and the same events drive the Niagara. The subsystem does not
 	// exist at all on a dedicated server (UValhallaVfxSubsystem::
 	// ShouldCreateSubsystem), so this is a null lookup there rather than a
 	// guard somebody can forget — and on a listen host the local player gets
 	// their effects through exactly the path a remote client does.
-	UValhallaVfxSubsystem::DispatchCombatEvent(this, Event);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvent_Vfx);
+		UValhallaVfxSubsystem::DispatchCombatEvent(this, Event);
+	}
 
 	// Phase 8b: the client's action bar sweep, and the HUD.
 	MirrorCooldownFromEvent(Event);
-	OnCombatEvent.Broadcast(Event);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvent_Listeners);
+		OnCombatEvent.Broadcast(Event);
+	}
 }

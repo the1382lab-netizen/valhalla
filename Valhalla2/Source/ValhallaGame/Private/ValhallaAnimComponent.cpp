@@ -2,6 +2,7 @@
 
 #include "ValhallaAnimComponent.h"
 
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Animation/AnimSequence.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/GameInstance.h"
@@ -771,6 +772,7 @@ UValhallaAnimComponent* UValhallaAnimComponent::Find(AActor* Actor)
 
 void UValhallaAnimComponent::DispatchCombatEvent(const UObject* WorldContext, const FValhallaCombatEvent& Event)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Anim_Dispatch);
 	UValhallaAnimComponent* TargetAnim = Find(Event.Target);
 	UValhallaAnimComponent* InstigatorAnim = Find(Event.Instigator);
 

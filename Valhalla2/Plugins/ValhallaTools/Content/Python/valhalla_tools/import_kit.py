@@ -67,6 +67,13 @@ WALKABLE = {"SM_KeepGate", "SM_RuinArch", "SM_BridgeStone", "SM_BridgeWood", "SM
             "SM_PalisadeGate", "SM_CliffCleft", "SM_CliffCleft_Mid", "SM_StoneRamp",     # B-06 Eldmoor
             "SM_HouseWall_Arch", "SM_TavernWall_Arch", "SM_KeepWall_Arch"}             # B-06 open archways
 
+#: Small plants a character walks *through* (Kevin, 2026-09-24): no collision
+#: at all. The Thornwood thickets (VB_Thicket_*, the "TH" actors in Eldmoor)
+#: are the exception and keep blocking; trees, palms, cacti, stumps and logs
+#: stay solid too. A re-import keeps whatever profile the mesh had; this is
+#: the profile a NEW one of these gets.
+PASS_THROUGH = {"SM_BushA", "SM_BushB", "SM_Fern", "SM_FlowersA", "SM_FlowersB", "SM_GrassTuft", "SM_Reeds"}
+
 #: Material slots that are effects, not surfaces: no shadow, no collision.
 FX_SLOTS = {"MI_Fire"}
 
@@ -137,7 +144,8 @@ def reimport_meshes(entries):
 
         # Keep whatever profile the mesh already had (loot bags, portals...);
         # a new mesh gets VisionBlocker for VB_ and BlockAll otherwise.
-        profile = old_profiles.get(path) or ("VisionBlocker" if name.startswith("VB_") else "BlockAll")
+        profile = old_profiles.get(path) or ("VisionBlocker" if name.startswith("VB_")
+                                             else "NoCollision" if name in PASS_THROUGH else "BlockAll")
         _set_profile(sm, profile)
 
         slots = []

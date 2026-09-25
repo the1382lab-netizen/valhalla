@@ -49,7 +49,7 @@ import struct
 
 import unreal
 
-from valhalla_tools import build_zone
+from valhalla_tools import build_zone, import_kit
 
 TAG = "EldmoorBlockout"
 LEVEL = "/Game/Valhalla/Maps/Zones/L_GrasslandsV2"
@@ -234,6 +234,10 @@ class Builder(object):
             f.set_tile_mesh(self.mesh(mesh))
             f.clear_tiles()
             f.add_tiles(ts)
+            if mesh in import_kit.PASS_THROUGH:
+                # Plants are walk-through (Kevin, 2026-09-24); the TH thickets are VB_ actors, not scatter.
+                for c in f.get_components_by_class(unreal.InstancedStaticMeshComponent):
+                    c.set_collision_profile_name("NoCollision")
             self._finish(f, "Inst_{}_{}".format(folder.replace("/", "_"), mesh), folder)
         self.notes["instances"] = {"{}:{}".format(f, m): len(ts) for (m, f), ts in self.inst.items()}
         self.inst = {}

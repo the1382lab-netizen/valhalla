@@ -147,11 +147,10 @@ protected:
 	/**
 	 * Phase 6's "file watcher on DataRoot", as a poll.
 	 *
-	 * Stats the seven files `UValhallaDataSubsystem` reads and every
-	 * `maps/overlays-2.0/*.json`, and when a timestamp moves runs the same
-	 * thing the matching HTTP route runs — `AValhallaGameMode::ReloadGameData`
-	 * for the data files, `UValhallaZoneSubsystem::ReloadOverlays` for the
-	 * overlays. Two front doors, one implementation, as ever.
+	 * Stats the files `UValhallaDataSubsystem` reads, and when a timestamp
+	 * moves runs the same thing the `/reload-data` HTTP route runs —
+	 * `AValhallaGameMode::ReloadGameData`. Two front doors, one
+	 * implementation, as ever.
 	 *
 	 * The first pass only records timestamps: a server that hot-reloaded
 	 * everything two seconds after booting because it had nothing to compare

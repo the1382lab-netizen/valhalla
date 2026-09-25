@@ -134,13 +134,69 @@ struct VALHALLAGAME_API FValhallaAdminSpawnPointInfo
 	bool bNpcAlive = false;
 };
 
+/** One `AValhallaPortal` placed in a level: a way out of the zone. */
+struct VALHALLAGAME_API FValhallaAdminPortalInfo
+{
+	/** `AdminActorId`. */
+	FString Id;
+	/** The Outliner label in the editor, else Id. */
+	FString Label;
+	double X = 0.0;
+	double Y = 0.0;
+	FString TargetZoneId;
+	/** Empty when the portal arrives at the target zone's default spawn. */
+	FString TargetEntryId;
+};
+
+/** One `AValhallaZoneEntry` placed in a level: where a portal arrives. */
+struct VALHALLAGAME_API FValhallaAdminZoneEntryInfo
+{
+	/** `AdminActorId`. */
+	FString Id;
+	/** The id portals name in `TargetEntryId`. */
+	FString EntryId;
+	FString FromZoneId;
+	double X = 0.0;
+	double Y = 0.0;
+	double Yaw = 0.0;
+};
+
+/** One `APlayerStart`: where logins and deaths in its zone put a player. */
+struct VALHALLAGAME_API FValhallaAdminPlayerStartInfo
+{
+	/** `AdminActorId`. */
+	FString Id;
+	/** `PlayerStartTag`, which is the zone id it serves. */
+	FString Tag;
+	double X = 0.0;
+	double Y = 0.0;
+	double Yaw = 0.0;
+};
+
 /** Everything in one zone. */
 struct VALHALLAGAME_API FValhallaAdminZoneSnapshot
 {
+	/**
+	 * The zone volume's facts, so the dashboard needs no copy of them. False
+	 * for the "unknown" bucket, which has no volume.
+	 */
+	bool bHasZoneInfo = false;
+	FString DisplayName;
+	/** The box's XY size, cm. */
+	double Width = 0.0;
+	double Height = 0.0;
+	/** The volume's default spawn arrow, zone-local cm. */
+	double DefaultSpawnX = 0.0;
+	double DefaultSpawnY = 0.0;
+	double DefaultSpawnYaw = 0.0;
+
 	TArray<FValhallaAdminPlayerInfo> Players;
 	TArray<FValhallaAdminNpcInfo> Npcs;
 	TArray<FValhallaAdminLootBagInfo> LootBags;
 	TArray<FValhallaAdminSpawnPointInfo> SpawnPoints;
+	TArray<FValhallaAdminPortalInfo> Portals;
+	TArray<FValhallaAdminZoneEntryInfo> ZoneEntries;
+	TArray<FValhallaAdminPlayerStartInfo> PlayerStarts;
 };
 
 /** The whole of `GET /state`, before it is JSON. */
@@ -175,12 +231,13 @@ struct VALHALLAGAME_API FValhallaAdminSnapshot
  * has nothing to say (1.0's `spriteColor`, `spriteSize`) the field is simply
  * absent rather than invented.
  *
- * Two routes are new, and both exist because 2.0 has something 1.0 did not: a
+ * One route is new, and it exists because 2.0 has something 1.0 did not: a
  * running process that has already read the JSON. `POST /reload-data` re-reads
- * the seven data files and re-resolves everything that cached them;
- * `POST /reload-overlays` re-reads `maps/overlays-2.0/*.json` and rebuilds the
- * spawners. Together they are what lets a designer save in the editor and see
- * the change without leaving PIE.
+ * the seven data files and re-resolves everything that cached them, which is
+ * what lets a designer save in the editor and see the change without leaving
+ * PIE. Zone actors (portals, entries, player starts, NPC Spawn Points) are
+ * placed in Unreal and reported live by `GET /state`; there is no file of
+ * them to reload.
  *
  * ## Coordinates
  *
@@ -297,9 +354,9 @@ public:
 	/**
 	 * How far above a zone's floor an admin-placed thing is put, cm.
 	 *
-	 * The same 8 cm `UValhallaZoneSubsystem::SpawnFromOverlayPoint` lifts an
-	 * overlay spawner by, for the same reason: a capsule or a bag whose origin
-	 * is exactly on the floor plane starts the frame intersecting it.
+	 * A capsule or a bag whose origin is exactly on the floor plane starts the
+	 * frame intersecting it, so everything placed through the API is lifted
+	 * this much.
 	 */
 	static constexpr double PlacementZOffsetCm = 8.0;
 
@@ -318,7 +375,6 @@ protected:
 	bool HandleKillNpc(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool HandleRespawnNpc(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool HandleDeleteNpc(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
-	bool HandleReloadOverlays(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 	bool HandleReloadData(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete);
 
 	// ── MMO admin actions (2.0 only) ────────────────────────────────────

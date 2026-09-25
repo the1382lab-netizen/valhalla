@@ -90,7 +90,7 @@ export function validateZoneAtmosphere(atmosphere: unknown): string[] {
 export type ValidationSeverity = 'error' | 'warning' | 'info';
 
 export type ValidationCategory =
-  | 'items' | 'skills' | 'classes' | 'npcs' | 'loot' | 'zones' | 'maps' | 'unreal';
+  | 'items' | 'skills' | 'classes' | 'npcs' | 'loot' | 'zones' | 'unreal';
 
 export interface ValidationIssue {
   severity: ValidationSeverity;
@@ -114,6 +114,16 @@ export interface UnrealRefs {
     /** Template Override, or ''. */
     templateOverride: string;
   }[];
+  /**
+   * Zone actors. Unreal is their only source of truth (the maps/overlays-2.0
+   * JSON that once duplicated them is retired); these lists are what the
+   * validator checks against zones.json. Absent in exports older than that.
+   */
+  zoneVolumes?: { level: string; name: string; zoneId: string }[];
+  portals?: { level: string; name: string; targetZoneId: string; targetEntryId: string }[];
+  zoneEntries?: { level: string; name: string; entryId: string; fromZoneId: string }[];
+  /** `tag` is the PlayerStartTag, i.e. the zone id logins and deaths there use. */
+  playerStarts?: { level: string; name: string; tag: string }[];
 }
 
 export interface ValidationInput {
@@ -123,8 +133,6 @@ export interface ValidationInput {
   npcTemplates: Record<string, any>;
   lootTables: Record<string, any>;
   zones: Record<string, any>;
-  /** maps/overlays-2.0/<zone>.json by zone id (file name without .json). */
-  overlays?: Record<string, any>;
   /** File names in Import/Characters/Equipment, e.g. "SK_chest_chainmail.glb". */
   meshFiles?: string[];
   /** File names in Import/UI/Icons, e.g. "sword_iron.png". */
@@ -154,7 +162,6 @@ export const RESOURCE_TYPES = ['mana', 'energy', 'none'] as const;
 export const NPC_TYPES = ['enemy', 'npc'] as const;
 export const NPC_BEHAVIORS = ['passive', 'aggressive', 'patrol', 'stationary', 'fleeing'] as const;
 export const ARMOR_TYPES = ['cloth', 'leather', 'mail', 'plate'] as const;
-export const OVERLAY_POINT_TYPES = ['player_spawn', 'enemy_spawn', 'npc_spawn', 'portal', 'zone_entry'] as const;
 
 /** Skills with a hand-written handler in Unreal (ValhallaSkillHandler.cpp); the data-only rules don't apply. */
 export const CUSTOM_SKILL_HANDLERS = new Set([
@@ -428,52 +435,7 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
     }
   }
 
-  const overlays = isObj(input.overlays) ? input.overlays : null;
-  if (!overlays) {
-    add('info', 'maps', 'overlays', 'Zone overlays were not available, so portals and zone entries were not checked.');
-  } else {
-    const entriesByZone = new Map<string, Set<string>>();
-    for (const [zoneId, doc] of Object.entries(overlays)) {
-      const ids = new Set<string>();
-      for (const sp of Array.isArray(doc?.spawnPoints) ? doc.spawnPoints : []) {
-        if (sp?.type === 'zone_entry' && typeof sp.id === 'string') ids.add(sp.id);
-      }
-      entriesByZone.set(zoneId, ids);
-    }
-    for (const [zoneId, doc] of Object.entries(overlays)) {
-      const file = `${zoneId}.json`;
-      if (!zones[zoneId]) add('error', 'maps', file, `overlay for zone "${zoneId}", which is not in zones.json`);
-      if (!isObj(doc)) { add('error', 'maps', file, 'is not a JSON object'); continue; }
-      if (doc.zoneId !== undefined && doc.zoneId !== zoneId) add('error', 'maps', file, `zoneId "${doc.zoneId}" does not match the file name`);
-      const seen = new Set<string>();
-      const points = Array.isArray(doc.spawnPoints) ? doc.spawnPoints : [];
-      points.forEach((sp: any, i: number) => {
-        const where = sp?.id ? `"${sp.id}"` : `point ${i + 1}`;
-        if (typeof sp?.id !== 'string' || !sp.id) add('error', 'maps', file, `point ${i + 1} has no id`);
-        else if (seen.has(sp.id)) add('error', 'maps', file, `id ${where} is used twice`);
-        else seen.add(sp.id);
-        if (!has(OVERLAY_POINT_TYPES, sp?.type)) add('error', 'maps', file, `${where}: type "${sp?.type ?? ''}" is not one of ${OVERLAY_POINT_TYPES.join(', ')}`);
-        if (sp?.type === 'portal') {
-          if (!zones[sp.targetZone]) {
-            add('error', 'maps', file, `portal ${where} leads to zone "${sp.targetZone ?? ''}", which does not exist`);
-          } else if (sp.targetEntry) {
-            const targetEntries = entriesByZone.get(sp.targetZone);
-            if (!targetEntries) add('warning', 'maps', file, `portal ${where} leads to "${sp.targetZone}", which has no overlay file to check entry "${sp.targetEntry}" against`);
-            else if (!targetEntries.has(sp.targetEntry)) add('error', 'maps', file, `portal ${where} leads to entry "${sp.targetEntry}", which is not a zone_entry in ${sp.targetZone}.json`);
-          }
-        }
-        if (sp?.type === 'zone_entry' && sp.fromZone && !zones[sp.fromZone]) {
-          add('error', 'maps', file, `zone entry ${where} comes from zone "${sp.fromZone}", which does not exist`);
-        }
-        if (sp?.type === 'enemy_spawn' || sp?.type === 'npc_spawn') {
-          if (sp.templateId && !npcs[sp.templateId]) add('error', 'maps', file, `${where} names NPC template "${sp.templateId}", which does not exist`);
-          add('warning', 'maps', file, `${where} is an ${sp.type}, which the game ignores: place an NPC Spawn Point in Unreal instead`);
-        }
-      });
-    }
-  }
-
-  // ── Unreal: NPC Types and spawn points ────────────────────────────────
+  // ── Unreal: NPC Types, spawn points and zone actors ────────────────────────────────
   const refs = input.unrealRefs;
   if (!refs) {
     add('info', 'unreal', 'unreal-refs', 'NPC Types and spawn points were not checked: run valhalla_tools/export_unreal_refs.py in Unreal to write maps/unreal-refs.json.');
@@ -499,8 +461,44 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
         add('warning', 'unreal', where, `NPC Type "${sp.npcType}" was not found among the exported NPC Types`);
       }
     }
+
+    // ── Zone actors: volumes, portals, zone entries, player starts ──
+    if (!refs.zoneVolumes) {
+      add('info', 'unreal', 'unreal-refs', 'Portals, zone entries and player starts were not checked: this export predates them. Re-run export_unreal_refs.py.');
+    } else {
+      const where = (a: { level: string; name: string }) => `${a.level}/${a.name}`;
+      const volumeZones = new Set<string>();
+      for (const v of refs.zoneVolumes) {
+        if (!v.zoneId) { add('error', 'unreal', where(v), 'zone volume has no Zone Id'); continue; }
+        if (volumeZones.has(v.zoneId)) add('error', 'unreal', where(v), `a second zone volume claims zone "${v.zoneId}"`);
+        volumeZones.add(v.zoneId);
+        if (!zones[v.zoneId]) add('error', 'unreal', where(v), `zone volume "${v.zoneId}" is not in zones.json`);
+      }
+      const entryIds = new Set<string>();
+      for (const en of refs.zoneEntries ?? []) {
+        if (!en.entryId) { add('error', 'unreal', where(en), 'zone entry has no Entry Id, so no portal can arrive at it'); continue; }
+        if (entryIds.has(en.entryId)) add('error', 'unreal', where(en), `Entry Id "${en.entryId}" is used by another zone entry too`);
+        entryIds.add(en.entryId);
+        if (en.fromZoneId && !zones[en.fromZoneId]) add('error', 'unreal', where(en), `zone entry comes from zone "${en.fromZoneId}", which is not in zones.json`);
+      }
+      for (const p of refs.portals ?? []) {
+        if (!p.targetZoneId || !zones[p.targetZoneId]) {
+          add('error', 'unreal', where(p), `portal leads to zone "${p.targetZoneId ?? ''}", which is not in zones.json`);
+        } else if (!volumeZones.has(p.targetZoneId)) {
+          add('warning', 'unreal', where(p), `portal leads to zone "${p.targetZoneId}", which has no zone volume in the exported levels`);
+        }
+        if (p.targetEntryId && !entryIds.has(p.targetEntryId)) {
+          add('error', 'unreal', where(p), `portal leads to entry "${p.targetEntryId}", which no zone entry has (players would arrive at the default spawn)`);
+        }
+      }
+      const startTags = new Set((refs.playerStarts ?? []).map(s => s.tag).filter(Boolean));
+      for (const zoneId of volumeZones) {
+        if (!startTags.has(zoneId)) add('warning', 'unreal', zoneId, `no Player Start is tagged "${zoneId}"; logins and deaths there fall back to any Player Start, possibly in another zone`);
+      }
+    }
+
     if (refs.generatedAt) {
-      add('info', 'unreal', 'unreal-refs', `Unreal references exported ${refs.generatedAt}${refs.levels?.length ? ` from ${refs.levels.join(', ')}` : ''}. Re-export after changing NPC Types or spawn points.`);
+      add('info', 'unreal', 'unreal-refs', `Unreal references exported ${refs.generatedAt}${refs.levels?.length ? ` from ${refs.levels.join(', ')}` : ''}. Re-export after changing NPC Types, spawn points, portals, zone entries or player starts.`);
     }
   }
 

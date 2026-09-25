@@ -43,10 +43,10 @@ def _fail(message: str, **kwargs) -> str:
 class ValhallaLevelTools(unreal.ToolsetDefinition):
     """Level creation and saving, new-zone scaffolding, and simple material authoring.
 
-    B-19: nothing here rebuilds an existing zone. Levels and overlays listed in
+    B-19: nothing here rebuilds an existing zone. Levels listed in
     ``<repo>/maps/handedited.json`` (``L_World``, ``L_Grasslands``,
-    ``L_Desert``, their ``_Gameplay`` sub-levels, the ``grasslands`` /
-    ``desert`` overlays, and every zone ``scaffold_zone`` has made) are
+    ``L_Desert``, their ``_Gameplay`` sub-levels, and every zone
+    ``scaffold_zone`` has made) are
     hand-edited: edit them in place in the editor. ``scaffold_zone`` makes a
     NEW zone and refuses anything that exists. Old layouts: git history for
     the ``.umap``, ``Valhalla2/Saved/LevelBackups/``, or a retired script
@@ -96,13 +96,13 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
     @toolset_registry.tool_call
     @staticmethod
     def scaffold_zone(zone_id: str, theme: str = "grassland", size_tiles: int = 64) -> str:
-        """Create a NEW zone: its sub-levels, zone volume, fog bounds, starts and overlay.
+        """Create a NEW zone: its sub-levels, zone volume, fog bounds and player starts.
 
         For new zones only (B-19). It never touches an existing level: it
         REFUSES, creating nothing, if ``/Game/Valhalla/Maps/Zones/L_<ZoneId>``
-        or ``L_<ZoneId>_Gameplay`` exists, if
-        ``<repo>/maps/overlays-2.0/<zone_id>.json`` exists, if
-        ``maps/handedited.json`` lists any of them, or if any map has unsaved
+        or ``L_<ZoneId>_Gameplay`` exists, if a zone volume with this id is
+        in the loaded levels, if ``maps/handedited.json`` lists either level,
+        or if any map has unsaved
         changes. There is no force option. Existing zones (``L_Grasslands``,
         ``L_Desert``, ``L_World``) are edited by hand in the editor.
 
@@ -114,8 +114,10 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
           theme's ground tiles, an ``AValhallaZoneVolume`` with the zone id and
           a default spawn at the centre, an ``AValhallaFogBounds`` hugging the
           zone, four ``PlayerStart`` tagged with the zone id;
-        * ``L_<ZoneId>_Gameplay``: empty, for hand-placed NPC Spawn Points;
-        * ``overlays-2.0/<zone_id>.json`` with the four player spawns.
+        * ``L_<ZoneId>_Gameplay``: empty, for hand-placed NPC Spawn Points.
+
+        Portals, zone entries and player starts exist only as actors in these
+        levels; there is no overlay JSON (retired).
 
         Each is added to ``maps/handedited.json`` as soon as it exists, so it is
         protected from then on (a second call refuses). The editor reopens the
@@ -139,7 +141,7 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
         Returns:
             A JSON object as text. Refused: ``ok`` false and ``refused`` (the
             reasons); nothing was created. Created: ``ok``, ``zoneId``,
-            ``level``, ``gameplayLevel``, ``overlay``, ``marker``,
+            ``level``, ``gameplayLevel``, ``marker``,
             ``registered``, ``counts`` (actors per outliner folder), ``notes``,
             ``reopened`` and ``nextSteps``.
         """
@@ -162,9 +164,9 @@ class ValhallaLevelTools(unreal.ToolsetDefinition):
 
         Writes ``<out_dir>/<zone_id>.png`` at 2048 x 2048 and
         ``<out_dir>/<zone_id>.json`` holding ``originX``, ``originY``,
-        ``sizeX``, ``sizeY`` and ``pixelsPerCm`` — everything the Phase 6
-        editor needs to turn a click on the picture into a coordinate in an
-        overlay file.
+        ``sizeX``, ``sizeY`` and ``pixelsPerCm`` — everything the editor's
+        Live Dashboard needs to draw the picture under zone-local
+        coordinates.
 
         The capture is orthographic with its ortho width set to the zone's own
         size, so pixel-to-centimetre is a scale and an offset; and the camera

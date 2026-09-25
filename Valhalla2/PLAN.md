@@ -1990,6 +1990,38 @@ per player drives everything:
       function. The admin teleport route still uses the default spawn's height. `Valhalla.` tests: all
       pass except the known `MeshIdFallback`.
 
+## Zone overlay JSON retired; zone actors live only in Unreal (2026-09-24)
+
+Kevin's decision (B-06): Unreal-placed actors are the only source of truth for portals, zone
+entries, player starts and NPC Spawn Points. `maps/overlays-2.0/*.json` is deleted, along with
+everything that read or wrote it. The game had already stopped using it at runtime (login,
+respawn, portals and NPCs all read actors); what remained were warnings, the web editor's
+Map Objects page and the Live Dashboard's portal/entry/start markers. Doors: open archways
+for now; clickable doors are B-23.
+
+- **Game server.** `UValhallaZoneSubsystem`: `LoadOverlays` / `ReloadOverlays` /
+  `ParseOverlay` / `ValidateOverlayPoint`, the overlay types in `ValhallaZoneTypes.h`,
+  `valhalla.ReloadOverlays` and the `DataHotReload` overlay watch are gone. New
+  `CheckPlacedActors()` (server, at `OnWorldBeginPlay`, and `valhalla.CheckZones`) warns when a
+  portal's target zone or entry does not exist or the entry stands in another zone, when two
+  entries share an id, and when a zone has no tagged PlayerStart.
+- **Admin API.** `/reload-overlays` is removed. `GET /state` now gives each zone `portals`
+  (`targetZoneId`, `targetEntryId`), `zoneEntries` (`entryId`, `fromZoneId`, `yaw`),
+  `playerStarts` (`tag`, `yaw`) and `zone` (display name, size, default spawn), all zone-local cm.
+  `Valhalla.Game.Admin.StateJson` covers the new fields; `Valhalla.Game.Zones.OverlayParse` is
+  deleted.
+- **Web editor.** The Live Dashboard draws portals, entries and starts from `/state`; the
+  Teleport dialog defaults to the target zone's first tagged start, else its default spawn. The
+  Map Objects page, `/api/overlays2/*` and the `reload-overlays` proxy route are deleted.
+- **Validator.** `export_unreal_refs.py` also exports zone volumes, portals, zone entries and
+  player starts; `npm run validate` checks them against `zones.json` (same rules as
+  `CheckPlacedActors`). The overlay checks and the `maps` category are gone; the pre-commit hook
+  no longer watches `maps/overlays-2.0`. Re-export `maps/unreal-refs.json` from `L_World` to
+  turn the new checks on.
+- **Tools.** `scaffold_zone` and the retired builders no longer write overlays (a zone "exists"
+  when a zone volume with its id is loaded, or its levels exist); `handedited.json` lists levels
+  only; `npc_setup.migrate_overlay_spawns` (one-time, long done) is deleted.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

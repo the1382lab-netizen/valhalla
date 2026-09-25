@@ -9,10 +9,5 @@
     "/Game/Valhalla/Maps/Zones/L_GrasslandsV2",
     "/Game/Valhalla/Maps/Zones/L_GrasslandsV2_Gameplay"
   ],
-  "overlays": [
-    "grasslands",
-    "desert",
-    "grasslands_v2"
-  ],
-  "note": "Listed levels/overlays are hand-edited and nothing regenerates them (B-19). ValhallaLevelTools.scaffold_zone adds each new zone here; remove an entry only by hand."
+  "note": "Listed levels are hand-edited and nothing regenerates them (B-19). ValhallaLevelTools.scaffold_zone adds each new zone here; remove an entry only by hand."
 }

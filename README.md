@@ -10,7 +10,7 @@ one repository.
 | `shared/` | `shared/data/*.json`, the game data (classes, items, skills, NPC templates, loot, zones, UI layout), plus the TypeScript types and loaders the backend and editor share. |
 | `server/` | Account backend (Express + SQLite): login, characters, bans, the game server's load/save/verify routes, and `/api/data` for clients. Port 2567. |
 | `editor/` | Web game editor + Live Dashboard (Vite on 5180, API on 5181). |
-| `maps/` | `overlays-2.0/` (portals, player starts per zone) and `thumbs/` (top-down zone captures). |
+| `maps/` | `thumbs/` (top-down zone captures), `handedited.json` (levels no tool regenerates) and `unreal-refs.json` (exported Unreal references for the validator). Portals, zone entries and player starts live only in the Unreal levels. |
 | `Import/` | Source art Unreal imports: `.glb` meshes and `UI/Icons` PNGs. |
 | `Blender assets/` | `.blend` sources for the kits. |
 | `Tools/` | `fixtures/` (stat fixtures the Unreal tests check against) and `unreal-mcp-bridge/`. |
@@ -22,7 +22,7 @@ npm install            # once, at the repo root
 npm run dev:server     # account backend on :2567
 npm run dev:editor     # web editor on :5180 (API :5181)
 npm run smoke          # backend smoke test (throwaway database)
-npm run validate       # cross-reference check of shared/data, overlays and Unreal refs
+npm run validate       # cross-reference check of shared/data and Unreal refs
 npm run hooks:install  # once per clone: run that check on every commit touching game data
 ```
 

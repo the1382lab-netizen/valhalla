@@ -81,7 +81,7 @@ public:
 	/**
 	 * (Re)build the zone list from the `AValhallaZoneVolume` actors present.
 	 *
-	 * Called from `OnWorldBeginPlay` and again by `valhalla.ReloadOverlays`.
+	 * Called from `OnWorldBeginPlay` and again by `valhalla.CheckZones`.
 	 * Cheap and idempotent; the list is two entries.
 	 */
 	void DiscoverZones();
@@ -147,7 +147,7 @@ public:
 	 */
 	bool TravelThroughPortal(APawn* Pawn, const AValhallaPortal* Portal);
 
-	/** The same thing addressed by ids, for `valhalla.DebugTravel` and tests. */
+	/** The same thing addressed by ids. */
 	bool TravelToZone(APawn* Pawn, FName TargetZoneId, FName TargetEntryId);
 
 	/**
@@ -169,59 +169,31 @@ public:
 	 */
 	void UpdatePlayerZones();
 
-	// ── Overlays ────────────────────────────────────────────────────────
+	// ── Placed-actor check ──────────────────────────────────────────────
 
 	/**
-	 * Load `maps/overlays-2.0/<zone>.json` for every discovered zone and check
-	 * it against what the level already has.
+	 * Check that the zone actors placed in Unreal agree with each other, and
+	 * log every disagreement as a warning. Returns the number of problems.
 	 *
-	 * NPCs are no longer created from the overlay. They are placed in Unreal as
-	 * `AValhallaNPCSpawner` actors (NPC Spawn Points) in each zone's gameplay
-	 * sublevel; an `enemy_spawn` / `npc_spawn` entry left in an overlay is
-	 * reported and ignored.
+	 * Unreal is the only source of truth for portals (`AValhallaPortal`), zone
+	 * entries (`AValhallaZoneEntry`), player starts (`APlayerStart`, tagged
+	 * with the zone id) and NPC Spawn Points (`AValhallaNPCSpawner`). There is
+	 * no second copy of them anywhere to drift, so the only mistakes left are
+	 * inside the level: a portal whose target zone or entry does not exist, an
+	 * entry in a different zone from the portal that names it, two entries
+	 * sharing an id, a zone with no tagged player start.
 	 *
-	 * Portals, entries and player spawns are *validated*, not created, because
-	 * all three have to exist as level actors anyway — a portal needs a mesh
-	 * and a box, a `PlayerStart` needs to be somewhere the navmesh reaches —
-	 * and a second, invisible copy spawned from JSON beside the authored one is
-	 * worse than a warning. Every mismatch is logged with both coordinates.
-	 *
-	 * Server only, and it does nothing at all on a client.
+	 * Runs on the server at `OnWorldBeginPlay` and from `valhalla.CheckZones`.
+	 * Never fatal: every case above has a fallback at runtime (an unknown
+	 * entry arrives at the zone's default spawn; an untagged zone falls back
+	 * to the engine's own PlayerStart choice).
 	 */
-	void LoadOverlays();
+	int32 CheckPlacedActors() const;
 
-	/** Rediscover the zones and re-check the overlays. */
-	void ReloadOverlays();
-
-	/** `<DataRoot>/../../maps/overlays-2.0`, absolute. */
-	static FString GetOverlayDirectory();
-
-	/** The overlay file for a zone, absolute. */
-	static FString GetOverlayPath(FName InZoneId);
-
-	/**
-	 * Parse an overlay document. The whole of the 2.0 format lives here.
-	 *
-	 * Static and string-in, so `Valhalla.Game.Zones.OverlayParse` can pin the
-	 * format without a world, a file or an editor — the same reason
-	 * `ResolveDamage` takes its rolls as an argument.
-	 *
-	 * Never fatal on bad data, matching `UValhallaDataSubsystem`: an
-	 * unparseable point is skipped with a line in `OutErrors` and the rest of
-	 * the file still loads. Returns false only when the document is not an
-	 * object, when `version` is not "2.0", or when `units` is present and is
-	 * not "cm" — three cases where continuing would silently misplace
-	 * everything.
-	 */
-	static bool ParseOverlay(const FString& JsonText, FValhallaZoneOverlay& OutOverlay, TArray<FString>& OutErrors);
-
-	/** How many NPC Spawn Points the loaded levels contain. For the gate log. */
+	/** How many NPC Spawn Points the loaded levels contain. For the check log. */
 	int32 GetSpawnedSpawnerCount() const;
 
 protected:
-	/** Check a portal / zone_entry / player_spawn point against the level. */
-	void ValidateOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point);
-
 	/** Where a portal leads, honouring the entry-then-default-spawn precedence. */
 	bool ResolveArrival(FName TargetZoneId, FName TargetEntryId, FVector& OutLocation, float& OutYaw) const;
 
@@ -231,7 +203,4 @@ private:
 
 	/** Last zone-change time per pawn, against `UWorld::GetTimeSeconds`. */
 	TMap<TWeakObjectPtr<APawn>, double> LastTravelTime;
-
-	/** True once `LoadOverlays` has run, so a reload knows it is a reload. */
-	bool bOverlaysLoaded = false;
 };

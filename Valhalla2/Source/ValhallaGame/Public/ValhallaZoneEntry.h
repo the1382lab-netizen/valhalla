@@ -20,7 +20,7 @@ class UArrowComponent;
  * the id of the entry it leads to and the subsystem can look the actor up.
  *
  * `FromZoneId` is kept anyway, and for the reason 1.0 had it: it documents
- * which direction this entry is for, and it lets the loader check that a
+ * which direction this entry is for, and it lets `CheckPlacedActors` check that a
  * portal claiming to lead here is coming from the zone this entry expects.
  * A portal pointing at an entry meant for somewhere else is a level-authoring
  * mistake that is otherwise invisible until a player walks through it.

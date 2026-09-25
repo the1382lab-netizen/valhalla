@@ -4,7 +4,6 @@ export type EditorSection =
   | 'items' | 'skills' | 'classes'
   | 'npcs' | 'loot'
   | 'zones' | 'ui'
-  | 'maps'
   | 'balance' | 'validation'
   | 'admin';
 

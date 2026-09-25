@@ -1,13 +1,14 @@
 # Valhalla Editor (running against Valhalla 2.0)
 
-React 18 + zustand + Vite editor for the game data in `shared/data`, the map overlays in
-`maps/`, and live server administration. It talks to a tiny Express file server
+React 18 + zustand + Vite editor for the game data in `shared/data` and live server
+administration. It talks to a tiny Express file server
 (`editor/src/server.ts`) that reads and writes the repo, and proxies `/api/admin/*` to the
 running game server.
 
 Since Valhalla 2.0 the world lives in Unreal: zones are UE levels, coordinates are
-**zone-local centimetres**, and the editor draws on top-down captures of the levels instead
-of Tiled maps. The 1.0 editors still work unchanged for the old game.
+**zone-local centimetres**, and the Live Dashboard draws on top-down captures of the levels.
+Portals, zone entries, player starts and NPC Spawn Points are placed in Unreal and nowhere
+else; the dashboard reads them live from the game server's `GET /api/admin/state`.
 
 ## Running
 
@@ -39,7 +40,8 @@ and the Admin dashboard shows the configured URL in its status bar.
 
 Proxied admin actions (anything else is rejected with 404 by the editor server):
 `state`, `spawn-npc`, `drop-item`, `kick-player`, `teleport-player`, `kill-npc`,
-`respawn-npc`, `delete-npc`, `reload-overlays`, `reload-data`. All coordinates in those
+`respawn-npc`, `delete-npc`, `reload-data`, `player-action`, `player-inspect`,
+`broadcast`, `spawn-point-action`, `account-action`. All coordinates in those
 requests are **zone-local cm**.
 
 ## Editor server endpoints (2.0)
@@ -50,12 +52,10 @@ requests are **zone-local cm**.
 | `GET /api/thumbs` | Zone ids that have a capture. |
 | `GET /api/thumbs/<zone>.png` | The top-down capture (2048², orthographic). |
 | `GET /api/thumbs/<zone>.json` | Capture metadata (below). |
-| `GET /api/overlays2/<zone>` | Overlay 2.0; returns an empty skeleton when the file does not exist. |
-| `PUT /api/overlays2/<zone>` | Validates then writes `maps/overlays-2.0/<zone>.json`; non-`2.0` documents are rejected with `400 {error, errors[]}`. |
 | `GET /api/assets/mesh-ids` | Art ids from `Import/Characters/Equipment` (`[]` plus a `warning` when the folder is missing). |
 
-The 1.0 routes (`/api/data/*`, `/api/maps/*`, `/api/overlays/*`, `/api/assets/sprites/*`) are
-unchanged.
+The 1.0 routes (`/api/maps/*`, `/api/overlays/*`, `/api/assets/sprites/*`) and the 2.0
+overlay routes (`/api/overlays2/*`) are retired.
 
 ### Accounts and validation (B-12, B-13)
 
@@ -64,7 +64,7 @@ unchanged.
 | `GET /api/accounts/search`, `GET /api/accounts/detail`, `GET /api/accounts/bans` | Account lookup for the Live Dashboard's **Accounts…** dialog, straight to the backend (`VALHALLA_BACKEND_URL`, default `http://127.0.0.1:2567`) with the server secret, so it works with the game server down. |
 | `POST /api/accounts/{ban,unban,reset-password,delete,rename-character}` | The dialog's actions. After a ban, reset, delete or rename the game server (when up) is asked to kick that account's sessions (`account-action` `kick`). |
 | `GET /api/validate` | The saved files checked by `shared/src/validation.ts` (same rules as `npm run validate`). The status bar shows the result after every Save. |
-| `GET /api/validate/context` | Mesh files, icons, zone overlays and `maps/unreal-refs.json`, for the Validation page, which checks the in-memory (unsaved) data with the same rules. |
+| `GET /api/validate/context` | Mesh files, icons and `maps/unreal-refs.json`, for the Validation page, which checks the in-memory (unsaved) data with the same rules. |
 | `GET /api/data-sync` | SHA-1 of each data file the running game server loaded (admin `state.data`) against the file on disk: the dashboard's "live data = files" badge next to **Reload data**. |
 
 ## Coordinates
@@ -78,51 +78,38 @@ unchanged.
 * Image-right is `+X`, image-down is `+Y`.
 * A click at image pixel `(px, py)` is zone-local `(px / pixelsPerCm, py / pixelsPerCm)` cm —
   **no origin term**. `originX/originY` only say where the zone sits in UE world space; they
-  are not applied to overlay or admin coordinates.
+  are not applied to admin coordinates.
 * `sizeX/sizeY` are the zone extents in cm, so `sizeX * pixelsPerCm` is the image width.
 
-## Overlay 2.0 schema
+## Zone actors in the Live Dashboard
 
-`maps/overlays-2.0/<zone>.json`:
+`GET /api/admin/state` lists, per zone, the actors placed in the Unreal levels alongside the
+players, NPCs, loot bags and NPC Spawn Points (all x/y in zone-local cm):
 
 ```jsonc
-{
-  "version": "2.0",
-  "units": "cm",
-  "zoneId": "grasslands",
-  "spawnPoints": [
-    { "id": "player_spawn_grasslands_0", "type": "player_spawn", "x": 1952, "y": 672, "label": "…" },
-    { "id": "enemy_field_west", "type": "enemy_spawn", "x": 672, "y": 1440,
-      "templateId": "npc_1771431708366", "count": 3, "radius": 320 },
-    { "id": "portal_to_desert", "type": "portal", "x": 4000, "y": 864,
-      "targetZone": "desert", "targetEntry": "entry_from_grasslands" },
-    { "id": "entry_from_desert", "type": "zone_entry", "x": 3680, "y": 864, "fromZone": "desert" }
-  ]
+"grasslands": {
+  "zone": { "displayName": "Grasslands", "width": 4096, "height": 4096,
+            "defaultSpawn": { "x": 1984, "y": 1024, "yaw": 0 } },
+  "portals":      [{ "id": "L_Grasslands.Portal_to_desert", "label": "…", "x": 4000, "y": 864,
+                     "targetZoneId": "desert", "targetEntryId": "entry_from_grasslands" }],
+  "zoneEntries":  [{ "id": "…", "entryId": "entry_from_desert", "fromZoneId": "desert",
+                     "x": 3680, "y": 864, "yaw": 180 }],
+  "playerStarts": [{ "id": "…", "tag": "grasslands", "x": 1952, "y": 672, "yaw": 45 }],
+  …
 }
 ```
 
-* `type`: `player_spawn` | `enemy_spawn` | `npc_spawn` | `portal` | `zone_entry`.
-* `x`/`y`: zone-local cm. `radius` is cm, `count` is a positive integer.
-* `templateId` is required for `enemy_spawn` / `npc_spawn`, `targetZone` for `portal`,
-  `fromZone` for `zone_entry`. Ids must be unique inside a file.
+The dashboard draws portals (purple), zone entries (blue) and player starts (cyan; orange
+when the start's tag is not this zone) from these, and the Teleport dialog defaults to the
+target zone's first tagged player start, else its zone volume's default spawn. To move or
+add one, edit the level in Unreal; the dashboard shows the change on the next poll after the
+game server restarts (or at once in PIE).
 
-How the UE server uses it: enemy and NPC spawns are **created from this file**; player
-spawns, portals and zone entries are **validated against actors placed in the level** and
-must match within **128 cm**. Moving a portal in the editor therefore also needs the level
-author to move the matching actor in UE. The map editor's status line repeats this, and the
-128 cm box is what it draws around portals and entries.
-
-The UE server loads the overlays at start and on the console command
-`valhalla.ReloadOverlays`; the map editor's **Reload in game** button does the same thing
-over HTTP (`POST /api/admin/reload-overlays`). The Admin dashboard's **Reload data** button
+The game server checks the placed actors at start and on `valhalla.CheckZones`: every
+portal's target zone and entry exist, entry ids are unique, and every zone has a tagged
+player start. `npm run validate` does the same checks on `maps/unreal-refs.json` (written by
+`valhalla_tools/export_unreal_refs.py`). The Admin dashboard's **Reload data** button
 (`POST /api/admin/reload-data`) re-reads `shared/data` JSON on the server.
-
-## Map editor modes
-
-The Maps section defaults to **2.0** for any zone that has a capture and falls back to **1.0**
-otherwise; the toolbar switch overrides that and the choice is remembered in `localStorage`
-(`valhalla.mapEditor.mode`). 2.0 mode draws the capture, works in cm and writes overlay 2.0;
-1.0 mode is the old Tiled-map editor writing `maps/overlays/<zone>-overlay.json` in pixels.
 
 ## Item art (meshId)
 

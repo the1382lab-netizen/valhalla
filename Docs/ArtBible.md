@@ -37,7 +37,7 @@ light and shadow and light atmospheric haze, not flat colour and outlines.
 ## 2. World scale (do not change)
 
 Gameplay is tuned to the existing scale: capsules, attack and aggro ranges,
-footprints, line of sight, fog of war and the web editor's map overlays all
+footprints, line of sight, fog of war and the web editor's Live Dashboard map all
 assume it. **1 Unreal unit = 1 cm.**
 
 | Thing | Size | Notes |

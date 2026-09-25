@@ -1,4 +1,4 @@
-"""Build `/Game/Valhalla/Maps/Zones/L_Grasslands` from scratch, and its overlay — RETIRED.
+"""Build `/Game/Valhalla/Maps/Zones/L_Grasslands` from scratch — RETIRED.
 
 **B-19: this no longer runs against `L_Grasslands`.** The zone is hand-edited now;
 `build()` refuses its own target level unconditionally (no `force`) and only
@@ -566,8 +566,6 @@ class Grasslands(ZoneBuilder):
         # One friendly, where 1.0 put "Bjorn the Trader" — beside the market.
         self.npc_spawn("npc_merchant", 34, 12, MERCHANT_TEMPLATE, "Bjorn the Trader")
 
-        self.write_overlay()
-
 
 #: The builder class (history; `build_world.build_zone_level` no longer rebuilds existing zones).
 BUILDER = Grasslands
@@ -579,11 +577,10 @@ def build(zone_id=None):
     Refuses unconditionally — places nothing, writes nothing, returns
     ``{"ok": False, "refused": ...}`` — when the open level is ``L_Grasslands`` or
     any level in ``maps/handedited.json``, and when ``zone_id`` is missing,
-    ``"grasslands"``, or an overlay that already exists. There is no ``force``.
+    ``"grasslands"``, or a zone that already has a zone volume. There is no ``force``.
 
     With a new ``zone_id`` and a new, empty level open (create it by hand), it
-    lays out the historical grasslands there and writes
-    ``overlays-2.0/<zone_id>.json``; see ``build_zone.run_builder``. For a new
+    lays out the historical grasslands there; see ``build_zone.run_builder``. For a new
     zone use ``ValhallaLevelTools.scaffold_zone`` instead. To get the
     hand-edited ``L_Grasslands`` back as it was, use git history for the ``.umap`` or
     ``Valhalla2/Saved/LevelBackups/<timestamp>/``.

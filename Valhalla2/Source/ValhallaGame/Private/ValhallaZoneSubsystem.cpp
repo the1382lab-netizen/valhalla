@@ -3,8 +3,6 @@
 #include "ValhallaZoneSubsystem.h"
 
 #include "Components/CapsuleComponent.h"
-#include "Dom/JsonObject.h"
-#include "Dom/JsonValue.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -14,10 +12,7 @@
 #include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerState.h"
 #include "HAL/IConsoleManager.h"
-#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Serialization/JsonReader.h"
-#include "Serialization/JsonSerializer.h"
 #include "ValhallaCombatLibrary.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaGame.h"
@@ -31,47 +26,6 @@
 #include "ValhallaZoneVolume.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaZones);
-
-namespace
-{
-	/** How far off an overlay point a level actor may be before it is a mismatch, cm. */
-	constexpr double OverlayMatchToleranceCm = 128.0;
-
-	/** `type` string -> enum. The 1.0 spellings. */
-	EValhallaOverlayPointType ParsePointType(const FString& Text)
-	{
-		if (Text.Equals(TEXT("player_spawn"), ESearchCase::IgnoreCase)) { return EValhallaOverlayPointType::PlayerSpawn; }
-		if (Text.Equals(TEXT("enemy_spawn"), ESearchCase::IgnoreCase))  { return EValhallaOverlayPointType::EnemySpawn; }
-		if (Text.Equals(TEXT("npc_spawn"), ESearchCase::IgnoreCase))    { return EValhallaOverlayPointType::NpcSpawn; }
-		if (Text.Equals(TEXT("portal"), ESearchCase::IgnoreCase))       { return EValhallaOverlayPointType::Portal; }
-		if (Text.Equals(TEXT("zone_entry"), ESearchCase::IgnoreCase))   { return EValhallaOverlayPointType::ZoneEntry; }
-		return EValhallaOverlayPointType::Unknown;
-	}
-
-	const TCHAR* PointTypeName(EValhallaOverlayPointType Type)
-	{
-		switch (Type)
-		{
-		case EValhallaOverlayPointType::PlayerSpawn: return TEXT("player_spawn");
-		case EValhallaOverlayPointType::EnemySpawn:  return TEXT("enemy_spawn");
-		case EValhallaOverlayPointType::NpcSpawn:    return TEXT("npc_spawn");
-		case EValhallaOverlayPointType::Portal:      return TEXT("portal");
-		case EValhallaOverlayPointType::ZoneEntry:   return TEXT("zone_entry");
-		default:                                     return TEXT("unknown");
-		}
-	}
-
-	/** An optional FName field: absent and empty both give NAME_None. */
-	FName ReadName(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field)
-	{
-		FString Text;
-		if (Object->TryGetStringField(Field, Text) && !Text.IsEmpty())
-		{
-			return FName(*Text);
-		}
-		return NAME_None;
-	}
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Lifetime
@@ -97,11 +51,11 @@ void UValhallaZoneSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 
 	DiscoverZones();
 
-	// Server only. Overlays create actors, and an actor a client invented is
-	// an actor the server does not know about.
+	// Server only: a client's world is whatever the server replicated to it,
+	// and a warning per client window would only repeat the server's.
 	if (InWorld.GetNetMode() != NM_Client)
 	{
-		LoadOverlays();
+		CheckPlacedActors();
 	}
 }
 
@@ -493,250 +447,114 @@ bool UValhallaZoneSubsystem::TravelToZone(APawn* Pawn, FName TargetZoneId, FName
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Overlays
+//  Placed-actor check
 // ─────────────────────────────────────────────────────────────────────────────
 
-FString UValhallaZoneSubsystem::GetOverlayDirectory()
+int32 UValhallaZoneSubsystem::CheckPlacedActors() const
 {
-	// DataRoot is `<repo>/shared/data`; the overlays are `<repo>/maps/overlays-2.0`.
-	// Going up two and across keeps the single source of truth for where the
-	// repo root is, which is the settings object, and adds no second one.
-	const FString DataRoot = UValhallaDataSettings::Get()->GetResolvedDataRoot();
-	const FString RepoRoot = FPaths::GetPath(FPaths::GetPath(DataRoot));
-	return FPaths::ConvertRelativePathToFull(FPaths::Combine(RepoRoot, TEXT("maps"), TEXT("overlays-2.0")));
-}
-
-FString UValhallaZoneSubsystem::GetOverlayPath(FName InZoneId)
-{
-	return FPaths::Combine(GetOverlayDirectory(), InZoneId.ToString() + TEXT(".json"));
-}
-
-bool UValhallaZoneSubsystem::ParseOverlay(const FString& JsonText, FValhallaZoneOverlay& OutOverlay, TArray<FString>& OutErrors)
-{
-	OutOverlay = FValhallaZoneOverlay();
-
-	TSharedPtr<FJsonObject> Root;
-	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
-	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	const UWorld* World = GetWorld();
+	if (!World || World->GetNetMode() == NM_Client || Zones.Num() == 0)
 	{
-		OutErrors.Add(TEXT("not a JSON object"));
-		return false;
+		return 0;
 	}
 
-	Root->TryGetStringField(TEXT("version"), OutOverlay.Version);
-	Root->TryGetStringField(TEXT("units"), OutOverlay.Units);
-	OutOverlay.ZoneId = ReadName(Root, TEXT("zoneId"));
+	int32 Problems = 0;
 
-	if (OutOverlay.Version != TEXT("2.0"))
+	// ── Zone entries: ids must be unique, or a portal's arrival is a coin toss ──
+	TMap<FName, const AValhallaZoneEntry*> EntriesById;
+	int32 EntryCount = 0;
+	for (TActorIterator<AValhallaZoneEntry> It(World); It; ++It)
 	{
-		OutErrors.Add(FString::Printf(
-			TEXT("version is '%s', not '2.0'; refusing the file rather than guessing its units"),
-			*OutOverlay.Version));
-		return false;
+		++EntryCount;
+		const AValhallaZoneEntry* Entry = *It;
+		if (Entry->EntryId.IsNone())
+		{
+			UE_LOG(LogValhallaZones, Warning, TEXT("zone entry %s has no EntryId; no portal can arrive at it."),
+				*Entry->GetName());
+			++Problems;
+			continue;
+		}
+		if (const AValhallaZoneEntry* const* Existing = EntriesById.Find(Entry->EntryId))
+		{
+			UE_LOG(LogValhallaZones, Warning,
+				TEXT("zone entries %s and %s both use EntryId '%s'; portals will arrive at whichever is found first."),
+				*(*Existing)->GetName(), *Entry->GetName(), *Entry->EntryId.ToString());
+			++Problems;
+			continue;
+		}
+		EntriesById.Add(Entry->EntryId, Entry);
+
+		if (!Entry->FromZoneId.IsNone() && !FindZone(Entry->FromZoneId))
+		{
+			UE_LOG(LogValhallaZones, Warning, TEXT("zone entry %s ('%s') says FromZoneId '%s', which is not a zone."),
+				*Entry->GetName(), *Entry->EntryId.ToString(), *Entry->FromZoneId.ToString());
+			++Problems;
+		}
 	}
 
-	// Absent `units` is allowed and means cm; a *different* value is not, because
-	// every coordinate in the file would be wrong by a factor nobody would spot.
-	if (!OutOverlay.Units.IsEmpty() && !OutOverlay.Units.Equals(TEXT("cm"), ESearchCase::IgnoreCase))
+	// ── Portals: the target zone exists, the target entry exists and is in it ──
+	int32 PortalCount = 0;
+	for (TActorIterator<AValhallaPortal> It(World); It; ++It)
 	{
-		OutErrors.Add(FString::Printf(TEXT("units is '%s', not 'cm'"), *OutOverlay.Units));
-		return false;
+		++PortalCount;
+		const AValhallaPortal* Portal = *It;
+		const FValhallaZoneDef* Target = FindZone(Portal->TargetZoneId);
+		if (!Target)
+		{
+			UE_LOG(LogValhallaZones, Warning, TEXT("portal %s leads to zone '%s', which is not a zone; it will do nothing."),
+				*Portal->GetName(), *Portal->TargetZoneId.ToString());
+			++Problems;
+			continue;
+		}
+		if (Portal->TargetEntryId.IsNone())
+		{
+			// Legal: travel falls back to the zone's default spawn.
+			continue;
+		}
+		const AValhallaZoneEntry* const* Entry = EntriesById.Find(Portal->TargetEntryId);
+		if (!Entry)
+		{
+			UE_LOG(LogValhallaZones, Warning,
+				TEXT("portal %s names entry '%s', which no zone entry has; players will arrive at '%s' default spawn."),
+				*Portal->GetName(), *Portal->TargetEntryId.ToString(), *Portal->TargetZoneId.ToString());
+			++Problems;
+			continue;
+		}
+		const FValhallaZoneDef* EntryZone = GetZoneAt((*Entry)->GetActorLocation());
+		if (EntryZone && EntryZone->ZoneId != Target->ZoneId)
+		{
+			UE_LOG(LogValhallaZones, Warning,
+				TEXT("portal %s leads to zone '%s' but its entry '%s' stands in zone '%s'."),
+				*Portal->GetName(), *Target->ZoneId.ToString(), *Portal->TargetEntryId.ToString(),
+				*EntryZone->ZoneId.ToString());
+			++Problems;
+		}
 	}
 
-	const TArray<TSharedPtr<FJsonValue>>* Points = nullptr;
-	if (!Root->TryGetArrayField(TEXT("spawnPoints"), Points) || !Points)
+	// ── Player starts: every zone needs one tagged with its id ────────────────
+	TSet<FName> TaggedZones;
+	int32 StartCount = 0;
+	for (TActorIterator<APlayerStart> It(World); It; ++It)
 	{
-		// An overlay with no points is a legitimate thing to author — it is how
-		// you say "this zone has nothing in it yet" — so this is not a failure.
-		OutErrors.Add(TEXT("no spawnPoints array; treating the overlay as empty"));
-		return true;
+		++StartCount;
+		TaggedZones.Add(It->PlayerStartTag);
 	}
-
-	int32 Index = -1;
-	for (const TSharedPtr<FJsonValue>& Value : *Points)
-	{
-		++Index;
-
-		const TSharedPtr<FJsonObject>* Object = nullptr;
-		if (!Value.IsValid() || !Value->TryGetObject(Object) || !Object)
-		{
-			OutErrors.Add(FString::Printf(TEXT("spawnPoints[%d] is not an object; skipped"), Index));
-			continue;
-		}
-
-		const TSharedPtr<FJsonObject>& Point = *Object;
-
-		FValhallaOverlayPoint Parsed;
-		Parsed.Id = ReadName(Point, TEXT("id"));
-
-		FString TypeText;
-		Point->TryGetStringField(TEXT("type"), TypeText);
-		Parsed.Type = ParsePointType(TypeText);
-
-		if (Parsed.Id.IsNone())
-		{
-			OutErrors.Add(FString::Printf(TEXT("spawnPoints[%d] has no id; skipped"), Index));
-			continue;
-		}
-
-		if (Parsed.Type == EValhallaOverlayPointType::Unknown)
-		{
-			OutErrors.Add(FString::Printf(
-				TEXT("spawnPoints[%d] ('%s') has type '%s', which is not one of the five; skipped"),
-				Index, *Parsed.Id.ToString(), *TypeText));
-			continue;
-		}
-
-		// A point with no coordinates would land at the zone's corner and look
-		// deliberate, which is worse than not being there.
-		double XValue = 0.0;
-		double YValue = 0.0;
-		if (!Point->TryGetNumberField(TEXT("x"), XValue) || !Point->TryGetNumberField(TEXT("y"), YValue))
-		{
-			OutErrors.Add(FString::Printf(
-				TEXT("spawnPoints[%d] ('%s') has no numeric x/y; skipped"), Index, *Parsed.Id.ToString()));
-			continue;
-		}
-
-		Parsed.X = XValue;
-		Parsed.Y = YValue;
-
-		Parsed.TemplateId = ReadName(Point, TEXT("templateId"));
-		Parsed.TargetZone = ReadName(Point, TEXT("targetZone"));
-		Parsed.TargetEntry = ReadName(Point, TEXT("targetEntry"));
-		Parsed.FromZone = ReadName(Point, TEXT("fromZone"));
-		Point->TryGetStringField(TEXT("label"), Parsed.Label);
-
-		int32 CountValue = 0;
-		if (Point->TryGetNumberField(TEXT("count"), CountValue))
-		{
-			Parsed.Count = FMath::Max(0, CountValue);
-		}
-
-		double RadiusValue = 0.0;
-		if (Point->TryGetNumberField(TEXT("radius"), RadiusValue))
-		{
-			Parsed.Radius = FMath::Max(0.0, RadiusValue);
-		}
-
-		// Per-type requirements, checked here so the loader never has to.
-		const bool bNeedsTemplate =
-			Parsed.Type == EValhallaOverlayPointType::EnemySpawn ||
-			Parsed.Type == EValhallaOverlayPointType::NpcSpawn;
-
-		if (bNeedsTemplate && Parsed.TemplateId.IsNone())
-		{
-			OutErrors.Add(FString::Printf(
-				TEXT("spawnPoints[%d] ('%s') is a %s with no templateId; skipped"),
-				Index, *Parsed.Id.ToString(), PointTypeName(Parsed.Type)));
-			continue;
-		}
-
-		if (Parsed.Type == EValhallaOverlayPointType::Portal && Parsed.TargetZone.IsNone())
-		{
-			OutErrors.Add(FString::Printf(
-				TEXT("spawnPoints[%d] ('%s') is a portal with no targetZone; skipped"),
-				Index, *Parsed.Id.ToString()));
-			continue;
-		}
-
-		OutOverlay.SpawnPoints.Add(MoveTemp(Parsed));
-	}
-
-	return true;
-}
-
-void UValhallaZoneSubsystem::LoadOverlays()
-{
-	UWorld* World = GetWorld();
-	if (!World || World->GetNetMode() == NM_Client)
-	{
-		return;
-	}
-
-	const FString Directory = GetOverlayDirectory();
-	int32 TotalPoints = 0;
-
 	for (const FValhallaZoneDef& Zone : Zones)
 	{
-		const FString Path = GetOverlayPath(Zone.ZoneId);
-
-		FString JsonText;
-		if (!FFileHelper::LoadFileToString(JsonText, *Path))
+		if (!TaggedZones.Contains(Zone.ZoneId))
 		{
 			UE_LOG(LogValhallaZones, Warning,
-				TEXT("zone '%s' has no overlay at %s; the level's own actors are all it gets."),
-				*Zone.ZoneId.ToString(), *Path);
-			continue;
+				TEXT("zone '%s' has no PlayerStart tagged '%s'; logins and deaths there fall back to the engine's pick of any PlayerStart, possibly in another zone."),
+				*Zone.ZoneId.ToString(), *Zone.ZoneId.ToString());
+			++Problems;
 		}
-
-		FValhallaZoneOverlay Overlay;
-		TArray<FString> Errors;
-		const bool bOk = ParseOverlay(JsonText, Overlay, Errors);
-
-		for (const FString& Error : Errors)
-		{
-			UE_LOG(LogValhallaZones, Warning, TEXT("overlay %s: %s"), *Zone.ZoneId.ToString(), *Error);
-		}
-
-		if (!bOk)
-		{
-			continue;
-		}
-
-		if (!Overlay.ZoneId.IsNone() && Overlay.ZoneId != Zone.ZoneId)
-		{
-			UE_LOG(LogValhallaZones, Warning,
-				TEXT("overlay %s declares zoneId '%s'; using the file's name, not its contents."),
-				*Path, *Overlay.ZoneId.ToString());
-		}
-
-		for (const FValhallaOverlayPoint& Point : Overlay.SpawnPoints)
-		{
-			++TotalPoints;
-
-			switch (Point.Type)
-			{
-			case EValhallaOverlayPointType::EnemySpawn:
-			case EValhallaOverlayPointType::NpcSpawn:
-				// NPC placement moved into Unreal: every NPC now comes from an
-				// AValhallaNPCSpawner placed in the zone's gameplay sublevel.
-				// A leftover overlay entry is reported, never spawned, so an
-				// NPC can never exist twice.
-				UE_LOG(LogValhallaZones, Warning,
-					TEXT("overlay %s point '%s' is an %s; ignored. NPCs are placed in Unreal as NPC Spawn Points now (migrate_overlay_spawns)."),
-					*Zone.ZoneId.ToString(), *Point.Id.ToString(), PointTypeName(Point.Type));
-				break;
-			default:
-				ValidateOverlayPoint(Zone, Point);
-				break;
-			}
-		}
-
-		UE_LOG(LogValhallaZones, Log,
-			TEXT("overlay %s: %d points loaded from %s"),
-			*Zone.ZoneId.ToString(), Overlay.SpawnPoints.Num(), *Path);
 	}
-
-	bOverlaysLoaded = true;
 
 	UE_LOG(LogValhallaZones, Log,
-		TEXT("overlays-2.0 loaded from %s: %d zones, %d points checked; %d NPC spawn points placed in the levels."),
-		*Directory, Zones.Num(), TotalPoints, GetSpawnedSpawnerCount());
-}
+		TEXT("placed actors: %d zones, %d portals, %d zone entries, %d player starts, %d NPC spawn points; %d problem(s)."),
+		Zones.Num(), PortalCount, EntryCount, StartCount, GetSpawnedSpawnerCount(), Problems);
 
-void UValhallaZoneSubsystem::ReloadOverlays()
-{
-	UWorld* World = GetWorld();
-	if (!World || World->GetNetMode() == NM_Client)
-	{
-		return;
-	}
-
-	// Nothing to undo: the overlay only validates level actors now. NPCs come
-	// from the NPC Spawn Points placed in the levels and are left alone.
-	DiscoverZones();
-	LoadOverlays();
+	return Problems;
 }
 
 int32 UValhallaZoneSubsystem::GetSpawnedSpawnerCount() const
@@ -752,114 +570,6 @@ int32 UValhallaZoneSubsystem::GetSpawnedSpawnerCount() const
 	return Count;
 }
 
-void UValhallaZoneSubsystem::ValidateOverlayPoint(const FValhallaZoneDef& Zone, const FValhallaOverlayPoint& Point)
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return;
-	}
-
-	const FVector Expected = Zone.FromZoneLocal(Point.X, Point.Y, 0.0);
-
-	// A small helper rather than three copies of the same distance test.
-	const auto Report = [&Zone, &Point, &Expected](const AActor* Found, const TCHAR* What)
-	{
-		if (!Found)
-		{
-			UE_LOG(LogValhallaZones, Warning,
-				TEXT("overlay %s: %s '%s' at zone-local (%.0f, %.0f) has no matching %s actor in the level."),
-				*Zone.ZoneId.ToString(), PointTypeName(Point.Type), *Point.Id.ToString(), Point.X, Point.Y, What);
-			return;
-		}
-
-		const FVector Actual = Found->GetActorLocation();
-		const double Distance = FVector2D(Actual.X - Expected.X, Actual.Y - Expected.Y).Size();
-		if (Distance > OverlayMatchToleranceCm)
-		{
-			UE_LOG(LogValhallaZones, Warning,
-				TEXT("overlay %s: %s '%s' expects (%.0f, %.0f) but %s is at (%.0f, %.0f) — %.0f cm apart."),
-				*Zone.ZoneId.ToString(), PointTypeName(Point.Type), *Point.Id.ToString(),
-				Expected.X, Expected.Y, *Found->GetName(), Actual.X, Actual.Y, Distance);
-		}
-		else
-		{
-			UE_LOG(LogValhallaZones, Verbose,
-				TEXT("overlay %s: %s '%s' matches %s (%.0f cm)."),
-				*Zone.ZoneId.ToString(), PointTypeName(Point.Type), *Point.Id.ToString(), *Found->GetName(), Distance);
-		}
-	};
-
-	switch (Point.Type)
-	{
-	case EValhallaOverlayPointType::Portal:
-	{
-		const AValhallaPortal* Best = nullptr;
-		double BestDistance = TNumericLimits<double>::Max();
-		for (TActorIterator<AValhallaPortal> It(World); It; ++It)
-		{
-			if (It->TargetZoneId != Point.TargetZone)
-			{
-				continue;
-			}
-			const FVector Location = It->GetActorLocation();
-			const double Distance = FVector2D(Location.X - Expected.X, Location.Y - Expected.Y).Size();
-			if (Distance < BestDistance)
-			{
-				BestDistance = Distance;
-				Best = *It;
-			}
-		}
-		Report(Best, TEXT("AValhallaPortal"));
-
-		if (Best && !Point.TargetEntry.IsNone() && Best->TargetEntryId != Point.TargetEntry)
-		{
-			UE_LOG(LogValhallaZones, Warning,
-				TEXT("overlay %s: portal '%s' says targetEntry '%s' but %s is set to '%s'."),
-				*Zone.ZoneId.ToString(), *Point.Id.ToString(), *Point.TargetEntry.ToString(),
-				*Best->GetName(), *Best->TargetEntryId.ToString());
-		}
-		break;
-	}
-
-	case EValhallaOverlayPointType::ZoneEntry:
-	{
-		const AValhallaZoneEntry* Entry = AValhallaZoneEntry::Find(World, Point.Id);
-		Report(Entry, TEXT("AValhallaZoneEntry"));
-
-		if (Entry && !Point.FromZone.IsNone() && Entry->FromZoneId != Point.FromZone)
-		{
-			UE_LOG(LogValhallaZones, Warning,
-				TEXT("overlay %s: zone_entry '%s' says fromZone '%s' but %s is set to '%s'."),
-				*Zone.ZoneId.ToString(), *Point.Id.ToString(), *Point.FromZone.ToString(),
-				*Entry->GetName(), *Entry->FromZoneId.ToString());
-		}
-		break;
-	}
-
-	case EValhallaOverlayPointType::PlayerSpawn:
-	{
-		const APlayerStart* Best = nullptr;
-		double BestDistance = TNumericLimits<double>::Max();
-		for (TActorIterator<APlayerStart> It(World); It; ++It)
-		{
-			const FVector Location = It->GetActorLocation();
-			const double Distance = FVector2D(Location.X - Expected.X, Location.Y - Expected.Y).Size();
-			if (Distance < BestDistance)
-			{
-				BestDistance = Distance;
-				Best = *It;
-			}
-		}
-		Report(Best, TEXT("APlayerStart"));
-		break;
-	}
-
-	default:
-		break;
-	}
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 //  Console
 // ─────────────────────────────────────────────────────────────────────────────
@@ -867,17 +577,14 @@ void UValhallaZoneSubsystem::ValidateOverlayPoint(const FValhallaZoneDef& Zone, 
 namespace
 {
 	/**
-	 * `valhalla.ReloadOverlays` — re-read `maps/overlays-2.0/*.json` and rebuild
-	 * the spawners from them, without leaving PIE.
-	 *
-	 * This is the Phase 3 half of the Phase 6 editor loop: change an enemy
-	 * group in the 1.0 web editor, run this, see the new group. It is also how
-	 * the gate proves that enemy placement really is data — a level rebuild
-	 * would prove nothing, because the level builder writes the overlay too.
+	 * `valhalla.CheckZones` — rediscover the zone volumes and re-run the
+	 * placed-actor check, without leaving PIE. Portals, zone entries, player
+	 * starts and NPC Spawn Points are all Unreal actors; this is the one place
+	 * that checks they agree with each other.
 	 */
-	FAutoConsoleCommandWithWorld GReloadOverlaysCommand(
-		TEXT("valhalla.ReloadOverlays"),
-		TEXT("Re-read maps/overlays-2.0/*.json, destroy the spawners it made last time and make them again."),
+	FAutoConsoleCommandWithWorld GCheckZonesCommand(
+		TEXT("valhalla.CheckZones"),
+		TEXT("Rediscover the zone volumes and check the placed portals, zone entries and player starts."),
 		FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
 		{
 			if (!World)
@@ -888,17 +595,18 @@ namespace
 			UValhallaZoneSubsystem* Zones = World->GetSubsystem<UValhallaZoneSubsystem>();
 			if (!Zones)
 			{
-				UE_LOG(LogValhallaZones, Warning, TEXT("valhalla.ReloadOverlays: no zone subsystem in this world."));
+				UE_LOG(LogValhallaZones, Warning, TEXT("valhalla.CheckZones: no zone subsystem in this world."));
 				return;
 			}
 
 			if (World->GetNetMode() == NM_Client)
 			{
 				UE_LOG(LogValhallaZones, Warning,
-					TEXT("valhalla.ReloadOverlays only works on the server; run it in the server window."));
+					TEXT("valhalla.CheckZones only works on the server; run it in the server window."));
 				return;
 			}
 
-			Zones->ReloadOverlays();
+			Zones->DiscoverZones();
+			Zones->CheckPlacedActors();
 		}));
 }

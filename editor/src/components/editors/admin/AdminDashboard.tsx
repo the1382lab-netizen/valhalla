@@ -70,24 +70,42 @@ interface LootBagInfo {
   items: { itemId: string; quantity: number }[];
 }
 
-interface OverlaySpawnPoint {
+/** An AValhallaPortal placed in the Unreal level: a way out of the zone. */
+interface PortalInfo {
   id: string;
-  type: 'player_spawn' | 'enemy_spawn' | 'npc_spawn' | 'portal' | 'zone_entry';
+  label: string;
   x: number;
   y: number;
-  label?: string;
-  templateId?: string;
-  width?: number;
-  height?: number;
-  fromZone?: string;
-  targetZone?: string;
-  targetEntry?: string;
-  count?: number;
-  radius?: number;
+  targetZoneId: string;
+  /** Empty when the portal arrives at the target zone's default spawn. */
+  targetEntryId: string;
 }
 
-interface OverlayData {
-  spawnPoints: OverlaySpawnPoint[];
+/** An AValhallaZoneEntry placed in the Unreal level: where a portal arrives. */
+interface ZoneEntryInfo {
+  id: string;
+  entryId: string;
+  fromZoneId: string;
+  x: number;
+  y: number;
+  yaw: number;
+}
+
+/** An APlayerStart; `tag` is the zone id it serves (logins and deaths). */
+interface PlayerStartInfo {
+  id: string;
+  tag: string;
+  x: number;
+  y: number;
+  yaw: number;
+}
+
+/** The zone volume's own facts, from the level. */
+interface ZoneVolumeInfo {
+  displayName: string;
+  width: number;
+  height: number;
+  defaultSpawn: { x: number; y: number; yaw: number };
 }
 
 /** maps/thumbs/<zone>.json — the UE top-down capture metadata. */
@@ -104,6 +122,11 @@ interface ZoneData {
   npcs: NPCInfo[];
   lootBags: LootBagInfo[];
   spawnPoints?: SpawnPointInfo[];
+  /** Placed zone actors, read live from the level (the overlay JSON is gone). */
+  portals?: PortalInfo[];
+  zoneEntries?: ZoneEntryInfo[];
+  playerStarts?: PlayerStartInfo[];
+  zone?: ZoneVolumeInfo;
 }
 
 interface ServerState {
@@ -136,7 +159,7 @@ const GRID_COLOR = 'rgba(60, 60, 100, 0.25)';
 const GRID_SIZE = 64;
 /** Grid spacing in cm for Valhalla 2.0 zones (5 m). */
 const GRID_SIZE_CM = 500;
-/** Portal / zone-entry box drawn in cm — the UE actor match tolerance. */
+/** Portal / zone-entry marker box, cm. */
 const ACTOR_MATCH_CM = 128;
 
 // Entity colors
@@ -202,8 +225,6 @@ export const AdminDashboard: React.FC = () => {
   /** Live cursor position in world space — updated every mousemove, read by draw loop. */
   const cursorWorldRef = useRef({ x: 0, y: 0 });
 
-  /** Cached overlay data per zoneId — fetched once on first visit, never evicted. */
-  const overlayCache = useRef<Record<string, OverlayData>>({});
   /** Capture metadata per zoneId; `null` means "checked, this zone has no capture". */
   const thumbMetaCache = useRef<Record<string, ThumbMeta | null>>({});
   const thumbImageCache = useRef<Record<string, HTMLImageElement>>({});
@@ -271,10 +292,10 @@ export const AdminDashboard: React.FC = () => {
     panRef.current = { x: (cw - meta.sizeX * z) / 2, y: (ch - meta.sizeY * z) / 2 };
   }, []);
 
-  // ── Zone capture + overlay loading ──────────────────────
-  // A zone with a capture is a Valhalla 2.0 zone: world space is zone-local cm
-  // and its overlay comes from maps/overlays-2.0. Zones without one keep the
-  // 1.0 behaviour (world pixels, maps/overlays).
+  // ── Zone capture loading ────────────────────────────────
+  // A zone with a capture is a Valhalla 2.0 zone: world space is zone-local cm.
+  // Portals, zone entries and player starts come live from the game server's
+  // /state (Unreal-placed actors), not from a file.
 
   useEffect(() => {
     if (!selectedZone) return;
@@ -300,16 +321,6 @@ export const AdminDashboard: React.FC = () => {
         }
       }
       if (meta) fitToCapture(meta);
-
-      // Overlays only exist for zones with an Unreal capture; the 1.0
-      // pixel-space overlays were retired with the 1.0 client.
-      if (!meta || overlayCache.current[zone]) return;
-      try {
-        const res = await fetch(`/api/overlays2/${zone}`);
-        if (!res.ok) return;
-        const data: OverlayData | null = await res.json();
-        if (data && !cancelled) overlayCache.current[zone] = data;
-      } catch { /* no overlay yet */ }
     })();
 
     return () => { cancelled = true; };
@@ -420,72 +431,53 @@ export const AdminDashboard: React.FC = () => {
     ctx.lineTo(w, origin.y);
     ctx.stroke();
 
-    // ── Overlay objects (portals, spawn points) ──
-    // Rendered before entities so they appear beneath players/NPCs.
-    const overlay = overlayCache.current[selectedZone];
-    if (overlay?.spawnPoints) {
-      for (const sp of overlay.spawnPoints) {
-        const s = worldToScreen(sp.x, sp.y);
-
-        if (sp.type === 'portal' || sp.type === 'zone_entry') {
-          const isPortal = sp.type === 'portal';
-          // Overlay 2.0 points are a position in cm — drawn as the UE actor-match
-          // box; overlay 1.0 rectangles keep their own width/height in pixels.
-          const sw = (inCm ? ACTOR_MATCH_CM : (sp.width ?? (isPortal ? 128 : 64))) * zoom;
-          const sh = (inCm ? ACTOR_MATCH_CM : (sp.height ?? (isPortal ? 128 : 64))) * zoom;
-          const bx = inCm ? s.x - sw / 2 : s.x;
-          const by = inCm ? s.y - sh / 2 : s.y;
-          ctx.fillStyle = isPortal ? PORTAL_COLOR : ZONE_ENTRY_FILL;
-          ctx.fillRect(bx, by, sw, sh);
-          ctx.strokeStyle = isPortal ? PORTAL_STROKE : ZONE_ENTRY_STROKE;
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([5, 3]);
-          ctx.strokeRect(bx, by, sw, sh);
-          ctx.setLineDash([]);
-          if (zoom > 0.15 && sp.label) {
-            ctx.fillStyle = isPortal ? 'rgba(180, 100, 255, 0.9)' : 'rgba(80, 200, 255, 0.9)';
-            ctx.font = `${isPortal ? 'bold ' : ''}${Math.max(9, 11 * zoom)}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.fillText(`${isPortal ? '⬦' : '↓'} ${sp.label}`, bx + sw / 2, by + sh / 2 + 4);
-          }
-
-        } else if (sp.type === 'player_spawn' || sp.type === 'enemy_spawn' || sp.type === 'npc_spawn') {
-          const color = sp.type === 'player_spawn' ? SPAWN_PLAYER_COLOR : SPAWN_ENEMY_COLOR;
-          const size = Math.max(5, 7 * zoom);
-          // Overlay 2.0 enemy spawns carry a wander radius in cm
-          if (sp.type === 'enemy_spawn' && sp.radius) {
-            ctx.beginPath();
-            ctx.arc(s.x, s.y, sp.radius * zoom, 0, Math.PI * 2);
-            ctx.strokeStyle = color;
-            ctx.globalAlpha = 0.35;
-            ctx.setLineDash([3, 3]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            ctx.globalAlpha = 1;
-          }
-          ctx.beginPath();
-          ctx.moveTo(s.x, s.y - size);        // top
-          ctx.lineTo(s.x + size, s.y);         // right
-          ctx.lineTo(s.x, s.y + size);         // bottom
-          ctx.lineTo(s.x - size, s.y);         // left
-          ctx.closePath();
-          ctx.fillStyle = color;
-          ctx.globalAlpha = 0.7;
-          ctx.fill();
-          ctx.globalAlpha = 1;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          if (zoom > 0.3 && sp.label) {
-            ctx.fillStyle = color;
-            ctx.font = `${Math.max(8, 10 * zoom)}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.globalAlpha = 0.85;
-            ctx.fillText(sp.label, s.x, s.y + size + 12);
-            ctx.globalAlpha = 1;
-          }
-        }
+    // ── Placed zone actors (portals, zone entries, player starts) ──
+    // Read live from the level through /state. Drawn before entities so they
+    // appear beneath players/NPCs.
+    const zoneName = (id: string) => state?.zones?.[id]?.zone?.displayName || zones?.[id]?.name || id;
+    const drawBox = (x: number, y: number, isPortal: boolean, label: string, hovered: boolean) => {
+      const s = worldToScreen(x, y);
+      const sw = ACTOR_MATCH_CM * zoom;
+      const bx = s.x - sw / 2;
+      const by = s.y - sw / 2;
+      ctx.fillStyle = isPortal ? PORTAL_COLOR : ZONE_ENTRY_FILL;
+      ctx.fillRect(bx, by, sw, sw);
+      ctx.strokeStyle = isPortal ? PORTAL_STROKE : ZONE_ENTRY_STROKE;
+      ctx.lineWidth = hovered ? 2.5 : 1.5;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(bx, by, sw, sw);
+      ctx.setLineDash([]);
+      if (zoom > 0.15 && label) {
+        ctx.fillStyle = isPortal ? 'rgba(180, 100, 255, 0.9)' : 'rgba(80, 200, 255, 0.9)';
+        ctx.font = `${isPortal ? 'bold ' : ''}${Math.max(9, 11 * zoom)}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.fillText(`${isPortal ? '⬦' : '↓'} ${label}`, s.x, by + sw / 2 + 4);
       }
+    };
+    for (const p of zoneData.portals ?? []) {
+      drawBox(p.x, p.y, true, zoneName(p.targetZoneId), hoveredEntity === `portal_${p.id}`);
+    }
+    for (const en of zoneData.zoneEntries ?? []) {
+      drawBox(en.x, en.y, false, en.fromZoneId ? `from ${zoneName(en.fromZoneId)}` : en.entryId,
+        hoveredEntity === `entry_${en.id}`);
+    }
+    for (const ps of zoneData.playerStarts ?? []) {
+      const s = worldToScreen(ps.x, ps.y);
+      const size = Math.max(5, 7 * zoom);
+      const color = ps.tag === selectedZone ? SPAWN_PLAYER_COLOR : SPAWN_ENEMY_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y - size);
+      ctx.lineTo(s.x + size, s.y);
+      ctx.lineTo(s.x, s.y + size);
+      ctx.lineTo(s.x - size, s.y);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.7;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = hoveredEntity === `start_${ps.id}` ? 2.5 : 1;
+      ctx.stroke();
     }
 
     // ── NPC Spawn Points (placed in Unreal) ──
@@ -646,7 +638,7 @@ export const AdminDashboard: React.FC = () => {
       `(${Math.round(cw.x)}, ${Math.round(cw.y)})${inCm ? ' cm' : ' px'}   Zoom: ${(zoom * 100).toFixed(0)}%`,
       w - 12, h - 12,
     );
-  }, [state, selectedZone, hoveredEntity, worldToScreen, adminUrl, thumbTick]);
+  }, [state, selectedZone, hoveredEntity, worldToScreen, adminUrl, thumbTick, zones]);
 
   // ── Animation loop ──────────────────────────────────────
 
@@ -802,38 +794,39 @@ export const AdminDashboard: React.FC = () => {
       }
     }
 
-    // Check overlay spawn points / portals
+    // Placed zone actors: portals, zone entries, player starts
     if (!found) {
-      const overlay = overlayCache.current[selectedZone];
-      if (overlay?.spawnPoints) {
-        for (const sp of overlay.spawnPoints) {
-          const isCm = !!thumbMetaCache.current[selectedZone];
-          const unit = isCm ? 'cm' : 'px';
-          if (sp.type === 'portal' || sp.type === 'zone_entry') {
-            const bw = isCm ? ACTOR_MATCH_CM : (sp.width ?? 128);
-            const bh = isCm ? ACTOR_MATCH_CM : (sp.height ?? 64);
-            const left = isCm ? sp.x - bw / 2 : sp.x;
-            const top = isCm ? sp.y - bh / 2 : sp.y;
-            if (world.x >= left && world.x <= left + bw && world.y >= top && world.y <= top + bh) {
-              found = `overlay_${sp.id}`;
-              const typeLabel = sp.type === 'portal' ? 'Portal' : 'Zone Entry';
-              const link = sp.type === 'portal'
-                ? (sp.targetZone ? `\n→ ${sp.targetZone}${sp.targetEntry ? ` / ${sp.targetEntry}` : ''}` : '')
-                : (sp.fromZone ? `\n← ${sp.fromZone}` : '');
-              ttText = `${typeLabel}: ${sp.label ?? sp.id}${link}\nPos: ${sp.x}, ${sp.y} ${unit}`;
-              break;
-            }
-          } else {
-            const dx = world.x - sp.x;
-            const dy = world.y - sp.y;
-            if (dx * dx + dy * dy < hitRadius * hitRadius) {
-              found = `overlay_${sp.id}`;
-              const typeLabel = sp.type === 'player_spawn' ? 'Player Spawn'
-                : sp.type === 'npc_spawn' ? 'NPC Spawn' : 'Enemy Spawn';
-              const pack = sp.count ? `\n${sp.count}× within ${sp.radius ?? 0} cm` : '';
-              ttText = `${typeLabel}${sp.label ? ': ' + sp.label : ''}${pack}\nPos: ${sp.x}, ${sp.y} ${unit}`;
-              break;
-            }
+      const half = ACTOR_MATCH_CM / 2;
+      const inBox = (x: number, y: number) =>
+        world.x >= x - half && world.x <= x + half && world.y >= y - half && world.y <= y + half;
+      const nameOf = (id: string) => state?.zones?.[id]?.zone?.displayName || id;
+      for (const p of zoneData.portals ?? []) {
+        if (inBox(p.x, p.y)) {
+          found = `portal_${p.id}`;
+          const entry = p.targetEntryId ? ` / ${p.targetEntryId}` : ' (default spawn)';
+          ttText = `Portal: ${p.label}\n→ ${nameOf(p.targetZoneId)}${entry}\nPos: ${p.x}, ${p.y} cm`;
+          break;
+        }
+      }
+      if (!found) {
+        for (const en of zoneData.zoneEntries ?? []) {
+          if (inBox(en.x, en.y)) {
+            found = `entry_${en.id}`;
+            const from = en.fromZoneId ? `\n← ${nameOf(en.fromZoneId)}` : '';
+            ttText = `Zone Entry: ${en.entryId || '(no EntryId)'}${from}\nPos: ${en.x}, ${en.y} cm · facing ${en.yaw}°`;
+            break;
+          }
+        }
+      }
+      if (!found) {
+        for (const ps of zoneData.playerStarts ?? []) {
+          const dx = world.x - ps.x;
+          const dy = world.y - ps.y;
+          if (dx * dx + dy * dy < hitRadius * hitRadius) {
+            found = `start_${ps.id}`;
+            const tag = ps.tag ? `tag '${ps.tag}'` : 'no tag (unused by logins)';
+            ttText = `Player Start: ${ps.id}\n${tag}\nPos: ${ps.x}, ${ps.y} cm · facing ${ps.yaw}°`;
+            break;
           }
         }
       }
@@ -1307,6 +1300,7 @@ export const AdminDashboard: React.FC = () => {
           sessionId={teleportDialog.sessionId}
           playerName={teleportDialog.name}
           zones={zones}
+          liveZones={state?.zones ?? {}}
           onClose={() => setTeleportDialog(null)}
         />
       )}
@@ -1438,41 +1432,36 @@ const TeleportDialog: React.FC<{
   sessionId: string;
   playerName: string;
   zones: Record<string, any>;
+  /** The live /state zones: player starts and default spawns from the level. */
+  liveZones: Record<string, ZoneData>;
   onClose: () => void;
-}> = ({ sessionId, playerName, zones, onClose }) => {
+}> = ({ sessionId, playerName, zones, liveZones, onClose }) => {
   const [targetZone, setTargetZone] = useState('');
   const [x, setX] = useState(0);
   const [y, setY] = useState(0);
   const [units, setUnits] = useState<'cm' | 'px'>('px');
 
-  // Default to the target zone's first overlay 2.0 player spawn (cm); fall back
-  // to the 1.0 zones.json defaultSpawn (world pixels) when the zone has none.
+  // Default to the target zone's first tagged PlayerStart, else its zone volume's
+  // default spawn (both zone-local cm, live from the level); fall back to the
+  // zones.json defaultSpawn only when the game server does not know the zone.
   useEffect(() => {
     if (!targetZone) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/overlays2/${targetZone}`);
-        if (res.ok) {
-          const ov = await res.json();
-          const spawn = (ov.spawnPoints || []).find((sp: any) => sp.type === 'player_spawn');
-          if (spawn && !cancelled) {
-            setX(Math.round(spawn.x));
-            setY(Math.round(spawn.y));
-            setUnits('cm');
-            return;
-          }
-        }
-      } catch { /* fall through to the 1.0 default */ }
-      const fallback = (zones as any)?.[targetZone]?.defaultSpawn;
-      if (fallback && !cancelled) {
-        setX(fallback.x);
-        setY(fallback.y);
-        setUnits('px');
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [targetZone, zones]);
+    const live = liveZones?.[targetZone];
+    const start = live?.playerStarts?.find(ps => ps.tag === targetZone) ?? live?.playerStarts?.[0];
+    const spawn = start ?? live?.zone?.defaultSpawn;
+    if (spawn) {
+      setX(Math.round(spawn.x));
+      setY(Math.round(spawn.y));
+      setUnits('cm');
+      return;
+    }
+    const fallback = (zones as any)?.[targetZone]?.defaultSpawn;
+    if (fallback) {
+      setX(fallback.x);
+      setY(fallback.y);
+      setUnits('px');
+    }
+  }, [targetZone, zones, liveZones]);
 
   const handleSubmit = async () => {
     if (!targetZone) return;

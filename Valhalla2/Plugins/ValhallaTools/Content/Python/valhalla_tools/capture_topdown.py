@@ -39,11 +39,11 @@ So, with `pixelsPerCm = resolution / sizeX`:
     worldX = originX + px / pixelsPerCm
     worldY = originY + py / pixelsPerCm
 
-and the *zone-local* coordinate an overlay file wants — centimetres from the
-zone volume's min corner — is simply `px / pixelsPerCm`, `py / pixelsPerCm`,
-with no origin at all. That is the point of anchoring `originX`/`originY` to
-the zone volume's min corner: the editor can write overlay coordinates without
-ever knowing that the desert lives at X = +40000.
+and the *zone-local* coordinate the admin API and Live Dashboard use —
+centimetres from the zone volume's min corner — is simply `px / pixelsPerCm`,
+`py / pixelsPerCm`, with no origin at all. That is the point of anchoring
+`originX`/`originY` to the zone volume's min corner: the dashboard can draw
+zone-local positions without ever knowing that the desert lives at X = +40000.
 """
 
 import json

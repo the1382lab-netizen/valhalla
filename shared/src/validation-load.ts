@@ -40,8 +40,8 @@ function listDir(dir: string, pattern: RegExp): string[] | undefined {
 }
 
 /**
- * Everything under `repoRoot`: shared/data/*.json, maps/overlays-2.0,
- * Import/Characters/Equipment, Import/UI/Icons and maps/unreal-refs.json.
+ * Everything under `repoRoot`: shared/data/*.json, Import/Characters/Equipment,
+ * Import/UI/Icons and maps/unreal-refs.json.
  */
 export function loadValidationInput(repoRoot: string): { input: ValidationInput; problems: LoadProblem[] } {
   const problems: LoadProblem[] = [];
@@ -57,17 +57,6 @@ export function loadValidationInput(repoRoot: string): { input: ValidationInput;
     return parsed;
   };
 
-  const overlayDir = join(repoRoot, 'maps', 'overlays-2.0');
-  let overlays: Record<string, any> | undefined;
-  const overlayFiles = listDir(overlayDir, /\.json$/i);
-  if (overlayFiles) {
-    overlays = {};
-    for (const f of overlayFiles) {
-      const doc = readJson(join(overlayDir, f), problems, `maps/overlays-2.0/${f}`);
-      if (doc !== null) overlays[f.replace(/\.json$/i, '')] = doc;
-    }
-  }
-
   let unrealRefs: UnrealRefs | null = null;
   const refsPath = join(repoRoot, 'maps', 'unreal-refs.json');
   if (existsSync(refsPath)) {
@@ -81,7 +70,6 @@ export function loadValidationInput(repoRoot: string): { input: ValidationInput;
     npcTemplates: need('npc-templates.json', loadNPCTemplatesFromJson, {}),
     lootTables: need('loot-tables.json', loadLootTablesFromJson, {}),
     zones: need('zones.json', loadZonesFromJson, {}),
-    overlays,
     meshFiles: listDir(join(repoRoot, 'Import', 'Characters', 'Equipment'), /\.(glb|gltf)$/i),
     iconFiles: listDir(join(repoRoot, 'Import', 'UI', 'Icons'), /\.png$/i),
     unrealRefs,

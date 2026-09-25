@@ -30,8 +30,8 @@
 namespace
 {
 	/**
-	 * `valhalla.DataHotReload` — watch the 1.0 data and the 2.0 overlays and
-	 * reload them when they change on disk.
+	 * `valhalla.DataHotReload` — watch the game data files and reload them
+	 * when they change on disk.
 	 *
 	 * On by default, because the entire point of Phase 6 is that a designer
 	 * editing `items.json` in the browser sees the change in a running PIE
@@ -41,7 +41,7 @@ namespace
 	TAutoConsoleVariable<int32> CVarDataHotReload(
 		TEXT("valhalla.DataHotReload"),
 		1,
-		TEXT("Server, non-shipping. 1: poll shared/data/*.json and maps/overlays-2.0/*.json every 2s and reload on change. 0: off."),
+		TEXT("Server, non-shipping. 1: poll shared/data/*.json every 2s and reload on change. 0: off."),
 		ECVF_Default);
 }
 #endif
@@ -219,11 +219,10 @@ void AValhallaGameState::TickDataWatcher(float DeltaSeconds)
 
 	// ── What is watched ──────────────────────────────────────────────────
 	//
-	// The seven data files by name (UValhallaDataSubsystem::GetDataFilenames,
-	// so this list cannot drift from the loader's) and every overlay in the
-	// overlay directory by glob. The glob matters: an overlay for a zone that
-	// did not exist when the server booted is a *new* file, and a watcher
-	// keyed only on the files it saw at startup would never notice it.
+	// The data files by name (UValhallaDataSubsystem::GetDataFilenames, so
+	// this list cannot drift from the loader's). Zone actors — portals,
+	// entries, player starts, NPC Spawn Points — live in the levels, not on
+	// disk as JSON, so there is nothing else to watch.
 	TArray<FString> DataPaths;
 	const FString DataRoot = UValhallaDataSettings::Get()->GetResolvedDataRoot();
 	for (const FString& Filename : UValhallaDataSubsystem::GetDataFilenames())
@@ -231,17 +230,8 @@ void AValhallaGameState::TickDataWatcher(float DeltaSeconds)
 		DataPaths.Add(FPaths::Combine(DataRoot, Filename));
 	}
 
-	TArray<FString> OverlayPaths;
-	const FString OverlayDirectory = UValhallaZoneSubsystem::GetOverlayDirectory();
-	FileManager.FindFiles(OverlayPaths, *FPaths::Combine(OverlayDirectory, TEXT("*.json")), /*Files=*/true, /*Directories=*/false);
-	for (FString& Overlay : OverlayPaths)
-	{
-		Overlay = FPaths::Combine(OverlayDirectory, Overlay);
-	}
-
 	// ── What changed ─────────────────────────────────────────────────────
 	bool bDataChanged = false;
-	bool bOverlaysChanged = false;
 	FString FirstChangedPath;
 
 	auto CheckSet = [this, &FileManager, &FirstChangedPath](const TArray<FString>& Paths, bool& bOutChanged)
@@ -282,22 +272,17 @@ void AValhallaGameState::TickDataWatcher(float DeltaSeconds)
 	};
 
 	CheckSet(DataPaths, bDataChanged);
-	CheckSet(OverlayPaths, bOverlaysChanged);
 
 	if (!bDataWatchBaselineTaken)
 	{
 		bDataWatchBaselineTaken = true;
 		UE_LOG(LogValhallaGame, Log,
-			TEXT("valhalla.DataHotReload: watching %d data files and %d overlays (%s, %s)."),
-			DataPaths.Num(), OverlayPaths.Num(), *DataRoot, *OverlayDirectory);
+			TEXT("valhalla.DataHotReload: watching %d data files (%s)."),
+			DataPaths.Num(), *DataRoot);
 		return;
 	}
 
 	// ── Act ──────────────────────────────────────────────────────────────
-	//
-	// Data first. An overlay names NPC templates, so reloading the overlays
-	// against the *old* npc-templates.json and then reloading the data would
-	// leave the spawned NPCs a reload behind for one cycle.
 	if (bDataChanged)
 	{
 		UE_LOG(LogValhallaGame, Log, TEXT("valhalla.DataHotReload: %s changed — reloading data."), *FirstChangedPath);
@@ -305,15 +290,6 @@ void AValhallaGameState::TickDataWatcher(float DeltaSeconds)
 		{
 			FValhallaDataReloadCounts Counts;
 			GameMode->ReloadGameData(Counts);
-		}
-	}
-
-	if (bOverlaysChanged)
-	{
-		UE_LOG(LogValhallaGame, Log, TEXT("valhalla.DataHotReload: an overlay changed — reloading overlays."));
-		if (UValhallaZoneSubsystem* Zones = World->GetSubsystem<UValhallaZoneSubsystem>())
-		{
-			Zones->ReloadOverlays();
 		}
 	}
 }

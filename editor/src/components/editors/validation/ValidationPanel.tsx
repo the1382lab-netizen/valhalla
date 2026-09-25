@@ -2,8 +2,8 @@
  * B-13: the Validation page. Runs the shared cross-reference check
  * (shared/src/validation.ts — the same rules as `npm run validate` and the git
  * pre-commit hook) over the editor's in-memory data, so unsaved edits are
- * checked too, with the on-disk context (mesh files, icons, zone overlays and
- * the exported Unreal references) fetched from the editor server.
+ * checked too, with the on-disk context (mesh files, icons and the exported
+ * Unreal references) fetched from the editor server.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
@@ -17,7 +17,6 @@ import {
 import { useEditorStore } from '../../../store/editorStore';
 
 interface ValidationContext {
-  overlays: Record<string, any> | null;
   meshFiles: string[] | null;
   iconFiles: string[] | null;
   unrealRefs: UnrealRefs | null;
@@ -26,7 +25,7 @@ interface ValidationContext {
 
 const CATEGORY_LABELS: Record<ValidationCategory, string> = {
   items: 'Items', skills: 'Skills', classes: 'Classes', npcs: 'NPCs',
-  loot: 'Loot tables', zones: 'Zones', maps: 'Zone overlays', unreal: 'Unreal (NPC Types, spawn points)',
+  loot: 'Loot tables', zones: 'Zones', unreal: 'Unreal (NPC Types, spawn points, zone actors)',
 };
 
 const SEVERITY_STYLE: Record<ValidationSeverity, { color: string; bg: string; label: string }> = {
@@ -36,8 +35,8 @@ const SEVERITY_STYLE: Record<ValidationSeverity, { color: string; bg: string; la
 };
 
 /** Where to jump for an issue's record, when the editor has a page for it. */
-const SECTION_FOR: Partial<Record<ValidationCategory, 'items' | 'skills' | 'classes' | 'npcs' | 'loot' | 'maps'>> = {
-  items: 'items', skills: 'skills', classes: 'classes', npcs: 'npcs', loot: 'loot', maps: 'maps',
+const SECTION_FOR: Partial<Record<ValidationCategory, 'items' | 'skills' | 'classes' | 'npcs' | 'loot'>> = {
+  items: 'items', skills: 'skills', classes: 'classes', npcs: 'npcs', loot: 'loot',
 };
 
 export const ValidationPanel: React.FC = () => {
@@ -81,13 +80,12 @@ export const ValidationPanel: React.FC = () => {
       npcTemplates: npcTemplates.data,
       lootTables: lootTables.data,
       zones: zones.data,
-      overlays: context?.overlays ?? undefined,
       meshFiles: context?.meshFiles ?? undefined,
       iconFiles: context?.iconFiles ?? undefined,
       unrealRefs: context?.unrealRefs ?? null,
     });
     const fileProblems: ValidationIssue[] = (context?.problems ?? []).map(p => ({
-      severity: 'error', category: p.file.startsWith('maps/') ? 'maps' : 'items', id: p.file, message: p.message,
+      severity: 'error', category: p.file.startsWith('maps/') ? 'unreal' : 'items', id: p.file, message: p.message,
     }));
     return [...fileProblems, ...found];
   }, [items.data, skills.data, classes.data, npcTemplates.data, lootTables.data, zones.data, context]);
@@ -117,7 +115,7 @@ export const ValidationPanel: React.FC = () => {
       <div className="panel-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <span>Validation</span>
-          <button className="btn btn-ghost" onClick={loadContext} title="Re-read meshes, icons, overlays and Unreal references from disk">
+          <button className="btn btn-ghost" onClick={loadContext} title="Re-read meshes, icons and Unreal references from disk">
             ⟳ Refresh files
           </button>
         </div>
@@ -128,7 +126,7 @@ export const ValidationPanel: React.FC = () => {
         </div>
         {contextError && (
           <div style={{ color: '#e66', fontSize: 12, marginBottom: 8 }}>
-            Could not read the files on disk ({contextError}); meshes, icons, overlays and Unreal references are not checked.
+            Could not read the files on disk ({contextError}); meshes, icons and Unreal references are not checked.
           </div>
         )}
         <div style={{ display: 'flex', gap: 16, padding: 12, background: 'rgba(0,0,0,0.2)', borderRadius: 4, marginBottom: 12 }}>

@@ -10,7 +10,6 @@ import { ClassEditor } from '../editors/classes/ClassEditor';
 import { NPCEditor } from '../editors/npcs/NPCEditor';
 import { LootTableEditor } from '../editors/loot/LootTableEditor';
 import { UILayoutEditor } from '../editors/ui/UILayoutEditor';
-import { MapEditor } from '../editors/maps/MapEditor';
 import { ZoneEditor } from '../editors/zones/ZoneEditor';
 import { BalanceDashboard } from '../editors/balance/BalanceDashboard';
 import { ValidationPanel } from '../editors/validation/ValidationPanel';
@@ -23,7 +22,6 @@ const editorComponents: Record<string, React.FC> = {
   npcs: NPCEditor,
   loot: LootTableEditor,
   ui: UILayoutEditor,
-  maps: MapEditor,
   zones: ZoneEditor,
   balance: BalanceDashboard,
   validation: ValidationPanel,
@@ -31,7 +29,7 @@ const editorComponents: Record<string, React.FC> = {
 };
 
 // Sections that manage their own layout — no outer padding needed
-const FULL_BLEED_SECTIONS = new Set(['maps', 'balance', 'validation', 'admin']);
+const FULL_BLEED_SECTIONS = new Set(['balance', 'validation', 'admin']);
 
 export const EditorLayout: React.FC = () => {
   const activeSection = useEditorStore(s => s.activeSection);

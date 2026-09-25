@@ -1,7 +1,7 @@
-"""B-05 / B-19: keep every tool off the levels and overlays Kevin edits by hand.
+"""B-05 / B-19: keep every tool off the levels Kevin edits by hand.
 
-`L_World`, `L_Grasslands`, `L_Desert` and the `grasslands` / `desert` overlays
-are hand-edited. B-05 put a refusal and backups in front of the from-scratch
+`L_World`, `L_Grasslands`, `L_Desert` and every zone made since are
+hand-edited. B-05 put a refusal and backups in front of the from-scratch
 builders; **B-19 retired those builders altogether**: no MCP tool regenerates an
 existing zone any more, and `build_world.build_all` / `build_grasslands.build` /
 `build_desert.build` refuse their target levels unconditionally (there is no
@@ -11,16 +11,19 @@ it exists. This module is the guard every writer consults.
 
 ## The marker
 
-`<repo>/maps/handedited.json`, next to `overlays-2.0/`:
+`<repo>/maps/handedited.json`:
 
     {
       "version": 1,
       "levels":   ["/Game/Valhalla/Maps/L_World", ...],   # package paths
-      "overlays": ["grasslands", "desert"],                # zone ids
       "note": "..."
     }
 
-**The rule.** A listed level or overlay is never regenerated. Writers skip or
+(The zone overlay JSON, `maps/overlays-2.0`, is retired: portals, zone
+entries and player starts live only in the levels. An `overlays` key left in
+an old marker is ignored.)
+
+**The rule.** A listed level is never regenerated. Writers skip or
 refuse it and name it in their result (`refusal_message`). `register()` adds
 entries (what `scaffold_zone` calls); nothing in the tools removes one — to
 release a level, Kevin edits the file by hand.
@@ -28,7 +31,7 @@ release a level, Kevin edits the file by hand.
 ## Backups
 
 `backup_files` / `backup_targets` copy a level's `.umap` / `_BuiltData.uasset`
-and an overlay JSON to `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`,
+to `Valhalla2/Saved/LevelBackups/<YYYYMMDD-HHMMSS>/`,
 paths kept relative to the repo root. Since B-19 no tool in the plugin calls
 them (only the retired forced rebuild did); they stay for any future in-place
 editing script that wants a copy before it writes, and `LevelBackups/` still
@@ -51,7 +54,7 @@ STAMP_FORMAT = "%Y%m%d-%H%M%S"
 
 
 class ProtectedError(RuntimeError):
-    """Raised by a writer asked to overwrite a marked level/overlay."""
+    """Raised by a writer asked to overwrite a marked level."""
 
 
 def _log(message):
@@ -76,7 +79,7 @@ def project_dir():
 
 
 def repo_root():
-    """The monorepo root: the overlay writer's `repo_root()`, or `Valhalla2/..`."""
+    """The monorepo root: `build_zone.repo_root()`, or `Valhalla2/..`."""
     try:
         from valhalla_tools.build_zone import repo_root as zone_repo_root
         root = zone_repo_root()
@@ -90,7 +93,7 @@ def repo_root():
 def marker_path():
     """`<repo>/maps/handedited.json`.
 
-    Looks beside the overlay directory first and then at `Valhalla2/../maps`,
+    Looks under `build_zone.repo_root()` first and then at `Valhalla2/../maps`,
     so a `DataRoot` that cannot be read does not silently disable protection.
     """
     candidates = []
@@ -123,34 +126,25 @@ def level_files(level_path, content_dir=None):
     return [_norm(f) for f in files if os.path.isfile(f)]
 
 
-def overlay_file(zone_id, directory=None):
-    if directory is None:
-        from valhalla_tools.build_zone import overlay_dir
-        directory = overlay_dir()
-    return _norm(os.path.join(directory, "{}.json".format(zone_id)))
-
-
 # ── The marker ──────────────────────────────────────────────────────────
 
 
 def load_marker(path=None):
-    """`{"levels": set, "overlays": set, "path": str}`. Missing file: both empty.
+    """`{"levels": set, "path": str}`. Missing file: nothing listed.
 
     A file that exists but is not valid JSON, or has the wrong shape, raises:
     protection must never fail open.
     """
     path = path or marker_path()
     if not os.path.isfile(path):
-        return {"levels": set(), "overlays": set(), "path": path, "exists": False}
+        return {"levels": set(), "path": path, "exists": False}
     with open(path, encoding="utf-8") as handle:
         document = json.load(handle)
     levels = document.get("levels", [])
-    overlays = document.get("overlays", [])
-    if not isinstance(levels, list) or not isinstance(overlays, list):
-        raise ValueError("{}: 'levels' and 'overlays' must be lists".format(path))
+    if not isinstance(levels, list):
+        raise ValueError("{}: 'levels' must be a list".format(path))
     return {
         "levels": {str(p).split(".")[0].rstrip("/") for p in levels},
-        "overlays": {str(z) for z in overlays},
         "path": path,
         "exists": True,
     }
@@ -161,19 +155,10 @@ def is_level_protected(level_path, marker=None):
     return level_path.split(".")[0].rstrip("/") in marker["levels"]
 
 
-def is_overlay_protected(zone_id, marker=None):
-    marker = marker if marker is not None else load_marker()
-    return zone_id in marker["overlays"]
-
-
-def refusal_message(levels=(), overlays=(), marker=None):
+def refusal_message(levels=(), marker=None):
     where = marker["path"] if marker else "maps/" + MARKER_NAME
-    parts = []
-    if levels:
-        parts.append("level(s) " + ", ".join(levels))
-    if overlays:
-        parts.append("overlay(s) " + ", ".join("overlays-2.0/{}.json".format(z) for z in overlays))
-    one = len(levels) + len(overlays) == 1
+    parts = ["level(s) " + ", ".join(levels)] if levels else []
+    one = len(levels) == 1
     return ("refused: {} {} hand-edited (listed in {}) and nothing regenerates {} "
             "(B-19). Edit in place in the editor; make a new zone with "
             "ValhallaLevelTools.scaffold_zone; recover an old layout from git history "
@@ -181,39 +166,34 @@ def refusal_message(levels=(), overlays=(), marker=None):
                                     where, "it" if one else "them", BACKUP_DIR_NAME)
 
 
-def register(levels=(), overlays=(), path=None):
-    """Add levels / overlays to the marker, keeping everything already listed.
+def register(levels=(), path=None):
+    """Add levels to the marker, keeping everything already listed.
 
     What `scaffold_zone` calls the moment it has created a zone, so the new
     zone is protected from then on. Creates the marker if it is missing.
     Never removes anything: releasing a level is a hand edit of the file.
 
     Returns:
-        ``{"path": str, "added": {"levels": [...], "overlays": [...]}}``.
+        ``{"path": str, "added": {"levels": [...]}}``.
     """
     path = path or marker_path()
     if os.path.isfile(path):
         with open(path, encoding="utf-8") as handle:
             document = json.load(handle)
     else:
-        document = {"version": 1, "levels": [], "overlays": []}
+        document = {"version": 1, "levels": []}
     listed_levels = document.setdefault("levels", [])
-    listed_overlays = document.setdefault("overlays", [])
-    if not isinstance(listed_levels, list) or not isinstance(listed_overlays, list):
-        raise ValueError("{}: 'levels' and 'overlays' must be lists".format(path))
+    if not isinstance(listed_levels, list):
+        raise ValueError("{}: 'levels' must be a list".format(path))
 
-    added = {"levels": [], "overlays": []}
+    added = {"levels": []}
     for level_path in levels:
         level_path = str(level_path).split(".")[0].rstrip("/")
         if level_path not in listed_levels:
             listed_levels.append(level_path)
             added["levels"].append(level_path)
-    for zone_id in overlays:
-        if zone_id not in listed_overlays:
-            listed_overlays.append(zone_id)
-            added["overlays"].append(zone_id)
 
-    if added["levels"] or added["overlays"]:
+    if added["levels"]:
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             json.dump(document, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
@@ -282,13 +262,11 @@ def backup_files(paths, backup_root=None, bases=None, stamp=None):
     return {"folder": folder, "copied": copied}
 
 
-def backup_targets(level_paths=(), zone_ids=(), **kwargs):
-    """Back up the files of these levels and overlays (existing ones only)."""
+def backup_targets(level_paths=(), **kwargs):
+    """Back up the files of these levels (existing ones only)."""
     files = []
     for level_path in level_paths:
         files.extend(level_files(level_path))
-    for zone_id in zone_ids:
-        files.append(overlay_file(zone_id))
     return backup_files(files, **kwargs)
 
 
@@ -319,14 +297,12 @@ def self_check(scratch=None):
     # A fake repo: <scratch>/repo/{maps/..., Valhalla2/Content/...}
     repo = os.path.join(scratch, "repo")
     content = os.path.join(repo, "Valhalla2", "Content")
-    overlays = os.path.join(repo, "maps", "overlays-2.0")
-    for directory in (os.path.join(content, "Valhalla", "Maps", "Zones"), overlays):
+    for directory in (os.path.join(content, "Valhalla", "Maps", "Zones"), os.path.join(repo, "maps")):
         os.makedirs(directory, exist_ok=True)
     dummies = {
         os.path.join(content, "Valhalla", "Maps", "L_World.umap"): "world",
         os.path.join(content, "Valhalla", "Maps", "L_World_BuiltData.uasset"): "built",
         os.path.join(content, "Valhalla", "Maps", "Zones", "L_Desert.umap"): "desert",
-        os.path.join(overlays, "desert.json"): "{}",
     }
     for path, text in dummies.items():
         with open(path, "w", encoding="utf-8") as handle:
@@ -334,6 +310,7 @@ def self_check(scratch=None):
 
     marker_file = os.path.join(repo, "maps", MARKER_NAME)
     with open(marker_file, "w", encoding="utf-8") as handle:
+        # A leftover "overlays" key (pre-retirement marker) must be ignored.
         json.dump({"version": 1, "levels": ["/Game/Valhalla/Maps/L_World"],
                    "overlays": ["desert"]}, handle)
 
@@ -342,8 +319,7 @@ def self_check(scratch=None):
     check("object path form matches",
           is_level_protected("/Game/Valhalla/Maps/L_World.L_World", marker))
     check("unlisted level is free", not is_level_protected("/Game/Valhalla/Maps/Zones/L_Desert", marker))
-    check("desert overlay protected", is_overlay_protected("desert", marker))
-    check("new zone overlay free", not is_overlay_protected("tundra", marker))
+    check("an old 'overlays' key is ignored", set(marker) == {"levels", "path", "exists"})
     check("missing marker protects nothing",
           not load_marker(os.path.join(scratch, "nope.json"))["levels"])
 
@@ -360,8 +336,7 @@ def self_check(scratch=None):
     check("level_files finds umap + BuiltData", len(world_files) == 2)
 
     root = os.path.join(scratch, BACKUP_DIR_NAME)
-    first = backup_files(world_files + [overlay_file("desert", overlays)],
-                         backup_root=root, bases=[repo])
+    first = backup_files(world_files, backup_root=root, bases=[repo])
     second = backup_files(world_files, backup_root=root, bases=[repo],
                           stamp=os.path.basename(first["folder"]))
     folder = first["folder"] or ""
@@ -371,8 +346,7 @@ def self_check(scratch=None):
           and len(name) == 15 and name[8] == "-" and name.replace("-", "").isdigit())
     check("relative paths kept", sorted(first["copied"]) == sorted([
         "Valhalla2/Content/Valhalla/Maps/L_World.umap",
-        "Valhalla2/Content/Valhalla/Maps/L_World_BuiltData.uasset",
-        "maps/overlays-2.0/desert.json"]))
+        "Valhalla2/Content/Valhalla/Maps/L_World_BuiltData.uasset"]))
     check("copies are byte-identical", all(
         open(os.path.join(folder, rel), encoding="utf-8").read()
         == open(os.path.join(repo, rel), encoding="utf-8").read() for rel in first["copied"]))
@@ -380,16 +354,14 @@ def self_check(scratch=None):
     check("nothing to copy -> no folder",
           backup_files([os.path.join(scratch, "missing.umap")], backup_root=root)["folder"] is None)
 
-    registered = register(levels=["/Game/Valhalla/Maps/Zones/L_Tundra"],
-                          overlays=["tundra", "desert"], path=marker_file)
+    registered = register(levels=["/Game/Valhalla/Maps/Zones/L_Tundra",
+                                  "/Game/Valhalla/Maps/L_World"], path=marker_file)
     after = load_marker(marker_file)
     check("register adds new entries only",
-          registered["added"] == {"levels": ["/Game/Valhalla/Maps/Zones/L_Tundra"],
-                                  "overlays": ["tundra"]})
+          registered["added"] == {"levels": ["/Game/Valhalla/Maps/Zones/L_Tundra"]})
     check("register keeps existing entries",
           is_level_protected("/Game/Valhalla/Maps/L_World", after)
-          and is_level_protected("/Game/Valhalla/Maps/Zones/L_Tundra", after)
-          and is_overlay_protected("desert", after) and is_overlay_protected("tundra", after))
+          and is_level_protected("/Game/Valhalla/Maps/Zones/L_Tundra", after))
 
     failed = [n for n, ok in checks if not ok]
     report = {"ok": not failed, "passed": len(checks) - len(failed), "failed": failed,

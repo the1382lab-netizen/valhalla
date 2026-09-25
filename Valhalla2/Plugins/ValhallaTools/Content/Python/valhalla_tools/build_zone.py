@@ -5,7 +5,7 @@ rebuild tools in B-19, kept for history); this is the vocabulary they are
 written in, and `scaffold_zone.py` uses the same vocabulary to start a NEW
 zone. Keeping it in one place is what makes the two
 zones structurally identical — same grid, same conventions, same actor
-categories, same overlay — so that a reader comparing them sees only the theme.
+categories — so that a reader comparing them sees only the theme.
 
 ## The grid
 
@@ -16,12 +16,13 @@ defaults and every Tiled map on disk.
 
 **Zone-local coordinates.** Tile `(i, j)` has its centre at
 `(i * 64 + 32, j * 64 + 32)`, so the zone spans `[0, 4096]` on both axes with
-the *minimum corner at the origin*. That is not arbitrary: it makes an overlay
-coordinate — which is zone-local centimetres from the zone volume's min corner
-— numerically identical to a position in this script, and it makes the
-relationship to a 1.0 pixel coordinate the identity. A grid centred on the
-origin, which `build_greybox.py` uses, would have made every overlay number an
-offset nobody could check by eye.
+the *minimum corner at the origin*. That is not arbitrary: it makes a
+zone-local coordinate (centimetres from the zone volume's min corner, which is
+what the admin API and the Live Dashboard use) numerically identical to a
+position in this script, and it makes the relationship to a 1.0 pixel
+coordinate the identity. A grid centred on the origin, which
+`build_greybox.py` uses, would have made every such number an offset nobody
+could check by eye.
 
 A level is authored entirely in zone-local coordinates. `L_Desert` is loaded at
 `+40000` cm on X by the streaming transform, and no line of `build_desert.py`
@@ -91,8 +92,8 @@ def rnd(seed):
     """Deterministic pseudo-random in [0, 1).
 
     The same sine hash `build_greybox.py` uses, for the same reason: the layout
-    has to be byte-identical on every rebuild or the top-down captures and the
-    overlay coordinates drift apart from the level they describe.
+    has to be byte-identical on every rebuild or the top-down captures drift
+    apart from the level they describe.
     """
     value = math.sin(seed * 12.9898) * 43758.5453
     return value - math.floor(value)
@@ -134,10 +135,8 @@ _REPO_FALLBACK = "C:/Users/music/game-project/Valhalla 2.0"
 def repo_root():
     """The 1.0 checkout, derived from `ValhallaDataSettings.DataRoot`.
 
-    One source of truth for where the 1.0 repo is — the same one
-    `UValhallaZoneSubsystem::GetOverlayDirectory` uses on the C++ side, so the
-    directory this writes overlays into is by construction the directory the
-    loader reads them from.
+    One source of truth for where the repo is: the same `DataRoot` setting the
+    C++ side reads its data files from.
     """
     try:
         settings = unreal.get_default_object(unreal.ValhallaDataSettings)
@@ -149,10 +148,6 @@ def repo_root():
         unreal.log_warning("VALHALLA_ZONE could not read DataRoot ({}); using {}".format(
             exc, _REPO_FALLBACK))
     return _REPO_FALLBACK
-
-
-def overlay_dir():
-    return os.path.join(repo_root(), "maps", "overlays-2.0").replace("\\", "/")
 
 
 def thumbs_dir():
@@ -192,7 +187,6 @@ class ZoneBuilder(object):
         self._field_instances = {}
         self._claimed = {}
         self.counts = {}
-        self.overlay_points = []
         self.notes = {}
 
     # ── Assets ──────────────────────────────────────────────────────────
@@ -364,9 +358,9 @@ class ZoneBuilder(object):
         """The zone's box and default spawn.
 
         Placed so the box's *minimum* Z is `FLOOR_TOP`, which is the contract
-        `AValhallaZoneVolume::Extent` documents and the overlay loader relies
-        on: an overlay point's Z comes from `Bounds.Min.Z`, so a tile at
-        zone-local (0, 0) lands on the floor rather than metres under it.
+        `AValhallaZoneVolume::Extent` documents and the admin API relies on: a
+        zone-local point's Z comes from `Bounds.Min.Z`, so a tile at zone-local
+        (0, 0) lands on the floor rather than metres under it.
         """
         zone_cm = self.SIZE_TILES * TILE
         extent = unreal.Vector(zone_cm / 2.0, zone_cm / 2.0, ZONE_EXTENT.z)
@@ -412,14 +406,6 @@ class ZoneBuilder(object):
                 "Gameplay", x, y, FLOOR_TOP + 100.0, yaw=yaw_base + index * 90.0)
             start.set_editor_property("player_start_tag", self.ZONE_ID)
 
-            self.overlay_points.append({
-                "id": "player_spawn_{}_{}".format(self.ZONE_ID, index),
-                "type": "player_spawn",
-                "x": round(x, 1),
-                "y": round(y, 1),
-                "label": "{} spawn {}".format(self.DISPLAY_NAME, index),
-            })
-
     def portal(self, i, j, target_zone, target_entry, label, yaw=0.0):
         x, y = tile_xy(i, j)
         actor = self.place_class(
@@ -439,15 +425,6 @@ class ZoneBuilder(object):
                 unreal.EditorAssetLibrary.load_asset(
                     "/Game/Valhalla/Props/SM_PortalMarker/StaticMeshes/SM_PortalMarker"))
 
-        self.overlay_points.append({
-            "id": "portal_to_{}".format(target_zone),
-            "type": "portal",
-            "x": round(x, 1),
-            "y": round(y, 1),
-            "targetZone": target_zone,
-            "targetEntry": target_entry,
-            "label": label,
-        })
         self.notes["portal"] = [x, y, target_zone, target_entry]
         return actor
 
@@ -459,26 +436,17 @@ class ZoneBuilder(object):
         actor.set_editor_property("entry_id", entry_id)
         actor.set_editor_property("from_zone_id", from_zone)
 
-        self.overlay_points.append({
-            "id": entry_id,
-            "type": "zone_entry",
-            "x": round(x, 1),
-            "y": round(y, 1),
-            "fromZone": from_zone,
-            "label": label,
-        })
         self.notes["entry"] = [x, y, entry_id, from_zone]
         return actor
 
     def enemy_spawn(self, spawn_id, i, j, template_id, count, radius, label):
         """Kept so the zone builders still read as a description of the zone.
 
-        NPCs are no longer overlay data: every NPC comes from an NPC Spawn Point
+        NPCs are placed in Unreal: every NPC comes from an NPC Spawn Point
         (`AValhallaNPCSpawner`) placed in the zone's *gameplay* sublevel,
         `L_<Zone>_Gameplay`, which this builder never touches — so rebuilding
-        the zone keeps every hand-placed spawn. The spawns this call used to
-        write were converted once by `npc_setup.migrate_overlay_spawns`; this
-        records the intent in the build notes and writes nothing.
+        the zone keeps every hand-placed spawn. This records the intent in the
+        build notes and places nothing.
         """
         self.notes.setdefault("legacySpawns", []).append(
             [spawn_id, "enemy_spawn", template_id, count, radius, label])
@@ -494,56 +462,12 @@ class ZoneBuilder(object):
     # two directional lights is a bug that presents as "the shadows are wrong"
     # rather than as an error. `build_world.py` owns all of it.
 
-    # ── Overlay ─────────────────────────────────────────────────────────
-
-    def write_overlay(self):
-        """Write `maps/overlays-2.0/<zone>.json`.
-
-        The level builder writes the overlay because the two have to agree: a
-        portal's overlay coordinate is checked against the portal actor's
-        position by `ValidateOverlayPoint`, and the only way to keep those in
-        step across a rebuild is for one pass to emit both.
-
-        B-05 / B-19: an overlay listed in `maps/handedited.json` is hand-edited
-        and is never overwritten; the skip is recorded in
-        `notes["overlaySkipped"]` and nothing is written.
-        """
-        from valhalla_tools import level_protection
-
-        directory = overlay_dir()
-        path = os.path.join(directory, "{}.json".format(self.ZONE_ID)).replace("\\", "/")
-
-        if level_protection.is_overlay_protected(self.ZONE_ID):
-            message = level_protection.refusal_message(overlays=[self.ZONE_ID])
-            unreal.log_warning("VALHALLA_ZONE " + message)
-            self.notes["overlaySkipped"] = path
-            return None
-
-        if not os.path.isdir(directory):
-            os.makedirs(directory)
-        document = {
-            "version": "2.0",
-            "units": "cm",
-            "zoneId": self.ZONE_ID,
-            "spawnPoints": self.overlay_points,
-        }
-
-        # LF on every platform, as the overlays are committed.
-        with open(path, "w", encoding="utf-8", newline="\n") as handle:
-            json.dump(document, handle, indent=2)
-            handle.write("\n")
-
-        unreal.log("VALHALLA_ZONE wrote {} ({} points)".format(path, len(self.overlay_points)))
-        self.notes["overlay"] = path
-        return path
-
     # ── Report ──────────────────────────────────────────────────────────
 
     def summary(self):
         return {
             "zoneId": self.ZONE_ID,
             "counts": dict(sorted(self.counts.items())),
-            "overlayPoints": len(self.overlay_points),
             "notes": self.notes,
         }
 
@@ -556,6 +480,23 @@ def _current_level_path():
     return level.get_outer().get_path_name().split(".")[0] if level else ""
 
 
+def zone_volume_exists(zone_id):
+    """True when an `AValhallaZoneVolume` with this id is in the loaded levels.
+
+    The levels are the only record of which zones exist (the overlay JSON that
+    once also said so is retired), so this is what "already exists" means.
+    """
+    actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors()
+    for actor in actors:
+        if isinstance(actor, unreal.ValhallaZoneVolume):
+            try:
+                if str(actor.get_editor_property("zone_id")) == zone_id:
+                    return True
+            except Exception:  # noqa: BLE001
+                continue
+    return False
+
+
 def run_builder(builder_cls, target_level, zone_id=None):
     """Run a retired zone builder into the open level — only as a NEW zone.
 
@@ -565,11 +506,11 @@ def run_builder(builder_cls, target_level, zone_id=None):
 
     * the open level is the script's own target (`target_level`), or any level
       listed in `maps/handedited.json` — unconditionally, there is no `force`;
-    * `zone_id` is missing, or is already a listed overlay, an existing
-      `overlays-2.0/<zone_id>.json`, or the builder's original zone id.
+    * `zone_id` is missing, is the builder's original zone id, or already has
+      a zone volume in the loaded levels.
 
     Otherwise it rebuilds the historical layout into the open (new, empty)
-    level under `zone_id`, and writes `overlays-2.0/<zone_id>.json`. That is the
+    level under `zone_id`. That is the
     "recover an old layout" path: create an empty level by hand, open it, and
     run ``build_grasslands.build(zone_id="grasslands_v1")``. Portals still
     point at the original zones; fix them by hand. Prefer
@@ -596,11 +537,10 @@ def run_builder(builder_cls, target_level, zone_id=None):
         return refuse("refused: {} is retired (B-19) and only builds its layout as a NEW "
                       "zone id, e.g. build(zone_id=\"{}_v1\"); use "
                       "ValhallaLevelTools.scaffold_zone for a new zone".format(
-                          builder_cls.__name__, original), overlays=[original])
-    if (level_protection.is_overlay_protected(zone_id, marker)
-            or os.path.isfile(level_protection.overlay_file(zone_id))):
-        return refuse("refused: overlay overlays-2.0/{}.json already exists or is listed in "
-                      "{}".format(zone_id, marker["path"]), overlays=[zone_id])
+                          builder_cls.__name__, original), zones=[original])
+    if zone_volume_exists(zone_id):
+        return refuse("refused: a zone volume for {!r} already exists in the loaded "
+                      "levels".format(zone_id), zones=[zone_id])
 
     renamed = type(builder_cls.__name__ + "_" + zone_id, (builder_cls,), {"ZONE_ID": zone_id})
     return renamed().build()

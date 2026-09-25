@@ -7,13 +7,18 @@ Writes ``maps/unreal-refs.json`` (repo root) with:
 * every NPC Type (``BP_NPC_*`` under /Game/Valhalla/NPCs) and its Default
   Template Id, and
 * every NPC Spawn Point (``AValhallaNPCSpawner``) in the levels currently
-  loaded in the editor, with its NPC Type and Template Override.
+  loaded in the editor, with its NPC Type and Template Override, and
+* every zone actor in those levels: zone volumes (``AValhallaZoneVolume``),
+  portals (``AValhallaPortal``), zone entries (``AValhallaZoneEntry``) and
+  player starts (``APlayerStart`` and its tag). Unreal is the only source of
+  truth for these; the old ``maps/overlays-2.0`` JSON is retired.
 
 ``npm run validate`` (and the web editor) then check those against
-npc-templates.json. Open ``L_World`` first so the gameplay sublevels are
+npc-templates.json and zones.json. Open ``L_World`` first so the gameplay sublevels are
 loaded; the file lists which levels were read, and spawn points in levels
 that weren't loaded are simply not in it. Re-run after changing NPC Types or
-spawn points, and commit the file with them.
+spawn points, portals, zone entries or player starts, and commit the file
+with them.
 """
 
 import datetime
@@ -73,13 +78,30 @@ def _class_asset_name(cls):
     return name[:-2] if name.endswith("_C") else name
 
 
-def _spawn_points():
+def _name(value):
+    """An FName property as text, '' for None / NAME_None."""
+    return str(value) if value is not None and str(value) != "None" else ""
+
+
+def _level_actors():
+    """Every actor in the loaded levels, collected once for all the lists below."""
     actors = unreal.get_editor_subsystem(unreal.EditorActorSubsystem).get_all_level_actors()
-    points, levels = [], set()
+    out, levels = [], set()
     for actor in actors:
         level = actor.get_level()
         level_name = level.get_outer().get_name() if level and level.get_outer() else "?"
         levels.add(level_name)
+        out.append((level_name, actor))
+    return out, sorted(levels)
+
+
+def _by_level(rows):
+    return sorted(rows, key=lambda r: (r["level"], r["name"]))
+
+
+def _spawn_points(actors):
+    points = []
+    for level_name, actor in actors:
         if not isinstance(actor, unreal.ValhallaNPCSpawner):
             continue
         template = _prop(actor, "template_id", "TemplateId")
@@ -87,25 +109,55 @@ def _spawn_points():
             "level": level_name,
             "name": actor.get_actor_label(),
             "npcType": _class_asset_name(_prop(actor, "npc_class", "NPCClass")),
-            "templateOverride": str(template) if template and str(template) != "None" else "",
+            "templateOverride": _name(template),
         })
-    return sorted(points, key=lambda p: (p["level"], p["name"])), sorted(levels)
+    return _by_level(points)
+
+
+def _zone_actors(actors):
+    """Zone volumes, portals, zone entries and player starts."""
+    volumes, portals, entries, starts = [], [], [], []
+    for level_name, actor in actors:
+        row = {"level": level_name, "name": actor.get_actor_label()}
+        if isinstance(actor, unreal.ValhallaZoneVolume):
+            row["zoneId"] = _name(_prop(actor, "zone_id", "ZoneId"))
+            volumes.append(row)
+        elif isinstance(actor, unreal.ValhallaPortal):
+            row["targetZoneId"] = _name(_prop(actor, "target_zone_id", "TargetZoneId"))
+            row["targetEntryId"] = _name(_prop(actor, "target_entry_id", "TargetEntryId"))
+            portals.append(row)
+        elif isinstance(actor, unreal.ValhallaZoneEntry):
+            row["entryId"] = _name(_prop(actor, "entry_id", "EntryId"))
+            row["fromZoneId"] = _name(_prop(actor, "from_zone_id", "FromZoneId"))
+            entries.append(row)
+        elif isinstance(actor, unreal.PlayerStart):
+            row["tag"] = _name(_prop(actor, "player_start_tag", "PlayerStartTag"))
+            starts.append(row)
+    return _by_level(volumes), _by_level(portals), _by_level(entries), _by_level(starts)
 
 
 def run():
     types = _npc_types()
-    points, levels = _spawn_points()
+    actors, levels = _level_actors()
+    points = _spawn_points(actors)
+    volumes, portals, entries, starts = _zone_actors(actors)
     doc = {
         "generatedAt": datetime.datetime.now().isoformat(timespec="seconds"),
         "levels": levels,
         "npcTypes": types,
         "spawnPoints": points,
+        "zoneVolumes": volumes,
+        "portals": portals,
+        "zoneEntries": entries,
+        "playerStarts": starts,
     }
     path = os.path.join(_repo_root(), "maps", "unreal-refs.json")
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
-    _log("wrote {}: {} NPC types, {} spawn points from {} level(s)".format(path, len(types), len(points), len(levels)))
+    _log("wrote {}: {} NPC types, {} spawn points, {} zone volumes, {} portals, {} zone entries, {} player starts "
+         "from {} level(s)".format(path, len(types), len(points), len(volumes), len(portals), len(entries),
+                                   len(starts), len(levels)))
     return doc
 
 

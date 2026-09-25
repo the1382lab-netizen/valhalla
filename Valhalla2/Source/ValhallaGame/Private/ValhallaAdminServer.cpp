@@ -10,6 +10,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameSession.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerStart.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/GameInstance.h"
 #include "GameFramework/GameStateBase.h"
@@ -26,6 +27,8 @@
 #include "ValhallaNPC.h"
 #include "ValhallaNPCSpawner.h"
 #include "ValhallaPlayerState.h"
+#include "ValhallaPortal.h"
+#include "ValhallaZoneEntry.h"
 #include "ValhallaTypes.h"
 #include "ValhallaZoneSubsystem.h"
 #include "ValhallaCharacter.h"
@@ -358,7 +361,6 @@ void UValhallaAdminServer::Start()
 	BindRoute(TEXT("/delete-npc"),       Post, &UValhallaAdminServer::HandleDeleteNpc);
 
 	// ── 2.0 only: the two the editor loop needs ──────────────────────────
-	BindRoute(TEXT("/reload-overlays"),  Post, &UValhallaAdminServer::HandleReloadOverlays);
 	BindRoute(TEXT("/reload-data"),      Post, &UValhallaAdminServer::HandleReloadData);
 
 	// ── 2.0 only: MMO admin actions ───────────────────────────────────────
@@ -457,10 +459,20 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 	const TArray<FValhallaZoneDef>& Zones = ZoneSubsystem->GetZones();
 
 	// Every discovered zone gets an entry up front — see the header comment on
-	// why this is one deliberate difference from `admin.ts`.
+	// why this is one deliberate difference from `admin.ts` — carrying the
+	// volume's own facts, so the dashboard reads the zone's size and default
+	// spawn from the level rather than from a copy of them.
 	for (const FValhallaZoneDef& Zone : Zones)
 	{
-		OutSnapshot.Zones.FindOrAdd(Zone.ZoneId.ToString());
+		FValhallaAdminZoneSnapshot& Entry = OutSnapshot.Zones.FindOrAdd(Zone.ZoneId.ToString());
+		Entry.bHasZoneInfo = true;
+		Entry.DisplayName = Zone.DisplayName;
+		Entry.Width = Zone.Bounds.Max.X - Zone.Bounds.Min.X;
+		Entry.Height = Zone.Bounds.Max.Y - Zone.Bounds.Min.Y;
+		const FVector2D Spawn = ToZoneLocalCm(Zone, Zone.DefaultSpawn);
+		Entry.DefaultSpawnX = Spawn.X;
+		Entry.DefaultSpawnY = Spawn.Y;
+		Entry.DefaultSpawnYaw = Zone.DefaultSpawnYaw;
 	}
 
 	/** The zone a world point is in, as a key into OutSnapshot.Zones. */
@@ -612,6 +624,69 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 		OutSnapshot.Zones.FindOrAdd(ZoneKey).SpawnPoints.Add(MoveTemp(Info));
 	}
 
+	// ── Portals, zone entries, player starts ─────────────────────────────
+	//
+	// The level is the only source of truth for these (the overlay JSON that
+	// once duplicated them is gone), so the dashboard draws them from here.
+	for (TActorIterator<AValhallaPortal> It(World); It; ++It)
+	{
+		const AValhallaPortal* Portal = *It;
+		const FVector Location = Portal->GetActorLocation();
+		const FString ZoneKey = ZoneKeyAt(Location);
+		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
+
+		FValhallaAdminPortalInfo Info;
+		Info.Id = AdminActorId(Portal);
+#if WITH_EDITOR
+		Info.Label = Portal->GetActorLabel();
+#endif
+		if (Info.Label.IsEmpty())
+		{
+			Info.Label = Info.Id;
+		}
+		Info.X = Local.X;
+		Info.Y = Local.Y;
+		Info.TargetZoneId = Portal->TargetZoneId.IsNone() ? FString() : Portal->TargetZoneId.ToString();
+		Info.TargetEntryId = Portal->TargetEntryId.IsNone() ? FString() : Portal->TargetEntryId.ToString();
+
+		OutSnapshot.Zones.FindOrAdd(ZoneKey).Portals.Add(MoveTemp(Info));
+	}
+
+	for (TActorIterator<AValhallaZoneEntry> It(World); It; ++It)
+	{
+		const AValhallaZoneEntry* Entry = *It;
+		const FVector Location = Entry->GetActorLocation();
+		const FString ZoneKey = ZoneKeyAt(Location);
+		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
+
+		FValhallaAdminZoneEntryInfo Info;
+		Info.Id = AdminActorId(Entry);
+		Info.EntryId = Entry->EntryId.IsNone() ? FString() : Entry->EntryId.ToString();
+		Info.FromZoneId = Entry->FromZoneId.IsNone() ? FString() : Entry->FromZoneId.ToString();
+		Info.X = Local.X;
+		Info.Y = Local.Y;
+		Info.Yaw = Entry->GetActorRotation().Yaw;
+
+		OutSnapshot.Zones.FindOrAdd(ZoneKey).ZoneEntries.Add(MoveTemp(Info));
+	}
+
+	for (TActorIterator<APlayerStart> It(World); It; ++It)
+	{
+		const APlayerStart* Start = *It;
+		const FVector Location = Start->GetActorLocation();
+		const FString ZoneKey = ZoneKeyAt(Location);
+		const FVector2D Local = LocalFor(FName(*ZoneKey), Location);
+
+		FValhallaAdminPlayerStartInfo Info;
+		Info.Id = AdminActorId(Start);
+		Info.Tag = Start->PlayerStartTag.IsNone() ? FString() : Start->PlayerStartTag.ToString();
+		Info.X = Local.X;
+		Info.Y = Local.Y;
+		Info.Yaw = Start->GetActorRotation().Yaw;
+
+		OutSnapshot.Zones.FindOrAdd(ZoneKey).PlayerStarts.Add(MoveTemp(Info));
+	}
+
 	// ── Loot bags ────────────────────────────────────────────────────────
 	for (TActorIterator<AValhallaLootBag> It(World); It; ++It)
 	{
@@ -745,6 +820,61 @@ TSharedRef<FJsonObject> UValhallaAdminServer::BuildStateJson(const FValhallaAdmi
 			SpawnPointsJson.Add(MakeShared<FJsonValueObject>(Obj));
 		}
 		ZoneJson->SetArrayField(TEXT("spawnPoints"), SpawnPointsJson);
+
+		TArray<TSharedPtr<FJsonValue>> PortalsJson;
+		for (const FValhallaAdminPortalInfo& Portal : Zone.Portals)
+		{
+			const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("id"),            Portal.Id);
+			Obj->SetStringField(TEXT("label"),         Portal.Label);
+			Obj->SetNumberField(TEXT("x"),             Round(Portal.X));
+			Obj->SetNumberField(TEXT("y"),             Round(Portal.Y));
+			Obj->SetStringField(TEXT("targetZoneId"),  Portal.TargetZoneId);
+			Obj->SetStringField(TEXT("targetEntryId"), Portal.TargetEntryId);
+			PortalsJson.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+		ZoneJson->SetArrayField(TEXT("portals"), PortalsJson);
+
+		TArray<TSharedPtr<FJsonValue>> EntriesJson;
+		for (const FValhallaAdminZoneEntryInfo& Entry : Zone.ZoneEntries)
+		{
+			const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("id"),         Entry.Id);
+			Obj->SetStringField(TEXT("entryId"),    Entry.EntryId);
+			Obj->SetStringField(TEXT("fromZoneId"), Entry.FromZoneId);
+			Obj->SetNumberField(TEXT("x"),          Round(Entry.X));
+			Obj->SetNumberField(TEXT("y"),          Round(Entry.Y));
+			Obj->SetNumberField(TEXT("yaw"),        Round(Entry.Yaw));
+			EntriesJson.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+		ZoneJson->SetArrayField(TEXT("zoneEntries"), EntriesJson);
+
+		TArray<TSharedPtr<FJsonValue>> StartsJson;
+		for (const FValhallaAdminPlayerStartInfo& Start : Zone.PlayerStarts)
+		{
+			const TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+			Obj->SetStringField(TEXT("id"),  Start.Id);
+			Obj->SetStringField(TEXT("tag"), Start.Tag);
+			Obj->SetNumberField(TEXT("x"),   Round(Start.X));
+			Obj->SetNumberField(TEXT("y"),   Round(Start.Y));
+			Obj->SetNumberField(TEXT("yaw"), Round(Start.Yaw));
+			StartsJson.Add(MakeShared<FJsonValueObject>(Obj));
+		}
+		ZoneJson->SetArrayField(TEXT("playerStarts"), StartsJson);
+
+		if (Zone.bHasZoneInfo)
+		{
+			const TSharedRef<FJsonObject> Info = MakeShared<FJsonObject>();
+			Info->SetStringField(TEXT("displayName"), Zone.DisplayName);
+			Info->SetNumberField(TEXT("width"),  Round(Zone.Width));
+			Info->SetNumberField(TEXT("height"), Round(Zone.Height));
+			const TSharedRef<FJsonObject> Spawn = MakeShared<FJsonObject>();
+			Spawn->SetNumberField(TEXT("x"),   Round(Zone.DefaultSpawnX));
+			Spawn->SetNumberField(TEXT("y"),   Round(Zone.DefaultSpawnY));
+			Spawn->SetNumberField(TEXT("yaw"), Round(Zone.DefaultSpawnYaw));
+			Info->SetObjectField(TEXT("defaultSpawn"), Spawn);
+			ZoneJson->SetObjectField(TEXT("zone"), Info);
+		}
 
 		TotalPlayers  += Zone.Players.Num();
 		TotalNpcs     += Zone.Npcs.Num();
@@ -1042,13 +1172,12 @@ bool UValhallaAdminServer::HandleSpawnNpc(const FHttpServerRequest& Request, con
 	const FVector Location = FromZoneLocalCm(*Zone, X, Y, PlacementZOffsetCm);
 
 	// Spawned through an AValhallaNPCSpawner rather than as a bare NPC, and
-	// deferred for the reason UValhallaZoneSubsystem::SpawnFromOverlayPoint
-	// documents at length: the spawner reads TemplateId in BeginPlay, and a
-	// non-deferred spawn into a world that has already begun play dispatches
-	// BeginPlay before we can set it.
+	// deferred: the spawner reads TemplateId in BeginPlay, and a non-deferred
+	// spawn into a world that has already begun play dispatches BeginPlay
+	// before we can set it.
 	//
 	// The spawner is what gives the NPC a home point, so an admin-placed enemy
-	// leashes and respawns exactly like an overlay-placed one. 1.0's
+	// leashes exactly like one from an NPC Spawn Point placed in the level. 1.0's
 	// `registerAdminNPC` did the same thing for the same reason.
 	const FTransform SpawnTransform(FRotator::ZeroRotator, Location);
 	AValhallaNPCSpawner* Spawner = Context.World->SpawnActorDeferred<AValhallaNPCSpawner>(
@@ -1414,41 +1543,6 @@ bool UValhallaAdminServer::HandleDeleteNpc(const FHttpServerRequest& Request, co
 	UE_LOG(LogValhallaAdmin, Log, TEXT("delete-npc: %s ('%s') destroyed"), *NpcId, *DisplayName);
 
 	OnComplete(MakeOkResponse());
-	return true;
-}
-
-bool UValhallaAdminServer::HandleReloadOverlays(const FHttpServerRequest& /*Request*/, const FHttpResultCallback& OnComplete)
-{
-	FAdminContext Context;
-	if (!ResolveContext(this, Context, OnComplete))
-	{
-		return true;
-	}
-
-	if (!Context.Zones)
-	{
-		OnComplete(MakeErrorResponse(EHttpServerResponseCodes::ServerError, TEXT("No zone subsystem in this world")));
-		return true;
-	}
-
-	// Exactly what `valhalla.ReloadOverlays` runs. The console command and the
-	// route are two front doors onto one function on purpose — a designer in
-	// the editor and a designer in the browser must not be able to reach two
-	// different behaviours.
-	Context.Zones->ReloadOverlays();
-
-	const TSharedRef<FJsonObject> Counts = MakeShared<FJsonObject>();
-	Counts->SetNumberField(TEXT("zones"), Context.Zones->GetZones().Num());
-	Counts->SetNumberField(TEXT("spawners"), Context.Zones->GetSpawnedSpawnerCount());
-
-	const TSharedRef<FJsonObject> Json = MakeShared<FJsonObject>();
-	Json->SetBoolField(TEXT("ok"), true);
-	Json->SetObjectField(TEXT("counts"), Counts);
-
-	UE_LOG(LogValhallaAdmin, Log, TEXT("reload-overlays: %d zones, %d spawners."),
-		Context.Zones->GetZones().Num(), Context.Zones->GetSpawnedSpawnerCount());
-
-	OnComplete(MakeJsonResponse(Json, EHttpServerResponseCodes::Ok));
 	return true;
 }
 

@@ -15,14 +15,15 @@ same conventions (zone-local coordinates with the min corner at the origin,
   centre), an `AValhallaFogBounds` hugging the zone, and four `PlayerStart`s
   tagged with the zone id;
 * `/Game/Valhalla/Maps/Zones/L_<ZoneId>_Gameplay`: empty, the project's home
-  for hand-placed NPC Spawn Points (see `npc_setup.py`);
-* `<repo>/maps/overlays-2.0/<zone_id>.json`: the four player spawns;
+  for hand-placed NPC Spawn Points (see `npc_setup.py`), portals and zone
+  entries;
 
-and registers both levels and the overlay in `maps/handedited.json` as soon as
-each exists, so nothing regenerates them afterwards.
+and registers both levels in `maps/handedited.json` as soon as each exists, so
+nothing regenerates them afterwards. The levels are the only record of the
+zone's portals, entries and starts (there is no overlay JSON any more).
 
-It **refuses** — creates nothing — if either level, the overlay file, or a
-marker entry for any of them already exists, or if a map is unsaved (creating
+It **refuses** — creates nothing — if either level, a marker entry for either,
+or a zone volume with this id already exists, or if a map is unsaved (creating
 a level would otherwise prompt to save it). There is no `force`.
 
 It does **not** add the zone to `L_World`. That is a hand step in the editor:
@@ -39,7 +40,7 @@ import re
 import unreal
 
 from valhalla_tools import level_protection
-from valhalla_tools.build_zone import FLOOR_TOP, TILE, ZoneBuilder, rnd, tile_xy
+from valhalla_tools.build_zone import FLOOR_TOP, TILE, ZoneBuilder, rnd, tile_xy, zone_volume_exists
 
 ZONES_FOLDER = "/Game/Valhalla/Maps/Zones"
 
@@ -120,11 +121,8 @@ def refusals(zone_id, theme, size_tiles):
             reasons.append("level {} already exists".format(level_path))
         if level_protection.is_level_protected(level_path, marker):
             reasons.append("level {} is listed in {}".format(level_path, marker["path"]))
-    overlay = level_protection.overlay_file(zone_id)
-    if os.path.isfile(overlay):
-        reasons.append("overlay {} already exists".format(overlay))
-    if level_protection.is_overlay_protected(zone_id, marker):
-        reasons.append("overlay {!r} is listed in {}".format(zone_id, marker["path"]))
+    if zone_volume_exists(zone_id):
+        reasons.append("a zone volume for {!r} already exists in the loaded levels".format(zone_id))
     return reasons
 
 
@@ -175,12 +173,12 @@ def _new_level(level_path):
 
 
 def scaffold(zone_id, theme="grassland", size_tiles=64):
-    """Create a new zone's two levels and its overlay. See the module docstring.
+    """Create a new zone's two levels. See the module docstring.
 
     Returns:
         On refusal ``{"ok": False, "refused": [reasons], "zoneId": ...}`` with
         nothing created. Otherwise ``{"ok": True, "zoneId", "theme",
-        "sizeTiles", "sizeCm", "level", "gameplayLevel", "overlay", "marker",
+        "sizeTiles", "sizeCm", "level", "gameplayLevel", "marker",
         "registered", "counts", "notes", "reopened", "nextSteps"}``.
     """
     reasons = refusals(zone_id, theme, size_tiles)
@@ -204,7 +202,7 @@ def scaffold(zone_id, theme="grassland", size_tiles=64):
     })
 
     previous = _current_level_path()
-    registered = {"levels": [], "overlays": []}
+    registered = {"levels": []}
     result = {"ok": True, "zoneId": zone_id, "theme": theme, "sizeTiles": size_tiles,
               "sizeCm": size_tiles * TILE, "level": level_path,
               "gameplayLevel": gameplay_path}
@@ -223,13 +221,7 @@ def scaffold(zone_id, theme="grassland", size_tiles=64):
             levels=[gameplay_path])["added"]["levels"]
         _log("created {}".format(gameplay_path))
 
-        overlay = builder.write_overlay()
-        if not overlay:
-            raise RuntimeError("overlay for {} was not written".format(zone_id))
-        marker = level_protection.register(overlays=[zone_id])
-        registered["overlays"] += marker["added"]["overlays"]
-
-        result.update(overlay=overlay, marker=marker["path"], counts=summary["counts"],
+        result.update(marker=level_protection.marker_path(), counts=summary["counts"],
                       notes=summary["notes"])
     except Exception:
         # Whatever was created is already registered, so it is protected and a

@@ -53,9 +53,9 @@ namespace ValhallaAdminTests
 	/**
 	 * A snapshot with one of everything and one empty zone.
 	 *
-	 * Hand-built rather than captured from a running server, for the reason the
-	 * Phase 3 overlay sample is inline: a fixture taken from the world would be
-	 * a test of whatever the world happened to contain that day. This is the
+	 * Hand-built rather than captured from a running server: a fixture taken
+	 * from the world would be a test of whatever the world happened to contain
+	 * that day. This is the
 	 * shape, and the shape is what `AdminDashboard.tsx` was written against.
 	 *
 	 * The fractional values are deliberate — 1.0 put every coordinate and vital
@@ -124,6 +124,41 @@ namespace ValhallaAdminTests
 		Point.NpcId = TEXT("ValhallaNPC_2");
 		Point.bNpcAlive = false;
 		Grasslands.SpawnPoints.Add(Point);
+
+		// The zone volume's facts and the three kinds of placed zone actor
+		// the dashboard draws from the level.
+		Grasslands.bHasZoneInfo = true;
+		Grasslands.DisplayName = TEXT("Grasslands");
+		Grasslands.Width = 4096.0;
+		Grasslands.Height = 4096.0;
+		Grasslands.DefaultSpawnX = 2048.4;
+		Grasslands.DefaultSpawnY = 2048.0;
+		Grasslands.DefaultSpawnYaw = 90.0;
+
+		FValhallaAdminPortalInfo Portal;
+		Portal.Id = TEXT("L_Grasslands_Gameplay.ValhallaPortal_0");
+		Portal.Label = TEXT("Portal to Desert");
+		Portal.X = 3968.6;
+		Portal.Y = 2048.0;
+		Portal.TargetZoneId = TEXT("desert");
+		Portal.TargetEntryId = TEXT("entry_from_grasslands");
+		Grasslands.Portals.Add(Portal);
+
+		FValhallaAdminZoneEntryInfo Entry;
+		Entry.Id = TEXT("L_Grasslands_Gameplay.ValhallaZoneEntry_0");
+		Entry.EntryId = TEXT("entry_from_desert");
+		Entry.FromZoneId = TEXT("desert");
+		Entry.X = 3700.0;
+		Entry.Y = 2048.0;
+		Entry.Yaw = 180.0;
+		Grasslands.ZoneEntries.Add(Entry);
+
+		FValhallaAdminPlayerStartInfo Start;
+		Start.Id = TEXT("L_Grasslands.PlayerStart_0");
+		Start.Tag = TEXT("grasslands");
+		Start.X = 608.0;
+		Start.Y = 800.0;
+		Grasslands.PlayerStarts.Add(Start);
 
 		Snapshot.Zones.Add(TEXT("grasslands"), Grasslands);
 
@@ -219,7 +254,54 @@ bool FValhallaAdminStateJsonTest::RunTest(const FString& /*Parameters*/)
 	const TSharedPtr<FJsonObject>* Grasslands = GetObject(*this, *Zones, TEXT("grasslands"));
 	if (!Grasslands) { return false; }
 
-	CheckKeys(*this, *Grasslands, TEXT("a zone"), { TEXT("players"), TEXT("npcs"), TEXT("lootBags"), TEXT("spawnPoints") });
+	CheckKeys(*this, *Grasslands, TEXT("a zone"), { TEXT("players"), TEXT("npcs"), TEXT("lootBags"), TEXT("spawnPoints"),
+		TEXT("portals"), TEXT("zoneEntries"), TEXT("playerStarts"), TEXT("zone") });
+
+	// ── Placed zone actors (the level is their only source of truth) ─────
+	if (const TSharedPtr<FJsonObject>* ZoneInfo = GetObject(*this, *Grasslands, TEXT("zone")))
+	{
+		CheckKeys(*this, *ZoneInfo, TEXT("zone info"), { TEXT("displayName"), TEXT("width"), TEXT("height"), TEXT("defaultSpawn") });
+		if (const TSharedPtr<FJsonObject>* Spawn = GetObject(*this, *ZoneInfo, TEXT("defaultSpawn")))
+		{
+			double SpawnX = 0.0;
+			(*Spawn)->TryGetNumberField(TEXT("x"), SpawnX);
+			TestEqual(TEXT("defaultSpawn x is rounded"), SpawnX, 2048.0);
+		}
+	}
+	if (const TArray<TSharedPtr<FJsonValue>>* Portals = GetArray(*this, *Grasslands, TEXT("portals")))
+	{
+		TestEqual(TEXT("one portal"), Portals->Num(), 1);
+		if (Portals->Num() == 1)
+		{
+			const TSharedPtr<FJsonObject>& PortalObj = (*Portals)[0]->AsObject();
+			CheckKeys(*this, PortalObj, TEXT("a portal"),
+				{ TEXT("id"), TEXT("label"), TEXT("x"), TEXT("y"), TEXT("targetZoneId"), TEXT("targetEntryId") });
+			double PortalX = 0.0;
+			PortalObj->TryGetNumberField(TEXT("x"), PortalX);
+			TestEqual(TEXT("portal x is rounded"), PortalX, 3969.0);
+			FString TargetEntry;
+			PortalObj->TryGetStringField(TEXT("targetEntryId"), TargetEntry);
+			TestEqual(TEXT("portal targetEntryId"), TargetEntry, FString(TEXT("entry_from_grasslands")));
+		}
+	}
+	if (const TArray<TSharedPtr<FJsonValue>>* Entries = GetArray(*this, *Grasslands, TEXT("zoneEntries")))
+	{
+		TestEqual(TEXT("one zone entry"), Entries->Num(), 1);
+		if (Entries->Num() == 1)
+		{
+			CheckKeys(*this, (*Entries)[0]->AsObject(), TEXT("a zone entry"),
+				{ TEXT("id"), TEXT("entryId"), TEXT("fromZoneId"), TEXT("x"), TEXT("y"), TEXT("yaw") });
+		}
+	}
+	if (const TArray<TSharedPtr<FJsonValue>>* Starts = GetArray(*this, *Grasslands, TEXT("playerStarts")))
+	{
+		TestEqual(TEXT("one player start"), Starts->Num(), 1);
+		if (Starts->Num() == 1)
+		{
+			CheckKeys(*this, (*Starts)[0]->AsObject(), TEXT("a player start"),
+				{ TEXT("id"), TEXT("tag"), TEXT("x"), TEXT("y"), TEXT("yaw") });
+		}
+	}
 
 	// ── A spawn point entry (2.0 only) ───────────────────────────────────
 	if (const TArray<TSharedPtr<FJsonValue>>* Points = GetArray(*this, *Grasslands, TEXT("spawnPoints")))
@@ -248,6 +330,8 @@ bool FValhallaAdminStateJsonTest::RunTest(const FString& /*Parameters*/)
 		TestTrue(TEXT("an empty zone's npcs is an empty array, not absent"), EmptyNpcs && EmptyNpcs->Num() == 0);
 		TestTrue(TEXT("an empty zone has players"), (*Desert)->HasField(TEXT("players")));
 		TestTrue(TEXT("an empty zone has lootBags"), (*Desert)->HasField(TEXT("lootBags")));
+		TestTrue(TEXT("an empty zone has portals"), (*Desert)->HasField(TEXT("portals")));
+		TestFalse(TEXT("a snapshot with no volume facts has no zone object"), (*Desert)->HasField(TEXT("zone")));
 	}
 
 	// ── A player entry ───────────────────────────────────────────────────

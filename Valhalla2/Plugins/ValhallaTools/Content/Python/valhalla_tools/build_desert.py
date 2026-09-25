@@ -1,4 +1,4 @@
-"""Build `/Game/Valhalla/Maps/Zones/L_Desert` from scratch, and its overlay — RETIRED.
+"""Build `/Game/Valhalla/Maps/Zones/L_Desert` from scratch — RETIRED.
 
 **B-19: this no longer runs against `L_Desert`.** The zone is hand-edited now;
 `build()` refuses its own target level unconditionally (no `force`) and only
@@ -231,8 +231,8 @@ class Desert(ZoneBuilder):
 
         The gaps are chosen by the same seeded hash the rest of the zone uses,
         so the ruin is in the same places on every rebuild — which matters
-        because the top-down capture and the overlay are generated from this
-        level and would otherwise describe a different one.
+        because the top-down capture is generated from this level and would
+        otherwise describe a different one.
         """
         gaps = set()
 
@@ -449,8 +449,6 @@ class Desert(ZoneBuilder):
         for spawn_id, i, j, count, radius, label in groups:
             self.enemy_spawn(spawn_id, i, j, FIRST_TEMPLATE, count, radius, label)
 
-        self.write_overlay()
-
 
 #: The builder class (history; `build_world.build_zone_level` no longer rebuilds existing zones).
 BUILDER = Desert
@@ -462,11 +460,10 @@ def build(zone_id=None):
     Refuses unconditionally — places nothing, writes nothing, returns
     ``{"ok": False, "refused": ...}`` — when the open level is ``L_Desert`` or
     any level in ``maps/handedited.json``, and when ``zone_id`` is missing,
-    ``"desert"``, or an overlay that already exists. There is no ``force``.
+    ``"desert"``, or a zone that already has a zone volume. There is no ``force``.
 
     With a new ``zone_id`` and a new, empty level open (create it by hand), it
-    lays out the historical desert there and writes
-    ``overlays-2.0/<zone_id>.json``; see ``build_zone.run_builder``. For a new
+    lays out the historical desert there; see ``build_zone.run_builder``. For a new
     zone use ``ValhallaLevelTools.scaffold_zone`` instead. To get the
     hand-edited ``L_Desert`` back as it was, use git history for the ``.umap`` or
     ``Valhalla2/Saved/LevelBackups/<timestamp>/``.

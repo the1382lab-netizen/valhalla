@@ -23,9 +23,9 @@ class UBoxComponent;
  *
  *   - `UValhallaZoneSubsystem` builds its `FValhallaZoneDef` list from these,
  *     which makes `GetZoneAt` a box test and `PlayerState::ZoneId` a lookup.
- *   - The overlay loader treats `Box->Bounds.Min` as the zone's origin, so an
- *     overlay coordinate is zone-local centimetres and survives the level
- *     being moved.
+ *   - The admin API (`GET /api/admin/state`) and the Live Dashboard treat
+ *     `Box->Bounds.Min` as the zone's origin, so a zone-local coordinate is
+ *     centimetres from it and survives the level being moved.
  *   - `AValhallaFogRenderer` stretches its masks over the box of whichever
  *     zone the pawn is in. A zone volume therefore *replaces*
  *     `AValhallaFogBounds` for a level that has one, which is why
@@ -65,12 +65,12 @@ public:
 	 *
 	 * A 64 x 64 tile zone is 4096 cm square, so the half-size is 2048.
 	 *
-	 * The box's **minimum Z is the zone floor**, and the overlay loader relies
-	 * on it: an overlay coordinate is (x, y) only, and the Z it gets is
+	 * The box's **minimum Z is the zone floor**, and the admin API relies on
+	 * it: a zone-local coordinate is (x, y) only, and the Z it gets is
 	 * `Bounds.Min.Z`. So a builder places the volume at
 	 * `z = FLOOR_TOP + Extent.Z`, which puts the bottom face exactly on the
-	 * floor tiles' top surface and makes an overlay point at (0, 0) land on the
-	 * zone's south-west corner tile rather than several metres under it.
+	 * floor tiles' top surface and makes a point at (0, 0) land on the zone's
+	 * south-west corner tile rather than several metres under it.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Valhalla|Zones")
 	FVector Extent = FVector(2048.f, 2048.f, 500.f);

@@ -14,15 +14,20 @@ start "" "%UE_EXE%" "%PROJ%" 127.0.0.1?class=cleric?charname=BotCleric -game -nu
 start "" "%UE_EXE%" "%PROJ%" 127.0.0.1?class=ranger?charname=BotRanger -game -nullrhi -nosound -log=PerfBotC.log
 start "" "%UE_EXE%" "%PROJ%" 127.0.0.1?class=shaman?charname=BotShaman -game -nullrhi -nosound -log=PerfBotD.log
 timeout /t 5 /nobreak >nul
-set "CLIENT=%CLIENT_EXE%"
-if "%CLIENT%"=="" (set "CLIENT_ARGS="%PROJ%" 127.0.0.1?class=warrior?charname=Warrior -game") else (set "CLIENT_ARGS=127.0.0.1?class=warrior?charname=Warrior")
-if "%CLIENT%"=="" set "CLIENT=%UE_EXE%"
-"%CLIENT%" %CLIENT_ARGS% -windowed -resx=1920 -resy=1080 -nosound -csvCaptureFrames=9000 -ExitAfterCsvProfiling -trace=cpu,frame,bookmark "-tracefile=%PERF_OUT%\combat_client.utrace" "-ExecCmds=r.VSync 0,t.MaxFPS 0" -log=PerfClient.log
+set "CLIENT_COMMON=-windowed -resx=1920 -resy=1080 -nosound -csvCaptureFrames=9000 -ExitAfterCsvProfiling -trace=cpu,frame,bookmark"
+if defined CLIENT_EXE goto :packaged
+"%UE_EXE%" "%PROJ%" 127.0.0.1?class=warrior?charname=Warrior -game %CLIENT_COMMON% "-tracefile=%PERF_OUT%\combat_client.utrace" "-ExecCmds=r.VSync 0,t.MaxFPS 0" %CLIENT_EXTRA% -log=PerfClient.log
+goto :clientdone
+:packaged
+"%CLIENT_EXE%" 127.0.0.1?class=warrior?charname=Warrior %CLIENT_COMMON% "-tracefile=%PERF_OUT%\combat_client.utrace" "-ExecCmds=r.VSync 0,t.MaxFPS 0" %CLIENT_EXTRA% -log=PerfClient.log
+:clientdone
+set "CLIENT_SAVED=%ENGINE_SAVED%"
+if defined CLIENT_EXE for %%I in ("%CLIENT_EXE%") do set "CLIENT_SAVED=%%~dpIValhalla2\Saved"
 timeout /t 5 /nobreak >nul
 rem Stop the server and the bots (matched by their log names, so no other Unreal is touched).
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='UnrealEditor.exe'\" | Where-Object { $_.CommandLine -match 'PerfBot|PerfServer' } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }"
-for /f "delims=" %%F in ('dir /b /o-n "%ENGINE_SAVED%\Profiling\CSV\*.csv"') do (copy /y "%ENGINE_SAVED%\Profiling\CSV\%%F" "%PERF_OUT%\combat_client.csv" >nul & goto :copied)
+for /f "delims=" %%F in ('dir /b /o-n "%CLIENT_SAVED%\Profiling\CSV\*.csv"') do (copy /y "%CLIENT_SAVED%\Profiling\CSV\%%F" "%PERF_OUT%\combat_client.csv" >nul & goto :copied)
 :copied
-copy /y "%ENGINE_SAVED%\Logs\PerfClient.log" "%PERF_OUT%\combat_client.log" >nul
+copy /y "%CLIENT_SAVED%\Logs\PerfClient.log" "%PERF_OUT%\combat_client.log" >nul
 python "%~dp0csv_summary.py" "%PERF_OUT%\combat_client.csv" --combat
 exit /b 0

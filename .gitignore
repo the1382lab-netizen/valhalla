@@ -3,7 +3,11 @@ Valhalla2/Binaries/
 Valhalla2/DerivedDataCache/
 Valhalla2/Intermediate/
 Valhalla2/Saved/
-Valhalla2/Build/
+Valhalla2/Build/*
+# B-27: the bundled PSO cache (Tools/perf/build_pso_cache.cmd) is committed so every package ships it
+!Valhalla2/Build/Windows/
+Valhalla2/Build/Windows/*
+!Valhalla2/Build/Windows/PipelineCaches/
 # Game data copied in by stage_game_data.py before packaging (source: shared/data)
 Valhalla2/Content/Data/
 Valhalla2/Plugins/**/Binaries/

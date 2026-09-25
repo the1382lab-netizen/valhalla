@@ -2,6 +2,7 @@
 
 #include "ValhallaAnimComponent.h"
 
+#include "ValhallaAssetPreload.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Animation/AnimSequence.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -245,7 +246,7 @@ void UValhallaAnimComponent::LoadSequences()
 			// Same clip name, the other body's folder (B-06 1.9a).
 			Path = AnimFolderOverride / FPaths::GetBaseFilename(Path);
 		}
-		UAnimSequence* Loaded = LoadObject<UAnimSequence>(nullptr, *Path);
+		UAnimSequence* Loaded = ValhallaAssets::Load<UAnimSequence>(Path, TEXT("animation"));
 		Sequences[Index] = Loaded;
 
 		if (!Loaded)

@@ -213,6 +213,13 @@ public:
 	static USkeletalMesh* PieceForActiveBody(USkeletalMesh* Piece);
 
 	/**
+	 * The path PieceForActiveBody would swap a piece at `Path` to (package path,
+	 * no object name), or `Path` unchanged when it needs no swap. B-27: the
+	 * preloader loads the swapped piece, not the one the Blueprint names.
+	 */
+	static FString PiecePathForActiveBody(const FString& Path);
+
+	/**
 	 * The body mesh the active profile uses. Constructors load this (not a
 	 * hard-coded path) so a placed or previewed character in the editor shows
 	 * the same body PIE does.

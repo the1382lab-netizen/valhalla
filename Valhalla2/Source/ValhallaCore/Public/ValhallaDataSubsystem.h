@@ -221,6 +221,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Data")
 	int32 GetItemCount() const { return Tables.Items.Num(); }
 
+	/** Every item template, by id (B-27: the preloader walks it for equipment art). */
+	const TMap<FName, FValhallaItemTemplate>& GetItems() const { return Tables.Items; }
+
 	/** Number of loaded skill templates. */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Data")
 	int32 GetSkillCount() const { return Tables.Skills.Num(); }

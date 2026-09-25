@@ -2,6 +2,7 @@
 
 #include "ValhallaCharacter.h"
 
+#include "ValhallaAssetPreload.h"
 #include "Camera/CameraComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
@@ -670,7 +671,7 @@ bool AValhallaCharacter::ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId)
 
 	if (bIsSkeletal && Skeletal)
 	{
-		USkeletalMesh* LoadedMesh = LoadObject<USkeletalMesh>(nullptr, *AssetPath);
+		USkeletalMesh* LoadedMesh = ValhallaAssets::Load<USkeletalMesh>(AssetPath, TEXT("equipment"));
 		if (!LoadedMesh)
 		{
 			UE_LOG(LogValhallaVisual, Warning, TEXT("slot=%s item=%s asset=%s MISSING"),
@@ -700,7 +701,7 @@ bool AValhallaCharacter::ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId)
 	}
 	else if (!bIsSkeletal && Static)
 	{
-		UStaticMesh* LoadedMesh = LoadObject<UStaticMesh>(nullptr, *AssetPath);
+		UStaticMesh* LoadedMesh = ValhallaAssets::Load<UStaticMesh>(AssetPath, TEXT("held item"));
 		if (!LoadedMesh)
 		{
 			UE_LOG(LogValhallaVisual, Warning, TEXT("slot=%s item=%s asset=%s MISSING"),
@@ -772,7 +773,7 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 		if (!HairMesh->GetSkeletalMeshAsset())
 		{
 			const FString HairPath = UValhallaVisuals::HairMeshPath(TEXT("SK_Hair_Brown_Short"));
-			USkeletalMesh* Hair = LoadObject<USkeletalMesh>(nullptr, *HairPath);
+			USkeletalMesh* Hair = ValhallaAssets::Load<USkeletalMesh>(HairPath, TEXT("hair"));
 			// Same rule as armour: hair built for another rig stays off until
 			// it is rebuilt for the active body.
 			if (Hair && UValhallaVisuals::CanFollowBody(Hair, BodyMesh))

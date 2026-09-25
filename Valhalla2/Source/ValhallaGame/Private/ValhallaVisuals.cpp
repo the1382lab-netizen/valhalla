@@ -9,6 +9,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "ValhallaDataSubsystem.h"
+#include "ValhallaAssetPreload.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaVisual);
 
@@ -177,7 +178,7 @@ bool UValhallaVisuals::ApplyActiveBody(USkeletalMeshComponent* Body, float Extra
 		return false;
 	}
 
-	USkeletalMesh* Mesh = LoadObject<USkeletalMesh>(nullptr, *ActiveBodyMeshPath());
+	USkeletalMesh* Mesh = ValhallaAssets::Load<USkeletalMesh>(ActiveBodyMeshPath(), TEXT("body"));
 	if (!Mesh)
 	{
 		UE_LOG(LogValhallaVisual, Warning, TEXT("Body missing at %s; keeping the current body."), *ActiveBodyMeshPath());
@@ -202,7 +203,7 @@ bool UValhallaVisuals::ApplyActiveHead(USkeletalMeshComponent* Head, USkeletalMe
 	}
 
 	const FString Path = ActiveHeadMeshPath();
-	USkeletalMesh* Mesh = Path.IsEmpty() ? nullptr : LoadObject<USkeletalMesh>(nullptr, *Path);
+	USkeletalMesh* Mesh = Path.IsEmpty() ? nullptr : ValhallaAssets::Load<USkeletalMesh>(Path, TEXT("head"));
 	if (!Path.IsEmpty() && !Mesh)
 	{
 		UE_LOG(LogValhallaVisual, Warning, TEXT("Head missing at %s."), *Path);
@@ -224,15 +225,33 @@ USkeletalMesh* UValhallaVisuals::PieceForActiveBody(USkeletalMesh* Piece)
 		return nullptr;
 	}
 
+	const FString Path = Piece->GetPackage() ? Piece->GetPackage()->GetName() : Piece->GetPathName();
+	const FString Swapped = PiecePathForActiveBody(Path);
+	if (Swapped == Path)
+	{
+		return Piece;
+	}
+	USkeletalMesh* Rebuilt = ValhallaAssets::Load<USkeletalMesh>(Swapped, TEXT("armour for the active body"), /*bQuiet*/ true);
+	return Rebuilt ? Rebuilt : Piece;
+}
+
+FString UValhallaVisuals::PiecePathForActiveBody(const FString& InPath)
+{
 	static const FString LegacyRoot = TEXT("/Game/Valhalla/Characters/");
 	static const FString MetaHumanRoot = TEXT("/Game/Valhalla/Characters/MetaHuman/");
 
-	const FString Path = Piece->GetPathName();
+	// A package path; an object path ("/Game/X/SK_A.SK_A") keeps its package part.
+	FString Path = InPath;
+	int32 Dot = INDEX_NONE;
+	if (Path.FindChar(TEXT('.'), Dot))
+	{
+		Path.LeftInline(Dot);
+	}
 	const bool bIsMetaHumanPiece = Path.StartsWith(MetaHumanRoot);
 	const bool bWantMetaHuman = ActiveBodyProfile() == EValhallaBodyProfile::MetaHuman;
 	if (bIsMetaHumanPiece == bWantMetaHuman)
 	{
-		return Piece;
+		return Path;
 	}
 
 	FString Relative;
@@ -246,12 +265,9 @@ USkeletalMesh* UValhallaVisuals::PieceForActiveBody(USkeletalMesh* Piece)
 	}
 	if (!(Relative.StartsWith(TEXT("Equipment/")) || Relative.StartsWith(TEXT("Hair/"))))
 	{
-		return Piece;
+		return Path;
 	}
-
-	const FString Swapped = (bWantMetaHuman ? MetaHumanRoot : LegacyRoot) + Relative;
-	USkeletalMesh* Rebuilt = LoadObject<USkeletalMesh>(nullptr, *Swapped, nullptr, LOAD_NoWarn | LOAD_Quiet);
-	return Rebuilt ? Rebuilt : Piece;
+	return (bWantMetaHuman ? MetaHumanRoot : LegacyRoot) + Relative;
 }
 
 bool UValhallaVisuals::CanFollowBody(const USkeletalMesh* Piece, const USkeletalMeshComponent* Body)

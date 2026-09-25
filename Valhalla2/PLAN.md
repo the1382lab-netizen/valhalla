@@ -2555,6 +2555,32 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   matters. Combat per event on the client: about 0.2 ms (effects 0.16); combat log rebuild 2.1 ms average,
   4.8 ms worst, per new line. Captures: `Saved/ClaudeOps/perf`, packaged runs under
   `Saved/ClaudeOps/perf/pkg/Windows/Valhalla2/Saved`.
+- [x] **Phase 1: zone asset preloader** (`UValhallaAssetPreloadSubsystem`, `ValhallaAssetPreload.h`). A
+      game-instance subsystem (not on a dedicated server) loads in the background: at start the common set
+      (every spell effect, the body, head and hair, the player animations, every item's equipment mesh: 65
+      assets) and, on a 0.5 s ticker, the local pawn's zone set: every NPC Spawn Point in the zone and in the
+      zones its portals lead to (a portal is a teleport, so the far side's NPCs arrive before a ticker could
+      notice), with each NPC Type's body, armour for the active body (`UValhallaVisuals::PiecePathForActiveBody`,
+      split out of `PieceForActiveBody`), placeholder kit, animation folder and its templates' weapons (47
+      assets for Grasslands). The previous zone's set is released when the new one is in. Every synchronous load
+      in the NPC, character, animation, effect, projectile and body code now goes through `ValhallaAssets::Load`
+      / `LoadSoft`: the object if it is in memory, else a load on the spot logged once as `preload miss`. NPC
+      armour now loads the active body's piece first (it used to load the legacy piece and then swap). B-24
+      hook: `PreloadZone(World, ZoneId, OnComplete)` and `IsZoneReady`. `UValhallaDataSubsystem::GetItems()`
+      added. Tests `Valhalla.Game.Preload.Paths` / `.Lists` (the lists name real packages).
+- [x] **Phase 1: bundled PSO cache.** `[DevOptions.Shaders] NeedsShaderStableKeys=true` (DefaultEngine.ini),
+      `bShareMaterialShaderCode` / `bSharedMaterialNativeLibraries` spelled out (DefaultGame.ini).
+      `Tools/perf/record_pso.cmd` (packaged client with `-logPSO` through the town, Harrow's Rest and the
+      combat test) and `build_pso_cache.cmd` (`ShaderPipelineCacheTools expand`: 122 recorded, 376 stable PSOs)
+      write `Build/Windows/PipelineCaches/PSO_Valhalla2_PCD3D_SM6.spc`, committed (`.gitignore` lets that folder
+      through). The package opens it and precompiles 122 pipelines at start: 0 new PSOs encountered in play
+      (65 before). Record again after shader-set changes (Phase 4's ray tracing and scalability defaults).
+- **Phase 1 results.** Editor client, worst frame entering the fight: 921 ms → 177 ms, 0 preload misses
+  (the rest is ~15 NPC actors spawning in one frame when a teleport makes them relevant: 8–10 ms each, most of
+  it the MetaHuman setup). Packaged client: 101 ms → 77 ms with the preloader, 93 ms with the PSO cache (run
+  to run noise; the remaining flushes are the replicated NPC spawns), inside the 100 ms target. Entering the
+  world is still 415 / 274 / 283 ms frames, now all the blocking map load and join (no PSOs): B-24's loading
+  screen is where that belongs. `Valhalla.` suite: 49 tests, 48 pass (known MeshIdFallback).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

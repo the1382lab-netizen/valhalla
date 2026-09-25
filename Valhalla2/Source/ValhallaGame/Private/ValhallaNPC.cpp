@@ -2,6 +2,7 @@
 
 #include "ValhallaNPC.h"
 
+#include "ValhallaAssetPreload.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -149,7 +150,7 @@ void AValhallaNPC::GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletal
 	// B-06 1.9a: a body of its own wears nothing; the mesh is its outfit.
 	if (HasBodyOverride())
 	{
-		OutBody = BodyMeshOverride.LoadSynchronous();
+		OutBody = ValhallaAssets::LoadSoft(BodyMeshOverride, TEXT("NPC body"));
 		OutPieces.SetNumZeroed(5);
 		return;
 	}
@@ -181,18 +182,34 @@ void AValhallaNPC::GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletal
 
 	for (const FSlot& Slot : Slots)
 	{
-		USkeletalMesh* SlotMesh = Slot.Asset->IsNull() ? nullptr : Slot.Asset->LoadSynchronous();
+		// The active body's rebuild of the named piece first (what PieceForActiveBody
+		// would swap it for, and what the B-27 preloader loaded), the named one if
+		// there is none.
+		USkeletalMesh* SlotMesh = nullptr;
+		if (!Slot.Asset->IsNull())
+		{
+			const FString Named = Slot.Asset->ToSoftObjectPath().GetLongPackageName();
+			const FString ForBody = UValhallaVisuals::PiecePathForActiveBody(Named);
+			SlotMesh = ForBody != Named ? ValhallaAssets::Load<USkeletalMesh>(ForBody, TEXT("NPC armour"), /*bQuiet*/ true) : nullptr;
+			if (!SlotMesh)
+			{
+				SlotMesh = ValhallaAssets::LoadSoft(*Slot.Asset, TEXT("NPC armour"));
+			}
+		}
 		if (!SlotMesh)
 		{
 			SlotMesh = Slot.ComponentMesh;
 		}
 		if (!SlotMesh && bWearPlaceholderKit && Slot.Placeholder)
 		{
-			SlotMesh = LoadObject<USkeletalMesh>(nullptr, *UValhallaVisuals::EquipmentMeshPath(Slot.Placeholder));
+			SlotMesh = ValhallaAssets::Load<USkeletalMesh>(UValhallaVisuals::EquipmentMeshPath(Slot.Placeholder), TEXT("NPC placeholder kit"));
 		}
 		OutPieces.Add(UValhallaVisuals::PieceForActiveBody(SlotMesh));
 	}
 }
+
+const TCHAR* AValhallaNPC::PlaceholderChestName() { return EnemyChestAsset; }
+const TCHAR* AValhallaNPC::PlaceholderHelmName() { return EnemyHelmAsset; }
 
 AValhallaNPC::AValhallaNPC()
 {
@@ -368,7 +385,7 @@ bool AValhallaNPC::ApplyBodyOverride()
 		return false;
 	}
 
-	USkeletalMesh* OverrideMesh = BodyMeshOverride.LoadSynchronous();
+	USkeletalMesh* OverrideMesh = ValhallaAssets::LoadSoft(BodyMeshOverride, TEXT("NPC body"));
 	if (!OverrideMesh)
 	{
 		UE_LOG(LogValhallaVisual, Warning, TEXT("%s: body override %s is missing; keeping the player body."),
@@ -619,7 +636,7 @@ void AValhallaNPC::ApplyWeaponVisual()
 
 	bool bIsSkeletal = true;
 	const FString AssetPath = UValhallaVisuals::EquipmentAssetPathForItem(this, WeaponId, bIsSkeletal);
-	UStaticMesh* Loaded = (!AssetPath.IsEmpty() && !bIsSkeletal) ? LoadObject<UStaticMesh>(nullptr, *AssetPath) : nullptr;
+	UStaticMesh* Loaded = (!AssetPath.IsEmpty() && !bIsSkeletal) ? ValhallaAssets::Load<UStaticMesh>(AssetPath, TEXT("NPC weapon")) : nullptr;
 	WeaponMesh->SetStaticMesh(Loaded);
 	if (!Loaded)
 	{

@@ -2,6 +2,7 @@
 
 #include "ValhallaVfxLibrary.h"
 
+#include "ValhallaAssetPreload.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
@@ -430,7 +431,7 @@ UNiagaraSystem* UValhallaVfxSubsystem::GetSystem(EValhallaVfx System)
 	if (!Systems[Index])
 	{
 		const FString Path = UValhallaVfxLibrary::SystemPath(System);
-		Systems[Index] = LoadObject<UNiagaraSystem>(nullptr, *Path);
+		Systems[Index] = ValhallaAssets::Load<UNiagaraSystem>(Path, TEXT("spell effect"));
 
 		if (!Systems[Index] && !ReportedMissing.Contains(static_cast<uint8>(Index)))
 		{

@@ -2,6 +2,7 @@
 
 #include "ValhallaSpellProjectile.h"
 
+#include "ValhallaAssetPreload.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/World.h"
@@ -202,7 +203,7 @@ void AValhallaSpellProjectile::ApplyBoltEffect(float Radius)
 	if (!BoltEffect->GetAsset())
 	{
 		const FString Path = UValhallaVfxLibrary::SystemPath(EValhallaVfx::Bolt);
-		UNiagaraSystem* System = LoadObject<UNiagaraSystem>(nullptr, *Path);
+		UNiagaraSystem* System = ValhallaAssets::Load<UNiagaraSystem>(Path, TEXT("projectile effect"));
 		if (!System)
 		{
 			// The sphere is still there, so a missing asset costs the trail and

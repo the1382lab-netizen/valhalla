@@ -185,6 +185,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
 	bool bWearPlaceholderKit = true;
 
+	/** The placeholder kit's chest and helm (EquipmentMeshPath names), for the B-27 preloader. */
+	static const TCHAR* PlaceholderChestName();
+	static const TCHAR* PlaceholderHelmName();
+
 	/** Armour this type wears, from /Game/Valhalla/Characters/Equipment. Empty = none (or the placeholder). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
 	TSoftObjectPtr<USkeletalMesh> ChestMeshAsset;

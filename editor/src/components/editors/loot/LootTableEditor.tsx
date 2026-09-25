@@ -141,10 +141,10 @@ export const LootTableEditor: React.FC = () => {
   };
 
   return (
-    <div className="split-horizontal">
+    <div className="split-horizontal split-fill">
       <div className="panel">
         <div className="panel-header">Loot Tables ({lootTableList.length})</div>
-        <div className="panel-body">
+        <div className="panel-body list-body">
           <div className="search-box">
             <span className="search-icon">🔍</span>
             <input
@@ -162,6 +162,7 @@ export const LootTableEditor: React.FC = () => {
             </button>
           </div>
 
+          <div className="list-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -187,12 +188,13 @@ export const LootTableEditor: React.FC = () => {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
       <div className="panel">
         <div className="panel-header">Loot Table Details</div>
-        <div className="panel-body" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
+        <div className="panel-body">
           {selectedTable ? (
             <>
               <IdField

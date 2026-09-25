@@ -331,6 +331,22 @@ struct VALHALLACORE_API FValhallaClassTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
 	float BaseRangedAttackSpeedMs = 0.f;
 
+	/**
+	 * JSON `baseMeleeDamage` — flat damage on every melee auto-attack, before
+	 * the weapon roll and Strength scaling. Optional; Valhalla::BaseMeleeDamage
+	 * (10) when absent. Edited per class in the web editor.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
+	float BaseMeleeDamage = 10.f;
+
+	/**
+	 * JSON `baseRangedDamage` — flat damage on every ranged auto-attack, before
+	 * the bow roll and Dexterity scaling. Optional; Valhalla::BaseRangedDamage
+	 * (8) when absent.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
+	float BaseRangedDamage = 8.f;
+
 	/** JSON `startingItems` — optional; empty when the key is absent. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
 	TArray<FValhallaStartingItem> StartingItems;

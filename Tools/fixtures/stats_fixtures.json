@@ -3913,47 +3913,47 @@
     {
       "base": 8,
       "strength": 4,
-      "expected": 11.2
+      "expected": 9.6
     },
     {
       "base": 8,
       "strength": 10,
-      "expected": 16
+      "expected": 12
     },
     {
       "base": 8,
       "strength": 20,
-      "expected": 24
+      "expected": 16
     },
     {
       "base": 8,
       "strength": 25,
-      "expected": 28
+      "expected": 18
     },
     {
       "base": 8,
       "strength": 38,
-      "expected": 38.400000000000006
+      "expected": 23.2
     },
     {
       "base": 8,
       "strength": 55,
-      "expected": 52
+      "expected": 30
     },
     {
       "base": 8,
       "strength": 77,
-      "expected": 69.6
+      "expected": 38.8
     },
     {
       "base": 8,
       "strength": 90,
-      "expected": 80
+      "expected": 44
     },
     {
       "base": 8,
       "strength": 120,
-      "expected": 104
+      "expected": 56
     },
     {
       "base": 10,
@@ -3963,47 +3963,47 @@
     {
       "base": 10,
       "strength": 4,
-      "expected": 13.2
+      "expected": 11.6
     },
     {
       "base": 10,
       "strength": 10,
-      "expected": 18
+      "expected": 14
     },
     {
       "base": 10,
       "strength": 20,
-      "expected": 26
+      "expected": 18
     },
     {
       "base": 10,
       "strength": 25,
-      "expected": 30
+      "expected": 20
     },
     {
       "base": 10,
       "strength": 38,
-      "expected": 40.400000000000006
+      "expected": 25.2
     },
     {
       "base": 10,
       "strength": 55,
-      "expected": 54
+      "expected": 32
     },
     {
       "base": 10,
       "strength": 77,
-      "expected": 71.6
+      "expected": 40.8
     },
     {
       "base": 10,
       "strength": 90,
-      "expected": 82
+      "expected": 46
     },
     {
       "base": 10,
       "strength": 120,
-      "expected": 106
+      "expected": 58
     },
     {
       "base": 13,
@@ -4013,47 +4013,47 @@
     {
       "base": 13,
       "strength": 4,
-      "expected": 16.2
+      "expected": 14.6
     },
     {
       "base": 13,
       "strength": 10,
-      "expected": 21
+      "expected": 17
     },
     {
       "base": 13,
       "strength": 20,
-      "expected": 29
+      "expected": 21
     },
     {
       "base": 13,
       "strength": 25,
-      "expected": 33
+      "expected": 23
     },
     {
       "base": 13,
       "strength": 38,
-      "expected": 43.400000000000006
+      "expected": 28.2
     },
     {
       "base": 13,
       "strength": 55,
-      "expected": 57
+      "expected": 35
     },
     {
       "base": 13,
       "strength": 77,
-      "expected": 74.6
+      "expected": 43.8
     },
     {
       "base": 13,
       "strength": 90,
-      "expected": 85
+      "expected": 49
     },
     {
       "base": 13,
       "strength": 120,
-      "expected": 109
+      "expected": 61
     },
     {
       "base": 17,
@@ -4063,47 +4063,47 @@
     {
       "base": 17,
       "strength": 4,
-      "expected": 20.2
+      "expected": 18.6
     },
     {
       "base": 17,
       "strength": 10,
-      "expected": 25
+      "expected": 21
     },
     {
       "base": 17,
       "strength": 20,
-      "expected": 33
+      "expected": 25
     },
     {
       "base": 17,
       "strength": 25,
-      "expected": 37
+      "expected": 27
     },
     {
       "base": 17,
       "strength": 38,
-      "expected": 47.400000000000006
+      "expected": 32.2
     },
     {
       "base": 17,
       "strength": 55,
-      "expected": 61
+      "expected": 39
     },
     {
       "base": 17,
       "strength": 77,
-      "expected": 78.6
+      "expected": 47.8
     },
     {
       "base": 17,
       "strength": 90,
-      "expected": 89
+      "expected": 53
     },
     {
       "base": 17,
       "strength": 120,
-      "expected": 113
+      "expected": 65
     },
     {
       "base": 22,
@@ -4113,47 +4113,47 @@
     {
       "base": 22,
       "strength": 4,
-      "expected": 25.2
+      "expected": 23.6
     },
     {
       "base": 22,
       "strength": 10,
-      "expected": 30
+      "expected": 26
     },
     {
       "base": 22,
       "strength": 20,
-      "expected": 38
+      "expected": 30
     },
     {
       "base": 22,
       "strength": 25,
-      "expected": 42
+      "expected": 32
     },
     {
       "base": 22,
       "strength": 38,
-      "expected": 52.400000000000006
+      "expected": 37.2
     },
     {
       "base": 22,
       "strength": 55,
-      "expected": 66
+      "expected": 44
     },
     {
       "base": 22,
       "strength": 77,
-      "expected": 83.6
+      "expected": 52.8
     },
     {
       "base": 22,
       "strength": 90,
-      "expected": 94
+      "expected": 58
     },
     {
       "base": 22,
       "strength": 120,
-      "expected": 118
+      "expected": 70
     }
   ],
   "spellDamage": [

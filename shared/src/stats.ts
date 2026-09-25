@@ -66,17 +66,34 @@ export function computeDerivedStats(classId: ClassId, level: number): ResolvedSt
 
 // ── Damage Formulas ────────────────────────────────────────
 
-/** Base damage constants — the "weapon" component before stats scale it */
+/**
+ * Base damage constants — the "weapon" component before stats scale it.
+ * Melee and ranged are per class now (classes.json `baseMeleeDamage` /
+ * `baseRangedDamage`, set in the web editor); these are the fallbacks for a
+ * class that has none.
+ */
 export const BASE_MELEE_DAMAGE = 10;
 export const BASE_RANGED_DAMAGE = 8;
 export const BASE_SPELL_DAMAGE = 12;
 
+/** Melee auto-attack: damage per point of Strength (Valhalla::StrengthDamageScaling). */
+export const STRENGTH_DAMAGE_SCALING = 0.4;
+/** Ranged auto-attack: damage per point of Dexterity (Valhalla::DexterityDamageScaling). */
+export const DEXTERITY_DAMAGE_SCALING = 0.4;
+
 /**
- * Physical damage = baseDamage + strength * scaling
+ * Melee physical damage = baseDamage + strength * scaling
  * Scaling is intentionally gentle at low levels to avoid one-shots.
  */
 export function computePhysicalDamage(strength: number, baseDamage: number): number {
-  return baseDamage + strength * 0.8;
+  return baseDamage + strength * STRENGTH_DAMAGE_SCALING;
+}
+
+/**
+ * Ranged physical damage = baseDamage + dexterity * scaling
+ */
+export function computeRangedPhysicalDamage(dexterity: number, baseDamage: number): number {
+  return baseDamage + dexterity * DEXTERITY_DAMAGE_SCALING;
 }
 
 /**

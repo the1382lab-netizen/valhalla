@@ -345,6 +345,14 @@ namespace
 		RequireFloat(Obj, TEXT("baseMeleeAttackSpeedMs"), Out.BaseMeleeAttackSpeedMs, Context);
 		OptFloat(Obj, TEXT("baseRangedAttackSpeedMs"), Out.BaseRangedAttackSpeedMs);
 
+		// Per-class base auto-attack damage (2026-09-24). Optional, with the old
+		// global constants as the fallback, so a data file without them plays
+		// exactly as before.
+		Out.BaseMeleeDamage = static_cast<float>(Valhalla::BaseMeleeDamage);
+		OptFloat(Obj, TEXT("baseMeleeDamage"), Out.BaseMeleeDamage);
+		Out.BaseRangedDamage = static_cast<float>(Valhalla::BaseRangedDamage);
+		OptFloat(Obj, TEXT("baseRangedDamage"), Out.BaseRangedDamage);
+
 		// New in 2.0 (present in classes.json since Phase 1b). Optional read with
 		// a constant fallback so older data files still load.
 		Out.VisionRange = static_cast<float>(Valhalla::DefaultVisionRange);

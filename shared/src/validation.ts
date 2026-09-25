@@ -288,6 +288,14 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
       const v = cls.baseStats?.[k];
       if (isNum(v) && (v < 0 || v > 1)) add('warning', 'classes', id, `base ${k} ${v} is outside 0–1 (it is a fraction: 0.05 = 5%)`);
     }
+    for (const k of ['baseMeleeDamage', 'baseRangedDamage'] as const) {
+      const v = cls[k];
+      if (v !== undefined && !(isNum(v) && v >= 0)) add('error', 'classes', id, `${k} must be a number of 0 or more`);
+    }
+    if (cls.baseMeleeDamage === 0) add('warning', 'classes', id, 'base melee damage is 0, so its melee auto-attacks only do the weapon roll plus Strength');
+    if (isNum(cls.baseRangedAttackSpeedMs) && cls.baseRangedAttackSpeedMs > 0 && cls.baseRangedDamage === 0) {
+      add('warning', 'classes', id, 'has a ranged attack but base ranged damage is 0');
+    }
     if (cls.allowedArmor !== undefined && !has(ARMOR_TYPES, cls.allowedArmor)) {
       add('warning', 'classes', id, `allowed armor "${cls.allowedArmor}" is not one of ${ARMOR_TYPES.join(', ')}`);
     }

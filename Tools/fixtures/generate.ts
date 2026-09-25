@@ -138,7 +138,9 @@ function buildDerivedStats(): DerivedStatsCase[] {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Section 2 — physicalDamage: base + strength * 0.8
+// Section 2 — physicalDamage: base + strength * STRENGTH_DAMAGE_SCALING
+// (0.8 in 1.0; 0.4 since 2026-09-24, Kevin — the committed fixture's
+// `physicalDamage` expectations were rewritten to match)
 // ═══════════════════════════════════════════════════════════════════════════
 function buildPhysicalDamage(): Array<{ base: number; strength: number; expected: number }> {
   // Bases: unarmed melee/ranged constants plus realistic weapon attackDamage bonuses.

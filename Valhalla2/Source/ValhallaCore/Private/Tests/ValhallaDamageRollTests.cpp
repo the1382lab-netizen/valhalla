@@ -2,7 +2,8 @@
 //
 // The weapon damage roll (2.0, 2026-09-22): every auto-attack adds a uniform
 // roll in the weapon's [minDamage, maxDamage] — or its flat attackDamage, or
-// 1-3 unarmed — to the base constant before strength scaling.
+// 1-3 unarmed — to the class's base damage before stat scaling (Strength for
+// melee, Dexterity for ranged, since 2026-09-24).
 
 #include "CoreMinimal.h"
 
@@ -63,15 +64,27 @@ bool FValhallaDamageRollTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("unarmed NPC ignores the weapon numbers"), RollNPCMeleeDamage(7.0, 13.0, 1.0, false, 4.0, 9.0, 1.0), 13.0);
 	TestEqual(TEXT("an NPC hit is never below 1"), RollNPCMeleeDamage(0.0, 0.0, 0.5, false, 0.0, 0.0, 0.5), 1.0);
 
-	// The whole melee number for a level-1 warrior (strength 20) swinging the
-	// Iron Mace (+1 strength): 10 + [3, 8] + 21 * 0.8 = 29.8 .. 34.8 before
-	// defense and the floor, against 27.8 .. 29.8 bare-handed.
+	// The whole melee number for a strength-20 fighter swinging the Iron Mace
+	// (+1 strength) with a class base of 10: 10 + [3, 8] + 21 * 0.4 =
+	// 21.4 .. 26.4 before defense and the floor, against 19 .. 21 bare-handed.
 	const double MaceLow = ComputePhysicalDamage(Valhalla::BaseMeleeDamage + RollWeaponDamage(3.0, 8.0, 0.0), 21.0);
 	const double MaceHigh = ComputePhysicalDamage(Valhalla::BaseMeleeDamage + RollWeaponDamage(3.0, 8.0, 1.0), 21.0);
 	const double FistHigh = ComputePhysicalDamage(Valhalla::BaseMeleeDamage
 		+ RollWeaponDamage(Valhalla::UnarmedMinDamage, Valhalla::UnarmedMaxDamage, 1.0), 20.0);
 	TestTrue(TEXT("the mace's worst hit beats the best punch"), MaceLow > FistHigh);
 	TestTrue(TEXT("the mace's range is 5 wide"), FMath::IsNearlyEqual(MaceHigh - MaceLow, 5.0));
+
+	// 2026-09-24: melee scales with Strength, ranged with Dexterity, 0.4 each.
+	TestTrue(TEXT("melee: base + strength * 0.4"), FMath::IsNearlyEqual(ComputePhysicalDamage(10.0, 20.0), 18.0));
+	TestTrue(TEXT("ranged: base + dexterity * 0.4"), FMath::IsNearlyEqual(ComputeRangedPhysicalDamage(8.0, 20.0), 16.0));
+	TestTrue(TEXT("a high-dex, low-str archer out-shoots a low-dex, high-str one"),
+		ComputeRangedPhysicalDamage(8.0, 30.0) > ComputeRangedPhysicalDamage(8.0, 5.0));
+
+	// The per-class base defaults to the old constants, so a class without the
+	// new fields plays exactly as before.
+	const FValhallaClassTemplate Bare;
+	TestTrue(TEXT("class base melee defaults to BaseMeleeDamage"), FMath::IsNearlyEqual(Bare.BaseMeleeDamage, static_cast<float>(Valhalla::BaseMeleeDamage)));
+	TestTrue(TEXT("class base ranged defaults to BaseRangedDamage"), FMath::IsNearlyEqual(Bare.BaseRangedDamage, static_cast<float>(Valhalla::BaseRangedDamage)));
 
 	return true;
 }

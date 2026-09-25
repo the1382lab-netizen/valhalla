@@ -92,8 +92,16 @@ namespace Valhalla::Stats
 
 	double ComputePhysicalDamage(double BaseDamage, double Strength)
 	{
-		// stats.ts:79 — `return baseDamage + strength * 0.8;`
+		// stats.ts computePhysicalDamage — `baseDamage + strength * STRENGTH_DAMAGE_SCALING`
+		// (0.8 in 1.0, 0.4 since 2026-09-24).
 		return BaseDamage + Strength * Valhalla::StrengthDamageScaling;
+	}
+
+	double ComputeRangedPhysicalDamage(double BaseDamage, double Dexterity)
+	{
+		// stats.ts computeRangedPhysicalDamage — a ranged auto-attack scales
+		// with Dexterity, not Strength (Kevin, 2026-09-24).
+		return BaseDamage + Dexterity * Valhalla::DexterityDamageScaling;
 	}
 
 	double ComputeSpellDamage(double BaseDamage, double Intelligence)

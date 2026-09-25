@@ -480,6 +480,8 @@ bool FValhallaDataLoadsTest::RunTest(const FString& Parameters)
 		// only check that they were read, not what they are.
 		TestTrue(TEXT("warrior base hp was read"), Warrior->BaseStats.Hp > 0.f);
 		TestTrue(TEXT("warrior vision range was read"), Warrior->VisionRange > 0.f);
+		TestTrue(TEXT("warrior base melee damage was read"), Warrior->BaseMeleeDamage >= 0.f);
+		TestTrue(TEXT("warrior base ranged damage was read"), Warrior->BaseRangedDamage >= 0.f);
 	}
 	else
 	{

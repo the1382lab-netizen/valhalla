@@ -28,6 +28,10 @@ interface ClassTemplate {
   canUseMana: boolean;
   baseMeleeAttackSpeedMs: number;
   baseRangedAttackSpeedMs: number;
+  /** Flat damage added to every melee auto-attack, before Strength scaling. */
+  baseMeleeDamage?: number;
+  /** Flat damage added to every ranged auto-attack, before Dexterity scaling. */
+  baseRangedDamage?: number;
   /** Line-of-sight vision range in UE units (cm) */
   visionRange: number;
   startingItems?: StartingItem[];
@@ -74,6 +78,8 @@ const DEFAULT_CLASS: Omit<ClassTemplate, 'id'> = {
   canUseMana: true,
   baseMeleeAttackSpeedMs: 2000,
   baseRangedAttackSpeedMs: 0,
+  baseMeleeDamage: 10,
+  baseRangedDamage: 8,
   visionRange: 1200,
 };
 
@@ -349,6 +355,35 @@ export const ClassEditor: React.FC = () => {
                         step={100}
                         value={selectedClass.baseRangedAttackSpeedMs ?? 0}
                         onChange={(e) => handleUpdateClass({ baseRangedAttackSpeedMs: parseInt(e.target.value, 10) || 0 })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label" title="Flat damage added to every melee auto-attack: base + weapon roll + Strength x 0.4">
+                        Base Melee Damage
+                      </label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={0}
+                        step={1}
+                        value={selectedClass.baseMeleeDamage ?? 10}
+                        onChange={(e) => handleUpdateClass({ baseMeleeDamage: parseFloat(e.target.value) || 0 })}
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" title="Flat damage added to every ranged auto-attack: base + bow roll + Dexterity x 0.4">
+                        Base Ranged Damage
+                      </label>
+                      <input
+                        type="number"
+                        className="form-input"
+                        min={0}
+                        step={1}
+                        value={selectedClass.baseRangedDamage ?? 8}
+                        onChange={(e) => handleUpdateClass({ baseRangedDamage: parseFloat(e.target.value) || 0 })}
                       />
                     </div>
                   </div>

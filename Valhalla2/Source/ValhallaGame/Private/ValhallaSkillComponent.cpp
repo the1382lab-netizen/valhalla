@@ -994,8 +994,20 @@ void UValhallaSkillComponent::TickAutoAttack(double Now)
 	}
 	const double WeaponRoll = Valhalla::Stats::RollWeaponDamage(WeaponMin, WeaponMax, FMath::FRand());
 
-	const double RawDamage = Valhalla::Stats::ComputePhysicalDamage(
-		(bRangedPhysical ? Valhalla::BaseRangedDamage : Valhalla::BaseMeleeDamage) + WeaponRoll, Stats.Strength);
+	// The flat base is per class (classes.json `baseMeleeDamage` /
+	// `baseRangedDamage`, 2026-09-24), read at swing time so a web-editor save
+	// plus a data reload applies on the next swing. The constants are only the
+	// fallback when the class cannot be found.
+	double BaseDamage = bRangedPhysical ? Valhalla::BaseRangedDamage : Valhalla::BaseMeleeDamage;
+	if (const FValhallaClassTemplate* ClassTemplate = Data->FindClass(PlayerState->ClassId))
+	{
+		BaseDamage = bRangedPhysical ? ClassTemplate->BaseRangedDamage : ClassTemplate->BaseMeleeDamage;
+	}
+
+	// Melee scales with Strength, ranged with Dexterity (Kevin, 2026-09-24).
+	const double RawDamage = bRangedPhysical
+		? Valhalla::Stats::ComputeRangedPhysicalDamage(BaseDamage + WeaponRoll, Stats.Dexterity)
+		: Valhalla::Stats::ComputePhysicalDamage(BaseDamage + WeaponRoll, Stats.Strength);
 
 	UValhallaCombatLibrary::ApplyDamage(Character, Target, RawDamage, /*bMagical=*/false, AutoAttackSkillId);
 

@@ -2180,6 +2180,36 @@ player behind it (the player rule); NPCs get a melee or ranged auto-attack.
 - New / Copy asks for a name and derives a snake_case id (editable, must match `^[a-z][a-z0-9_]*$` and be unused), so no more `npc_<timestamp>` ids; Cancel creates nothing.
 - The id can be renamed in place while nothing in the shared data references it (the field lists what does); NPC renames also need the `BP_NPC_*` Default Template Id changed in Unreal. Shared bits: `editor/src/components/shared/TemplateId.tsx`.
 
+## Per-class base auto-attack damage; ranged scales with Dexterity (2026-09-24)
+
+Kevin wants player melee scaled down, tunable per class in the web editor; a fuller damage
+redesign may come later.
+
+- **Data:** `classes.json` classes can carry `baseMeleeDamage` and `baseRangedDamage`; a class
+  without them uses the old constants, 10 and 8, and the web editor shows those defaults and writes
+  the fields on the next Save of that class. Optional everywhere:
+  the TS type (`shared/src/classes.ts`), the C++ loader (`FValhallaClassTemplate::BaseMeleeDamage`
+  / `BaseRangedDamage`, falling back to `Valhalla::BaseMeleeDamage` / `BaseRangedDamage`).
+- **Web editor:** Classes → Properties has "Base Melee Damage" and "Base Ranged Damage" under the
+  attack speeds. `npm run validate`: error if either is negative or not a number; warning if melee
+  is 0, or if a class with a ranged attack speed has ranged damage 0.
+- **Formula** (`UValhallaSkillComponent`, player auto-attack only):
+  melee = class `baseMeleeDamage` + weapon roll + Strength × 0.4;
+  ranged = class `baseRangedDamage` + bow roll + **Dexterity** × 0.4 (was Strength).
+  `StrengthDamageScaling` 0.8 → 0.4 and new `DexterityDamageScaling` 0.4 in
+  `ValhallaConstants.h`, mirrored as `STRENGTH_DAMAGE_SCALING` / `DEXTERITY_DAMAGE_SCALING` +
+  `computeRangedPhysicalDamage` in `shared/src/stats.ts`. The base is read from the class at swing
+  time, so a web-editor Save + data reload applies on the next swing. Unchanged: NPC melee and
+  ranged (their own template ranges), skills (`SkillStatScaling`), spell damage.
+- **Tests:** `Tools/fixtures/stats_fixtures.json` `physicalDamage` expectations rewritten for 0.4
+  (the other sections untouched); `Valhalla.Core.Stats.DamageRoll` gains the Dexterity and
+  class-default cases; `Valhalla.Core.Data.Loads` checks the two fields were read. TS: `tsc` clean
+  for shared/server/editor, `npm run validate` 0 errors, `npm run smoke` 134/134.
+- **Built and tested:** full editor build (editor closed; `FValhallaClassTemplate` gained two
+  UPROPERTYs), then `Valhalla.` headless: 42 passed, 1 failed — the known
+  `Valhalla.Core.Data.MeshIdFallback` (iron_dagger / bone_totem author a meshId), unrelated.
+  Not yet seen in PIE: a swing's damage against the numbers above.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

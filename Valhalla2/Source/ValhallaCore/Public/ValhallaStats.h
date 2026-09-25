@@ -40,8 +40,11 @@ namespace Valhalla::Stats
 
 	// ── Damage formulas (stats.ts:78-102) ───────────────────────────────
 
-	/** stats.ts:78 — baseDamage + strength * 0.8. */
+	/** stats.ts computePhysicalDamage — melee: baseDamage + strength * StrengthDamageScaling. */
 	VALHALLACORE_API double ComputePhysicalDamage(double BaseDamage, double Strength);
+
+	/** stats.ts computeRangedPhysicalDamage — ranged: baseDamage + dexterity * DexterityDamageScaling. */
+	VALHALLACORE_API double ComputeRangedPhysicalDamage(double BaseDamage, double Dexterity);
 
 	/** stats.ts:85 — baseDamage + intelligence * 0.9. */
 	VALHALLACORE_API double ComputeSpellDamage(double BaseDamage, double Intelligence);

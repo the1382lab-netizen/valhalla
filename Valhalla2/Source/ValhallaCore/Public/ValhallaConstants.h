@@ -57,6 +57,9 @@ namespace Valhalla
 	inline constexpr double InterpolationBufferMs = 100.0;
 
 	// ── Base weapon damage (stats.ts:70-72) ─────────────────────────────
+	// Melee and ranged are per class now (classes.json `baseMeleeDamage` /
+	// `baseRangedDamage`, FValhallaClassTemplate); these are only the
+	// fallbacks for a class without them.
 	inline constexpr double BaseMeleeDamage = 10.0;
 	inline constexpr double BaseRangedDamage = 8.0;
 	inline constexpr double BaseSpellDamage = 12.0;
@@ -67,8 +70,10 @@ namespace Valhalla
 	inline constexpr double UnarmedMaxDamage = 3.0;
 
 	// ── Formula tuning constants (stats.ts) ─────────────────────────────
-	/** computePhysicalDamage: base + strength * this. (stats.ts:79) */
-	inline constexpr double StrengthDamageScaling = 0.8;
+	/** computePhysicalDamage (melee): base + strength * this. (stats.ts; 0.8 in 1.0, 0.4 since 2026-09-24) */
+	inline constexpr double StrengthDamageScaling = 0.4;
+	/** ComputeRangedPhysicalDamage: base + dexterity * this. (stats.ts, 2026-09-24) */
+	inline constexpr double DexterityDamageScaling = 0.4;
 	/** computeSpellDamage: base + intelligence * this. (stats.ts:86) */
 	inline constexpr double IntelligenceDamageScaling = 0.9;
 	/** applyDefenseReduction: reduction = defense / (defense + this). (stats.ts:99) */

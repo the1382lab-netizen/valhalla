@@ -60,6 +60,18 @@ export interface ClassTemplate {
   baseMeleeAttackSpeedMs: number;
   /** Base ranged attack speed in ms when no weapon is equipped. Only meaningful for Ranger. */
   baseRangedAttackSpeedMs: number;
+  /**
+   * Flat damage added to every melee auto-attack, before Strength scaling
+   * (base + weapon roll + strength * STRENGTH_DAMAGE_SCALING). Optional:
+   * BASE_MELEE_DAMAGE when absent.
+   */
+  baseMeleeDamage?: number;
+  /**
+   * Flat damage added to every ranged auto-attack, before Dexterity scaling
+   * (base + bow roll + dexterity * DEXTERITY_DAMAGE_SCALING). Optional:
+   * BASE_RANGED_DAMAGE when absent.
+   */
+  baseRangedDamage?: number;
   /** Line-of-sight vision range in UE units (cm) */
   visionRange: number;
   startingItems?: StartingItem[];

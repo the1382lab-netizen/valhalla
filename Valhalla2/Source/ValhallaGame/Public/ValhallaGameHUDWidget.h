@@ -94,6 +94,8 @@ enum class EValhallaHUDButton : uint8
 	PartyLeave,
 	/** B-21: the cog bottom right; toggles the options menu (as Escape with nothing open). */
 	Options,
+	/** A party frame row (Index = the row, i.e. PartyMemberNames' index): target that member. */
+	PartySelect,
 };
 
 /**
@@ -376,6 +378,20 @@ public:
 	void HandleClicked();
 };
 
+/**
+ * A party frame row (name + HP bar): a click targets that member (Action =
+ * PartySelect, Index = the row). Not focusable, so a click leaves keyboard
+ * focus with the game viewport and WASD keeps walking.
+ */
+UCLASS()
+class VALHALLAGAME_API UValhallaPartyRowButton : public UValhallaHUDButton
+{
+	GENERATED_BODY()
+
+public:
+	UValhallaPartyRowButton(const FObjectInitializer& ObjectInitializer);
+};
+
 /** B-21: how a movable panel takes a user size. */
 enum class EValhallaPanelSizing : uint8
 {
@@ -584,6 +600,14 @@ public:
 	static const TArray<FName>& GetRequiredPanelNames();
 	/** The BindWidgetOptional member names. */
 	static const TArray<FName>& GetOptionalPanelNames();
+	/**
+	 * Panels that eat left clicks wherever they are shown, even where nothing
+	 * in them is clickable (TargetFramePanel, PartyPanel): ApplyClickThrough
+	 * keeps them Visible and NativeOnMouseButtonDown handles a left press on
+	 * them, so a click on the target frame never reaches the world (where
+	 * clicking nothing clears the target).
+	 */
+	static const TArray<FName>& GetClickEatingPanelNames();
 
 	/** Re-read the config from the data subsystem and rebuild every panel. */
 	void Rebuild();
@@ -820,6 +844,8 @@ private:
 	void RestyleNameplates();
 	/** Layout panels, and panels with nothing clickable, stop eating clicks. Returns true when `Widget` is interactive. */
 	bool ApplyClickThrough(UWidget* Widget);
+	/** True when a screen point is over a shown GetClickEatingPanelNames panel (the target frame, the party frame). */
+	bool IsOverClickEatingPanel(const FVector2D& ScreenPosition) const;
 	/** Hidden, unparented stand-in for a designer part the Blueprint lacks; warns once per name (not without a layout). */
 	template <typename T>
 	void EnsureDesignerPart(TObjectPtr<T>& Member, const TCHAR* Name, UClass* ConcreteClass = nullptr);

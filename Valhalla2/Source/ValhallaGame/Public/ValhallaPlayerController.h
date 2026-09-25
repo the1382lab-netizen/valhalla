@@ -163,6 +163,17 @@ public:
 	UFUNCTION(Server, Reliable)
 	void ServerSetTarget(AActor* NewTarget);
 
+	/**
+	 * Target a party member by character name: a click on their party frame
+	 * row. Resolved on the server, because the member's pawn may not be
+	 * relevant to this client (the party names are all it has). Only a member
+	 * of the caller's own party (themselves included) with a pawn in this world
+	 * and not past the caller's vision fog; anything else leaves the current
+	 * target as it is (never a de-target).
+	 */
+	UFUNCTION(Server, Reliable)
+	void ServerSetTargetByName(const FString& MemberName);
+
 	/** What this player has selected, or null. */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Targeting")
 	AActor* GetCurrentTarget() const;

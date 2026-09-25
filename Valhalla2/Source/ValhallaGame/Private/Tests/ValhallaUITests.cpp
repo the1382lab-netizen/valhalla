@@ -34,6 +34,10 @@
 //   Valhalla.Game.UI.EditModeMaths — B-21 step 3: ChooseAnchor's nine cases,
 //     the snap (grid, edges, kept on the canvas), AnchorLayoutForRect put back
 //     through ResolvePanelLayout at any UiScale, and IsInteractiveChild.
+//   Valhalla.Game.UI.HudPlayFixes — Kevin's fixes from play (2026-09-25): the
+//     party row button (PartySelect, not focusable), ServerSetTargetByName,
+//     the click-eating target / party frames, and WBP_GameHUD's vitals order
+//     (class line, HP, mana) and Visible target / party borders.
 //
 // None needs a world or a viewport; all run headless (the bar test makes one
 // bare widget object, never constructed into Slate).
@@ -69,6 +73,7 @@
 #include "InputMappingContext.h"
 #include "ValhallaGameHUDWidget.h"
 #include "ValhallaOptionsMenuWidget.h"
+#include "ValhallaPlayerController.h"
 #include "ValhallaUIConfig.h"
 #include "ValhallaUISettings.h"
 
@@ -810,6 +815,74 @@ bool FValhallaUIEditModeMathsTest::RunTest(const FString& /*Parameters*/)
 	TestFalse(TEXT("a scroll box is dragged (the panel wins)"), UValhallaGameHUDWidget::IsInteractiveChild(Scroll));
 	TestFalse(TEXT("a panel background is dragged"), UValhallaGameHUDWidget::IsInteractiveChild(Border));
 	TestFalse(TEXT("null is not"), UValhallaGameHUDWidget::IsInteractiveChild(nullptr));
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.HudPlayFixes (Kevin's HUD fixes from play, 2026-09-25)
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIHudPlayFixesTest,
+	"Valhalla.Game.UI.HudPlayFixes",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIHudPlayFixesTest::RunTest(const FString& /*Parameters*/)
+{
+	// ── Party rows: a click targets the member ──────────────────────────
+	TestTrue(TEXT("PartySelect comes after the existing actions (their saved values are unchanged)"),
+		static_cast<int32>(EValhallaHUDButton::PartySelect) > static_cast<int32>(EValhallaHUDButton::Options));
+	const UValhallaPartyRowButton* Row = GetDefault<UValhallaPartyRowButton>();
+	TestTrue(TEXT("a party row is a HUD button with Action = PartySelect"), Row->IsA<UValhallaHUDButton>() && Row->Action == EValhallaHUDButton::PartySelect);
+	TestFalse(TEXT("a party row is not focusable (WASD keeps walking after a click)"), Row->GetIsFocusable());
+	const UFunction* ByName = AValhallaPlayerController::StaticClass()->FindFunctionByName(TEXT("ServerSetTargetByName"));
+	TestTrue(TEXT("ServerSetTargetByName is a server RPC"), ByName && ByName->HasAnyFunctionFlags(FUNC_NetServer));
+
+	// ── Target and party frames eat clicks ──────────────────────────────
+	const TArray<FName>& Eaters = UValhallaGameHUDWidget::GetClickEatingPanelNames();
+	TestTrue(TEXT("the click-eating panels are the target and party frames"),
+		Eaters.Num() == 2 && Eaters.Contains(TEXT("TargetFramePanel")) && Eaters.Contains(TEXT("PartyPanel")));
+	for (const FName Name : Eaters)
+	{
+		TestTrue(*FString::Printf(TEXT("%s is an optional panel"), *Name.ToString()), UValhallaGameHUDWidget::GetOptionalPanelNames().Contains(Name));
+	}
+	TestFalse(TEXT("the vitals do not eat clicks"), Eaters.Contains(TEXT("VitalsPanel")));
+
+	// ── WBP_GameHUD ─────────────────────────────────────────────────────
+	if (!FPackageName::DoesPackageExist(TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD")))
+	{
+		AddWarning(TEXT("WBP_GameHUD is not in this build; its tree was not checked."));
+		return true;
+	}
+	const UWidgetBlueprintGeneratedClass* HudClass = Cast<UWidgetBlueprintGeneratedClass>(
+		StaticLoadClass(UValhallaGameHUDWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C")));
+	const UWidgetTree* Tree = HudClass ? HudClass->GetWidgetTreeArchetype() : nullptr;
+	if (!TestNotNull(TEXT("WBP_GameHUD has a tree"), Tree))
+	{
+		return true;
+	}
+	// Vitals top to bottom: the class line, HP, then mana / energy.
+	const UPanelWidget* Vitals = Cast<UPanelWidget>(Tree->FindWidget(TEXT("VitalsPanel")));
+	auto RowOf = [Vitals](const UWidget* Widget)
+	{
+		while (Widget && Widget->GetParent() && Widget->GetParent() != Vitals)
+		{
+			Widget = Widget->GetParent();
+		}
+		return Vitals && Widget ? Vitals->GetChildIndex(Widget) : INDEX_NONE;
+	};
+	const int32 ClassRow = RowOf(Tree->FindWidget(TEXT("ClassText")));
+	const int32 HpRow = RowOf(Tree->FindWidget(TEXT("HpBar")));
+	const int32 ManaRow = RowOf(Tree->FindWidget(TEXT("ManaBar")));
+	TestTrue(TEXT("vitals: all three in VitalsPanel"), ClassRow != INDEX_NONE && HpRow != INDEX_NONE && ManaRow != INDEX_NONE);
+	TestTrue(TEXT("vitals: the class line above the HP bar"), ClassRow < HpRow);
+	TestTrue(TEXT("vitals: the HP bar above the mana / energy bar"), HpRow < ManaRow);
+	for (const FName Name : Eaters)
+	{
+		const UWidget* Frame = Tree->FindWidget(Name);
+		TestTrue(*FString::Printf(TEXT("WBP_GameHUD's %s is a Visible border"), *Name.ToString()),
+			Frame && Frame->IsA<UBorder>() && Frame->GetVisibility() == ESlateVisibility::Visible);
+	}
 	return true;
 }
 

@@ -264,6 +264,13 @@ public:
 	 */
 	void SetTargetActor(AActor* NewTarget);
 
+	/**
+	 * Whether SetTargetActor would keep `Candidate` (false: it would clear the
+	 * selection instead): not past this player's zone vision fog (B-06). Null
+	 * is false; this player's own pawn is always selectable.
+	 */
+	bool CanSelectTarget(const AActor* Candidate) const;
+
 	// ── Server-only ─────────────────────────────────────────────────────
 
 	/** The full resolved stat block. Never replicated (the owner gets ClientStats) — see the class comment. */

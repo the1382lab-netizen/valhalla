@@ -714,6 +714,46 @@ void AValhallaPlayerController::ServerSetTarget_Implementation(AActor* NewTarget
 	ValhallaPS->SetTargetActor(Validated);
 }
 
+void AValhallaPlayerController::ServerSetTargetByName_Implementation(const FString& MemberName)
+{
+	AValhallaPlayerState* ValhallaPS = GetPlayerState<AValhallaPlayerState>();
+	const UValhallaPartySubsystem* Party = UValhallaPartySubsystem::Get(this);
+	if (!ValhallaPS || !Party)
+	{
+		return;
+	}
+
+	// Only this player's own party: a name is not a licence to select anyone
+	// in the world. GetPartyMembers includes the caller (a click on your own
+	// row targets yourself, for a heal).
+	AValhallaPlayerState* Member = nullptr;
+	for (AValhallaPlayerState* Candidate : Party->GetPartyMembers(ValhallaPS))
+	{
+		if (Candidate && Candidate->CharacterName == MemberName)
+		{
+			Member = Candidate;
+			break;
+		}
+	}
+	APawn* MemberPawn = Member ? Member->GetPawn() : nullptr;
+	if (!MemberPawn || !MemberPawn->IsA<AValhallaCharacter>())
+	{
+		UE_LOG(LogValhallaGame, Log, TEXT("%s: party target '%s' refused (%s); target unchanged."), *ValhallaPS->CharacterName, *MemberName,
+			!Member ? TEXT("not in this player's party") : TEXT("no body in this world"));
+		return;
+	}
+	// SetTargetActor clears the target for something past the vision fog; a
+	// party click that cannot select must not clear it.
+	if (!ValhallaPS->CanSelectTarget(MemberPawn))
+	{
+		UE_LOG(LogValhallaGame, Log, TEXT("%s: party target '%s' refused (beyond the vision fog); target unchanged."), *ValhallaPS->CharacterName, *MemberName);
+		return;
+	}
+
+	ValhallaPS->SetTargetActor(MemberPawn);
+	UE_LOG(LogValhallaGame, Log, TEXT("%s: target -> party member %s (%s)"), *ValhallaPS->CharacterName, *MemberName, *MemberPawn->GetName());
+}
+
 void AValhallaPlayerController::ClientOnCombatEvent_Implementation(const FValhallaCombatEvent& Event)
 {
 	// Caster-private events land in the same list the multicast fills, so the

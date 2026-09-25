@@ -672,7 +672,15 @@ def layout_bar(asset_path=BAR_BP, replace=False):
     else:
         _panel(frame, W.LinearColor(1.0, 1.0, 1.0, 0.5), 1)
     background, _ = b.add(W.Border.static_class(), "Background", frame, True)
-    _panel(background, _colour(_get(cfg, "hud.hpBar.colors.bg", "#000000"), _get(cfg, "hud.hpBar.colors.bgAlpha", 0.7)), 1)
+    # Kevin (2026-09-25): the cast bar's sides looked too thick. The frame's
+    # right (and bottom) bevel highlight sits 3-4 texels in from the edge,
+    # under this well; a see-through well (0.7) let it show as a second grey
+    # band beside the 2 px rim wherever the bar is empty (most of a cast),
+    # while the left / top rim is the outer 2 texels only. An opaque well
+    # leaves every side the same 2 px rim (the Frame padding). With the flat
+    # fallback (no frame art) the old see-through well stays.
+    well_alpha = 1.0 if frame_art is not None else _get(cfg, "hud.hpBar.colors.bgAlpha", 0.7)
+    _panel(background, _colour(_get(cfg, "hud.hpBar.colors.bg", "#000000"), well_alpha), 1)
     sizer, _ = b.add(W.SizeBox.static_class(), "Sizer", background, True)
     sizer.set_width_override(width)
     sizer.set_height_override(height)
@@ -872,10 +880,13 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
 
     root, _ = b.add(W.CanvasPanel.static_class(), "HUDRoot")
 
-    # ── vitals (BuildVitals): class line, mana/energy, HP; bottom left ──
-    # Code: HP bar top at -(yOffsetFromBottom + 2), 16 px tall with its frame;
-    # the resource bar `height + gapAboveHp + 2` above it; the class line's
-    # bottom 4 px above the resource bar, 2 px further right than the bars.
+    # ── vitals: class line, HP, mana/energy; bottom left ──
+    # Kevin (2026-09-25): HP on top, the resource bar under it (the code HUD
+    # had mana above HP). The block keeps its footprint: its bottom (now the
+    # resource bar's) sits where the HP bar's was, -(yOffsetFromBottom + 2)
+    # + the framed height; the class line's bottom 4 px above the HP bar, 2 px
+    # further right than the bars; between the bars the old gap
+    # (gapAboveHp - frame padding, i.e. none with the framed bars).
     vitals, s = b.add(W.VerticalBox.static_class(), "VitalsPanel", root, True)
     hp_bottom = hp_off + 2.0 - (hp_h + bar_extra)
     _canvas(s, (0, 1), (0, 1), (hp_x - 2.0, -hp_bottom), 0)
@@ -884,12 +895,10 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
           outline=float(_get(cfg, "hud.classText.strokeThickness", 2)) * 0.5)
     _pad(s, 2, 0, 0, 4)
     _halign(s, "LEFT")
-    # Code: resource bar top at -(yOffset + height + gap + 2), so its framed
-    # bottom is gap - (frame padding) px above the HP bar's top.
-    _, s = bar(vitals, "ManaBar", mana_w, mana_h)
+    _, s = bar(vitals, "HpBar", hp_w, hp_h)
     _pad(s, 0, 0, 0, max(0.0, float(_get(cfg, "hud.manaBar.gapAboveHp", 6)) - bar_extra))
     _halign(s, "LEFT")
-    _, s = bar(vitals, "HpBar", hp_w, hp_h)
+    _, s = bar(vitals, "ManaBar", mana_w, mana_h)
     _halign(s, "LEFT")
 
     # ── action bar (BuildActionBar): bottom centre ──
@@ -906,6 +915,9 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     target, s = b.add(W.Border.static_class(), "TargetFramePanel", root, True)
     _canvas(s, (0.5, 0), (0.5, 0), (0, 12), 5)
     _framed_panel(target, _colour(inv_bg_hex, 0.85), 6, panel_art)
+    # Eats clicks (C++ handles a left press on it): a click on the frame must
+    # not reach the world, where clicking nothing clears the target.
+    _visibility(target, "VISIBLE")
     column, _ = b.add(W.VerticalBox.static_class(), "TargetColumn", target)
     w, _ = b.add(W.TextBlock.static_class(), "TargetName", column, True)
     _text(w, "Target", plate_font + 2, _colour(_get(cfg, "nameplates.color", "#ffffff")), bold=True, outline=plate_outline)
@@ -919,6 +931,8 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     party, s = b.add(W.Border.static_class(), "PartyPanel", root, True)
     _canvas(s, (0, 0), (0, 0), (12, 12), 5)
     _framed_panel(party, _colour("#12122a", 0.92), 6, panel_art)
+    # Eats clicks too; C++ makes each member row a button (click = target them).
+    _visibility(party, "VISIBLE")
     column, _ = b.add(W.VerticalBox.static_class(), "PartyColumn", party)
     header, _ = b.add(W.HorizontalBox.static_class(), "PartyHeader", column)
     w, s = b.add(W.TextBlock.static_class(), "PartyTitle", header, True)

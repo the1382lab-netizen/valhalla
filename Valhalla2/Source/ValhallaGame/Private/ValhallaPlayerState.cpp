@@ -277,6 +277,25 @@ void AValhallaPlayerState::OnRep_Equipment()
 	}
 }
 
+bool AValhallaPlayerState::CanSelectTarget(const AActor* Candidate) const
+{
+	if (!Candidate)
+	{
+		return false;
+	}
+	const APawn* OwnPawn = GetPawn();
+	if (!OwnPawn || Candidate == OwnPawn)
+	{
+		return true;
+	}
+	// This player's own fully fogged distance (class range x the zone's
+	// visionScale); 0 in a zone without vision fog.
+	const FValhallaVision Vision = ValhallaAtmosphere::ResolveVision(this);
+	const float VisionLimit = Vision.bHasVisionFog ? Vision.EffectiveRangeCm : 0.f;
+	return VisionLimit <= 0.f
+		|| FVector::DistSquared2D(OwnPawn->GetActorLocation(), Candidate->GetActorLocation()) <= FMath::Square(static_cast<double>(VisionLimit));
+}
+
 void AValhallaPlayerState::SetTargetActor(AActor* NewTarget)
 {
 	if (!HasAuthority())
@@ -298,20 +317,11 @@ void AValhallaPlayerState::SetTargetActor(AActor* NewTarget)
 	// hides it and the server soon stops sending it, but a click on a capsule
 	// that is still there (or a hand-made RPC) must not select it either. A
 	// zone without an atmosphere profile has no limit, as before.
-	const APawn* OwnPawn = GetPawn();
-	if (Resolved && OwnPawn && Resolved != OwnPawn)
+	if (Resolved && !CanSelectTarget(Resolved))
 	{
-		// This player's own fully fogged distance (class range x the zone's
-		// visionScale); 0 in a zone without vision fog.
-		const FValhallaVision Vision = ValhallaAtmosphere::ResolveVision(this);
-		const float VisionLimit = Vision.bHasVisionFog ? Vision.EffectiveRangeCm : 0.f;
-		if (VisionLimit > 0.f
-			&& FVector::DistSquared2D(OwnPawn->GetActorLocation(), Resolved->GetActorLocation()) > FMath::Square(static_cast<double>(VisionLimit)))
-		{
-			UE_LOG(LogValhallaGame, Verbose, TEXT("%s target %s refused: beyond the %s vision fog (%.0f cm)"),
-				*CharacterName, *Resolved->GetName(), *ZoneId.ToString(), VisionLimit);
-			Resolved = nullptr;
-		}
+		UE_LOG(LogValhallaGame, Verbose, TEXT("%s target %s refused: beyond the %s vision fog"),
+			*CharacterName, *Resolved->GetName(), *ZoneId.ToString());
+		Resolved = nullptr;
 	}
 
 	if (TargetActor.Get() == Resolved)

@@ -2381,6 +2381,73 @@ The MetaHuman is the only body: new armour is built for it only.
 - **Not done:** the crossbow in game (grip + animation, Fable), a plate look check from every angle,
   a playtest pass on camp difficulty with the goblins (1.12).
 
+## HUD fixes from play (2026-09-25)
+
+Kevin's five, from playing. Editor build clean (no warnings); WBP_GameHUD re-laid out
+(`layout_hud_from_config(replace=True)`, 99 widgets, cell / bar / options classes kept) and WBP_HUDBar
+re-laid out, both compiled and saved. PIE: L_World, PIE_Client, 2 clients (cleric + warrior through
+`valhalla.ClassAssignment`), partied with `valhalla.Party`; clicks are real Slate clicks
+(SlateInspector). Screenshots `Saved/ClaudeOps/hudfix/`.
+
+- [x] **Combat log: no "You cast <skill>" after the fact.** `HandleCombatEvent`, `SkillEffect`: the
+      caster's own branch pushes nothing (it came after the effect's line and said nothing new). The
+      event is untouched: it still drives the VFX, the cooldown mirror and the floaters. "You begin
+      casting X (1.5s)" stays, and so does a party member's "X casts Y" on the other members' logs (the
+      empty own-cast branch also keeps a player's own casts out of it, since PartyMemberNames includes
+      them). NPCs cast nothing yet, so there is no NPC line. PIE: "You begin casting Minor Heal (1.5s)",
+      "Player1 healed Player2 for 45 [Minor Heal]", no "You cast" (`09_`).
+- [x] **Vitals: HP on top, mana / energy under it.** `hud_blueprints._layout_game_hud`: VitalsPanel is
+      ClassText, HpBarSize, ManaBarSize (was ClassText, mana, HP); the block keeps its footprint (its
+      bottom where the HP bar's was; the bars are the same height). No C++ assumed the order (TickLayout
+      reads the whole block's height). PIE `00_`, `03_`.
+- [x] **Cast bar: thinner sides.** Not the brush margins (6 texels of T_UI_BarFrame's 128 x 24, drawn
+      6 local px on every side; Slate draws a box margin at the texture's actual size, so the `_box_brush`
+      ImageSize never changed the thickness): the frame's right and bottom bevel highlight sits 3-4
+      texels in from the edge, under the bar's well, and the well was 70% black, so wherever a bar is
+      empty (most of a cast) that highlight showed as a second grey band beside the rim. `layout_bar`: the
+      well (Background) is opaque with the frame art (the flat fallback keeps 0.7), so every side is the
+      same 2 px rim (the Frame padding). All bars use WBP_HUDBar; full bars look as before. Before / after
+      at UI scale 2: `04_`, `06_`, `07_cast_bar_before_top_after_bottom_zoom.png`; scale 1 `08_`.
+- [x] **Party frame: click a member to target them.** `AddPartyRows` makes each row a
+      `UValhallaPartyRowButton` (new: a `UValhallaHUDButton`, Action `PartySelect` (new, after
+      Options), Index = the row, not focusable so WASD keeps walking; no plate, a faint wash on hover /
+      press) holding the name and HP bar; `TickPartyFrame` shows rows Visible. `HandleButton(PartySelect)`
+      sends the row's name to new `AValhallaPlayerController::ServerSetTargetByName`: the server looks the
+      name up among the caller's own party (`UValhallaPartySubsystem::GetPartyMembers`, self included),
+      takes that member's pawn and selects it; not in the party, no pawn, or past the vision fog: a log
+      line and the target is left alone (never a de-target). The fog test is
+      `AValhallaPlayerState::CanSelectTarget`, split out of `SetTargetActor`. PIE: a click on "Player2"
+      -> `party row 1 clicked: target Player2`, `Player1: target -> party member Player2
+      (ValhallaCharacter_1)`, target frame shows Player2 (`01_`).
+- [x] **Target frame: a click keeps the target.** The frame was a Visible border, but a border does not
+      handle a click, so it bubbled to the game viewport, became a world click, and a world click on
+      nothing clears the target. `GetClickEatingPanelNames()` (TargetFramePanel, PartyPanel):
+      `ApplyClickThrough` keeps them Visible and `NativeOnMouseButtonDown` returns Handled for a left
+      press over a shown one (`IsOverClickEatingPanel`; right presses pass, for the camera orbit). The
+      Python sets both borders Visible. PIE with LogValhallaGame Verbose: clicks on the target's name, its
+      HP bar and the party title: no `target -> <none>`; a click on the vitals' class line (not
+      click-eating) and on bare world: `target -> <none>` (`02_`).
+- [x] **Test `Valhalla.Game.UI.HudPlayFixes`:** PartySelect after Options, the row button (PartySelect,
+      not focusable), ServerSetTargetByName a server RPC, the click-eating list (not the vitals),
+      WBP_GameHUD's vitals order (class line, HP, mana) and Visible target / party borders. Full
+      `Valhalla.` run on the final build: 46 tests, 45 pass, the known `Valhalla.Core.Data.MeshIdFallback`
+      fails (`Valhalla.Game.Anim.Gait` passes).
+- **Gait thresholds (6caa9fff / 263f3291) built and run** (`Saved/ClaudeOps/gait/`, `valhalla.UI walk`,
+  cleric): 150 -> `gait Idle->Walk at 150 cm/s (rate 0.76)`; 250 -> `Idle->Jog at 250 (rate 0.64)`; 400
+  -> `Idle->Jog at 321 (rate 0.82)`. **At 200 (every class's baseSpeed) the player walks, not jogs**
+  (two runs): `Idle->Walk at 200 cm/s (rate 1.02)` on the owning client and the server, and no change
+  to Jog while it holds 200. The measured speed (`GetVelocity().Size2D()`) of a character capped at
+  MaxWalkSpeed 200 is a hair under 200, and `ChooseGait` wants `Speed >= JogSpeed`. The other client's
+  view of the same character flickers Walk / Jog (`Walk->Jog at 200`, `Jog->Walk at 147 / 170`):
+  simulated-proxy speed jitter is larger than the 10 cm/s hysteresis. Not changed here (Kevin's
+  rule): a small tolerance on the way up (e.g. `Speed + 1 >= JogSpeed`) and a wider or time-based
+  hysteresis for proxies would do it. `valhalla.Speed 0` afterwards.
+- Known: the party rows are buttons, so in edit mode (unlocked) the party panel is dragged by its title
+  or border, not its rows (IsInteractiveChild lets buttons through). A HUD call driven from
+  the console through MCP (a `valhalla.UI`-style verb tried during the run, since removed) ran the
+  client's `ServerSetTargetByName` in the client world (refused there, target unchanged), so the party
+  click was checked with real clicks only; those reach the server.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

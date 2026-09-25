@@ -1009,6 +1009,14 @@ void UValhallaHUDButton::HandleClicked()
 	}
 }
 
+UValhallaPartyRowButton::UValhallaPartyRowButton(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	// Keyboard focus stays with the game viewport (WASD keeps walking).
+	InitIsFocusable(false);
+	Action = EValhallaHUDButton::PartySelect;
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Bars
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1402,6 +1410,14 @@ const TArray<FName>& UValhallaGameHUDWidget::GetOptionalPanelNames()
 		TEXT("DeathOverlay"), TEXT("DeathText"),
 		TEXT("OptionsButton"),
 	};
+	return Names;
+}
+
+const TArray<FName>& UValhallaGameHUDWidget::GetClickEatingPanelNames()
+{
+	// A click on either used to fall through to the world: clicking the target
+	// frame (nothing in it is a button) cleared the target.
+	static const TArray<FName> Names = { TEXT("TargetFramePanel"), TEXT("PartyPanel") };
 	return Names;
 }
 
@@ -1891,6 +1907,18 @@ bool UValhallaGameHUDWidget::ApplyClickThrough(UWidget* Widget)
 		return true;
 	}
 
+	// The target and party frames eat clicks over their whole area (their
+	// children were settled above): hit-testable here, and a left press on them
+	// is handled in NativeOnMouseButtonDown, so it never reaches the world.
+	if (GetClickEatingPanelNames().Contains(Widget->GetFName()))
+	{
+		if (Widget->GetVisibility() != ESlateVisibility::Collapsed && Widget->GetVisibility() != ESlateVisibility::Hidden)
+		{
+			Widget->SetVisibility(ESlateVisibility::Visible);
+		}
+		return true;
+	}
+
 	// Layout panels never need to eat clicks. A border (a panel background)
 	// with something clickable in it keeps eating them (as MakePanel's do), so
 	// a click on the inventory does not also walk the character.
@@ -2319,13 +2347,34 @@ void UValhallaGameHUDWidget::AddTargetBuffTokens(UPanelWidget* Row)
 
 void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 {
+	// Each row is a button (name over HP bar): a click targets that member
+	// (HandleButton PartySelect). No plate, only a faint wash on hover / press.
+	FButtonStyle RowStyle;
+	FSlateBrush Clear;
+	Clear.DrawAs = ESlateBrushDrawType::NoDrawType;
+	RowStyle.SetNormal(Clear);
+	RowStyle.SetDisabled(Clear);
+	RowStyle.SetHovered(FSlateRoundedBoxBrush(FLinearColor(1.f, 1.f, 1.f, 0.08f), 2.f));
+	RowStyle.SetPressed(FSlateRoundedBoxBrush(FLinearColor(1.f, 1.f, 1.f, 0.16f), 2.f));
+	RowStyle.SetNormalPadding(FMargin(0.f));
+	RowStyle.SetPressedPadding(FMargin(0.f));
 	for (int32 Index = 0; Index < ValhallaPartyMaxMembers; ++Index)
 	{
-		UVerticalBox* Row = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		UValhallaPartyRowButton* Row = WidgetTree->ConstructWidget<UValhallaPartyRowButton>(UValhallaPartyRowButton::StaticClass());
+		Row->Action = EValhallaHUDButton::PartySelect;
+		Row->Index = Index;
+		Row->Hud = this;
+		Row->SetStyle(RowStyle);
+		Row->SetBackgroundColor(FLinearColor::White);
+		Row->OnClicked.AddDynamic(Row, &UValhallaHUDButton::HandleClicked);
+		UVerticalBox* RowColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
+		Row->SetContent(RowColumn);
 		UTextBlock* Name = MakeText(FString(), 8, EffectiveValueColour(), false);
-		Row->AddChildToVerticalBox(Name);
+		Name->SetVisibility(ESlateVisibility::HitTestInvisible);
+		RowColumn->AddChildToVerticalBox(Name);
 		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, EffectiveHpHighColour(), FLinearColor::Black, 0.7f, false, 6);
-		Row->AddChildToVerticalBox(Bar);
+		Bar->SetVisibility(ESlateVisibility::HitTestInvisible);
+		RowColumn->AddChildToVerticalBox(Bar);
 		if (UVerticalBoxSlot* RowSlot = Cast<UVerticalBoxSlot>(Column->AddChild(Row)))
 		{
 			RowSlot->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
@@ -2434,7 +2483,28 @@ FReply UValhallaGameHUDWidget::NativeOnMouseButtonDown(const FGeometry& InGeomet
 			FilterMenu->SetVisibility(ESlateVisibility::Collapsed);
 		}
 	}
+
+	// A left press on the target or party frame (outside its buttons, which
+	// handle their own) stops here. Unhandled, it would bubble to the game
+	// viewport and become a world click, and a world click on nothing clears
+	// the target. Right presses still pass (the camera orbit).
+	if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && IsOverClickEatingPanel(InMouseEvent.GetScreenSpacePosition()))
+	{
+		return FReply::Handled();
+	}
 	return Super::NativeOnMouseButtonDown(InGeometry, InMouseEvent);
+}
+
+bool UValhallaGameHUDWidget::IsOverClickEatingPanel(const FVector2D& ScreenPosition) const
+{
+	for (const UWidget* Frame : { static_cast<const UWidget*>(TargetFramePanel.Get()), static_cast<const UWidget*>(PartyPanel.Get()) })
+	{
+		if (Frame && Frame->IsVisible() && Frame->GetCachedGeometry().IsUnderLocation(ScreenPosition))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2811,7 +2881,8 @@ void UValhallaGameHUDWidget::TickPartyFrame()
 				}
 			}
 		}
-		PartyRows[Index]->SetVisibility(ESlateVisibility::HitTestInvisible);
+		// Visible: the row is a button, a click targets the member.
+		PartyRows[Index]->SetVisibility(ESlateVisibility::Visible);
 		PartyNames[Index]->SetText(AsText(FString::Printf(TEXT("%s%s%s"),
 			Index == 0 ? TEXT("* ") : TEXT(""), *Name,
 			Member ? *FString::Printf(TEXT("  Lv %d"), Member->Level) : TEXT(""))));
@@ -3423,7 +3494,12 @@ void UValhallaGameHUDWidget::HandleCombatEvent(const FValhallaCombatEvent& Event
 		}
 		else if (bByMe)
 		{
-			PushCombatLog(FString::Printf(TEXT("You cast %s"), *SkillName(Event.SkillId)), Srgb(0xcc, 0xaa, 0xff), TEXT("casts"));
+			// Kevin (2026-09-25): no "You cast <skill>" line. It came after the
+			// effect's own line ("... healed ... for N", the hit, the buff) and
+			// said nothing new; "You begin casting" still marks a cast-time
+			// start. The event itself still drives the VFX, the cooldown mirror
+			// and the floaters. This branch also keeps a party member's own casts
+			// out of the "X casts Y" line below (PartyMemberNames includes them).
 		}
 		else if (bParty)
 		{
@@ -4064,6 +4140,15 @@ void UValhallaGameHUDWidget::HandleButton(EValhallaHUDButton Action, int32 Index
 		break;
 	case EValhallaHUDButton::Options:
 		ToggleOptions();
+		break;
+	case EValhallaHUDButton::PartySelect:
+		// The server resolves the name to the member's pawn (it may not be
+		// relevant to this client) and leaves the target alone when it cannot.
+		if (const AValhallaPlayerState* PS = GetValhallaPlayerState(); PS && PS->PartyMemberNames.IsValidIndex(Index))
+		{
+			UE_LOG(LogValhallaHUD, Log, TEXT("party row %d clicked: target %s"), Index, *PS->PartyMemberNames[Index]);
+			PC->ServerSetTargetByName(PS->PartyMemberNames[Index]);
+		}
 		break;
 	default:
 		break;

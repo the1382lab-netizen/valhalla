@@ -219,10 +219,10 @@ export const NPCEditor: React.FC = () => {
   };
 
   return (
-    <div className="split-horizontal">
+    <div className="split-horizontal split-fill">
       <div className="panel">
         <div className="panel-header">NPCs & Enemies ({npcList.length})</div>
-        <div className="panel-body">
+        <div className="panel-body list-body">
           <div className="search-box">
             <span className="search-icon">🔍</span>
             <input
@@ -243,6 +243,7 @@ export const NPCEditor: React.FC = () => {
             </button>
           </div>
 
+          <div className="list-scroll">
           <table className="data-table">
             <thead>
               <tr>
@@ -272,12 +273,13 @@ export const NPCEditor: React.FC = () => {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
 
       <div className="panel">
         <div className="panel-header">NPC Details</div>
-        <div className="panel-body" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
+        <div className="panel-body">
           {selectedNpc ? (
             <>
               <IdField

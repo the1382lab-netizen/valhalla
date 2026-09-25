@@ -756,7 +756,7 @@ void AValhallaPlayerController::ServerSetTargetByName_Implementation(const FStri
 
 void AValhallaPlayerController::ClientOnCombatEvent_Implementation(const FValhallaCombatEvent& Event)
 {
-	// Caster-private events land in the same list the multicast fills, so the
+	// Caster-private events land in the same list the batches fill, so the
 	// HUD has one place to read from and does not care how an event arrived.
 	if (AValhallaGameState* GameState = GetWorld() ? GetWorld()->GetGameState<AValhallaGameState>() : nullptr)
 	{
@@ -766,6 +766,22 @@ void AValhallaPlayerController::ClientOnCombatEvent_Implementation(const FValhal
 	if (Event.Kind == EValhallaCombatEventKind::SkillFailed)
 	{
 		UE_LOG(LogValhallaGame, Log, TEXT("skillFailed: %s"), *Event.Text);
+	}
+}
+
+void AValhallaPlayerController::ClientCombatEvents_Implementation(const TArray<FValhallaCombatEvent>& Events)
+{
+	if (AValhallaGameState* GameState = GetWorld() ? GetWorld()->GetGameState<AValhallaGameState>() : nullptr)
+	{
+		GameState->ReceiveCombatEvents(Events);
+	}
+}
+
+void AValhallaPlayerController::ClientCombatEventsSeen_Implementation(const TArray<FValhallaCombatEvent>& Events)
+{
+	if (AValhallaGameState* GameState = GetWorld() ? GetWorld()->GetGameState<AValhallaGameState>() : nullptr)
+	{
+		GameState->ReceiveCombatEvents(Events);
 	}
 }
 

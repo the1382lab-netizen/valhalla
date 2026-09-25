@@ -20,6 +20,11 @@ script runs the editor binaries (no packaged build needed), vsync off, no frame 
   `_WorldLayer`, `_RefreshCombatLog`, `_RefreshChatLines`, `_SpawnFloater`, ...) and the
   vision fog (`Valhalla_Fog_GatherSegments`, `_VisibilityPolygon`, `_VisibleRT`, `_ExploredRT`).
 - CSV stat `Valhalla/CombatEventsReceived`: combat events a process received per frame.
+- CSV stat `Valhalla/CombatEventsUnresolved` (client): events that arrived naming no actor the client has,
+  the events of a fight it cannot see (0 since B-27 Phase 3; `csv_summary.py --combat` prints it as
+  "unseen"). Server: `Valhalla/CombatEventsSentGuaranteed`, `…SentSeen`, `…Skipped`.
+- `combat_bench.cmd` with `ROUTING=0` set runs the server with `valhalla.CombatEventRouting 0` (every event to
+  every player, as before Phase 3), for a before-and-after comparison.
 
 ## Reading a trace
 

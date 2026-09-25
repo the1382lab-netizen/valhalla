@@ -6,8 +6,10 @@ rem to Eldmoor camp C2, the ranger to camp C3 and the shaman to camp C1 (fights 
 rem client cannot see). Everyone is kept alive (DebugSetHp every second), retargets every 3 s
 rem casts on timers, and the cleric says something in world chat every 1.5 s. About 2.5 minutes; needs roughly 15 GB of free memory.
 rem Optional: set CLIENT_EXE to a packaged Valhalla2.exe to profile a packaged client.
+rem Optional: set ROUTING=0 to send every combat event to everyone (before B-27 Phase 3).
 call "%~dp0_env.cmd"
 set "CMDS=2400:valhalla.DebugTeleport 80480 7300 warrior,2400:valhalla.DebugTeleport 80530 7260 cleric,2400:valhalla.DebugTeleport 83050 4760 ranger,2400:valhalla.DebugTeleport 86250 8250 shaman,2460:valhalla.DebugTargetNearest,2470:valhalla.DebugAutoAttack,r60:valhalla.DebugSetHp 99999,r180:valhalla.DebugTargetNearest,r240:valhalla.DebugCast warrior_cleave warrior,r300:valhalla.DebugCast cleric_divine_hammer cleric,r360:valhalla.DebugCast ranger_multi_shot ranger,r200:valhalla.DebugCast shaman_flame_shock shaman,r480:valhalla.DebugCast warrior_taunt warrior,r90:valhalla.ChatAs cleric world Pull the next one"
+if defined ROUTING set "CMDS=10:valhalla.CombatEventRouting %ROUTING%,%CMDS%"
 start "" "%UE_EXE%" "%PROJ%" /Game/Valhalla/Maps/L_World -server -log=PerfServer.log -csvCaptureFrames=20000 -ExitAfterCsvProfiling "-csvExecCmds=%CMDS%"
 timeout /t 8 /nobreak >nul
 start "" "%UE_EXE%" "%PROJ%" 127.0.0.1?class=cleric?charname=BotCleric -game -nullrhi -nosound -log=PerfBotB.log

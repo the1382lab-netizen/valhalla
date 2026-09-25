@@ -5,7 +5,9 @@
 Default: frame time, fps, p99, hitches and the thread / GPU times after skipping the first
 N frames (loading). --stats prints the mean and p95 of every column whose name contains one
 of the |-separated words. --combat splits a combat_bench.cmd capture into the time before the
-teleport and 10 s windows after it, with Valhalla/CombatEventsReceived per second.
+teleport and 10 s windows after it, with Valhalla/CombatEventsReceived per second and the
+count of Valhalla/CombatEventsUnresolved ("unseen": events naming no actor the client has, from
+fights it cannot see; B-27's target is 0).
 
 The CSV profiler writes its header row at the end of the file ([HasHeaderRowAtEnd]); rows
 from before a stat first appeared are shorter, so they are padded.
@@ -46,11 +48,13 @@ def summary(label, idx, cols):
         return
     s = sorted(ft)
     ev = sum(cols["Valhalla/CombatEventsReceived"][i] for i in idx)
+    lost = sum(cols["Valhalla/CombatEventsUnresolved"][i] for i in idx)
     secs = sum(ft) / 1000.0
     print(f"{label:24s} fps {1000 / st.mean(ft):6.1f}  frame {st.mean(ft):6.2f} ms  p99 {s[int(len(s) * .99)]:6.2f}  "
           f"max {s[-1]:7.1f}  >33ms {sum(1 for x in ft if x > 33.3):3d} | "
           f"GT {st.mean(cols['GameThreadTime'][i] for i in idx):5.2f}  RT {st.mean(cols['RenderThreadTime'][i] for i in idx):5.2f}  "
-          f"GPU {st.mean(cols['GPUTime'][i] for i in idx):5.2f} | events/s {ev / max(secs, 1e-3):5.1f}")
+          f"GPU {st.mean(cols['GPUTime'][i] for i in idx):5.2f} | events/s {ev / max(secs, 1e-3):5.1f}  "
+          f"unseen {int(lost)}")
 
 
 def main():
@@ -61,7 +65,8 @@ def main():
     ap.add_argument("--combat", action="store_true")
     a = ap.parse_args()
     header, data = load(a.csv)
-    names = ["FrameTime", "GameThreadTime", "RenderThreadTime", "GPUTime", "Valhalla/CombatEventsReceived", "View/PosX"]
+    names = ["FrameTime", "GameThreadTime", "RenderThreadTime", "GPUTime", "Valhalla/CombatEventsReceived",
+             "Valhalla/CombatEventsUnresolved", "View/PosX"]
     cols = {n: column(header, data, n) for n in names}
     print(f"{a.csv}: {len(data)} frames, {len(header)} columns")
     if a.combat:

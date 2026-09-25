@@ -2597,6 +2597,26 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   / 0.59 ms; a chat line 0.15 ms / 0.19 ms. The combat log and chat on screen (screenshot) read as before.
   The first-fight frame's biggest piece in the editor is now `UNiagaraSystem::RequestCompile` (editor only).
   `Valhalla.` suite: 51 tests, 50 pass (known MeshIdFallback).
+- [x] **Phase 3: combat events only to players who should see them.** The game state no longer multicasts.
+      `FlushCombatEvents` records the frame's batch on the server once (the dedicated server's listeners; on a
+      listen server the host's HUD, never sent a copy) and builds one batch per remote player with
+      `AValhallaGameState::RouteCombatEvent`: the player's own events and a party member's while that member is
+      in the same zone go on `AValhallaPlayerController::ClientCombatEvents` (reliable; the combat log);
+      events naming an actor on that player's client (an open actor channel on their connection; under Iris
+      the visibility subsystem's relevancy rule) go on `ClientCombatEventsSeen` (unreliable), except a party
+      member in another zone (their pawn is on every member's client wherever it is); an event naming no
+      actor goes to the players in the zone at its location; nothing else is sent. B-24 hook:
+      `AValhallaPlayerState::bInZoneTransit` (server only, nothing sets it yet): on a loading screen only the
+      guaranteed events. `valhalla.CombatEventRouting 0` sends everything to everyone, as before, for
+      comparison. CSV stats: server `Valhalla/CombatEventsSentGuaranteed`, `…SentSeen`, `…Skipped`; client
+      `Valhalla/CombatEventsUnresolved` (arrived naming no actor it has). `combat_bench.cmd` takes
+      `ROUTING=0`; `csv_summary.py --combat` prints the unseen count. Test `Valhalla.Game.CombatPerf.Routing`.
+- **Phase 3 results** (editor client, combat test, 60 s of fighting, same build with `ROUTING=0` then on):
+  events received 3.5–4.4/s → 1.7–2.4/s; events from fights the client cannot see 105 → 0 (target met).
+  Frame rate unchanged (95–98 fps fighting both ways: at a few events a second their cost on the client was
+  already small; the gain is bandwidth and the server's per-player work as players and camps grow). The
+  warrior's client still receives its own camp's events (its own and the cleric's beside it); the other two
+  camps' no longer arrive. `Valhalla.` suite: 52 tests, 51 pass (known MeshIdFallback).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

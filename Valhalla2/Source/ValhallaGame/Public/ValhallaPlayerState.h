@@ -92,6 +92,13 @@ public:
 	UPROPERTY(Replicated, BlueprintReadOnly, Category = "Valhalla|Identity")
 	FName ZoneId = TEXT("grasslands");
 
+	/**
+	 * Server only, B-24's hook (B-27 Phase 3): true while this player is on a
+	 * loading screen between zones. Combat event routing then sends them only
+	 * their own and their party's guaranteed events. Nothing sets it until B-24.
+	 */
+	bool bInZoneTransit = false;
+
 	// ── Replicated: vitals ──────────────────────────────────────────────
 
 	/** PlayerState.ts:45 `hp`. */

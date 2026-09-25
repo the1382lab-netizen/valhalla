@@ -182,10 +182,26 @@ public:
 
 	/**
 	 * A combat event meant for this player alone — skillFailed, xpGained,
-	 * levelUp. World events arrive on AValhallaGameState's multicast instead.
+	 * levelUp. World events arrive on the two batches below instead.
 	 */
 	UFUNCTION(Client, Unreliable)
 	void ClientOnCombatEvent(const FValhallaCombatEvent& Event);
+
+	/**
+	 * B-27 Phase 3: this frame's events this player is part of, or a party
+	 * member in the same zone is (AValhallaGameState::RouteCombatEvent).
+	 * Reliable: the combat log is written from them.
+	 */
+	UFUNCTION(Client, Reliable)
+	void ClientCombatEvents(const TArray<FValhallaCombatEvent>& Events);
+
+	/**
+	 * B-27 Phase 3: this frame's events that name an actor this client has
+	 * (someone else's fight in view). Unreliable: a lost one is a missing swing
+	 * or spark, and a lagging client is not made to queue them.
+	 */
+	UFUNCTION(Client, Unreliable)
+	void ClientCombatEventsSeen(const TArray<FValhallaCombatEvent>& Events);
 
 	/** The pawn's skill component, or null before the pawn exists. */
 	UValhallaSkillComponent* GetSkillComponent() const;

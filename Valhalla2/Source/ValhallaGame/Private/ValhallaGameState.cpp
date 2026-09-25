@@ -5,6 +5,8 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "Engine/GameInstance.h"
+#include "Engine/NetConnection.h"
+#include "Engine/NetDriver.h"
 #include "EngineUtils.h"
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
@@ -26,6 +28,7 @@
 #include "ValhallaSkillComponent.h"
 #include "ValhallaSpellProjectile.h"
 #include "ValhallaVfxLibrary.h"
+#include "ValhallaVisibilitySubsystem.h"
 #include "ValhallaZoneSubsystem.h"
 
 CSV_DEFINE_CATEGORY(Valhalla, true);
@@ -393,23 +396,261 @@ void AValhallaGameState::FlushCombatEvents()
 		return;
 	}
 
-	// Moved out first: RecordCombatEvent runs on the server too (a multicast
-	// executes locally), and a listener that raised another event while it ran
-	// must land in the next batch rather than in the array being iterated.
+	// Moved out first: RecordCombatEvent runs on the server too, and a listener
+	// that raised another event while it ran must land in the next batch rather
+	// than in the array being iterated.
 	TArray<FValhallaCombatEvent> Batch = MoveTemp(PendingCombatEvents);
 	PendingCombatEvents.Reset();
-	MulticastCombatEvents(Batch);
+
+	// The server handles each event once, as the multicast used to: the
+	// dedicated server's listeners, and on a listen server or standalone the
+	// host's own HUD, bodies and effects. The host is never sent a copy.
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvents);
+		for (const FValhallaCombatEvent& Event : Batch)
+		{
+			RecordCombatEvent(Event);
+		}
+	}
+
+	RouteCombatEvents(Batch);
 }
 
-void AValhallaGameState::MulticastCombatEvents_Implementation(const TArray<FValhallaCombatEvent>& Events)
+namespace
+{
+	/**
+	 * `valhalla.CombatEventRouting` — B-27 Phase 3. 1 (default): each player is
+	 * sent the events they are part of or can see. 0: every player gets every
+	 * event on the reliable batch, as before B-27, for comparing the two in the
+	 * combat benchmark.
+	 */
+	TAutoConsoleVariable<int32> CVarCombatEventRouting(
+		TEXT("valhalla.CombatEventRouting"),
+		1,
+		TEXT("Server. 1: send each player only the combat events they are part of or can see. 0: send every event to everyone."),
+		ECVF_Default);
+
+	/** The router's facts about one actor that do not depend on who is receiving. */
+	FValhallaCombatEventActor DescribeEventActor(const AActor* Actor)
+	{
+		FValhallaCombatEventActor Out;
+		Out.Actor = Actor;
+		const APawn* Pawn = Cast<APawn>(Actor);
+		if (const AValhallaPlayerState* PlayerState = Pawn ? Pawn->GetPlayerState<AValhallaPlayerState>() : nullptr)
+		{
+			Out.PlayerState = PlayerState;
+			Out.ZoneId = PlayerState->ZoneId;
+			Out.PartyId = PlayerState->PartyId;
+		}
+		return Out;
+	}
+
+	/**
+	 * Is `Actor` on `Controller`'s client right now? The replication system's
+	 * own answer: an open actor channel on the connection. Under Iris there are
+	 * no actor channels, so it falls back to the relevancy rule that decides
+	 * them (UValhallaVisibilitySubsystem::IsRelevantForViewer).
+	 */
+	bool IsOnClient(const APlayerController* Controller, const AActor* Actor)
+	{
+		if (!Actor)
+		{
+			return false;
+		}
+		if (Actor->bAlwaysRelevant)
+		{
+			return true;
+		}
+		UNetConnection* Connection = Controller->GetNetConnection();
+		if (!Connection)
+		{
+			return true;
+		}
+		const UNetDriver* Driver = Connection->GetDriver();
+		if (Driver && Driver->IsUsingIrisReplication())
+		{
+			return UValhallaVisibilitySubsystem::IsRelevantForViewer(Actor, Controller, Controller->GetViewTarget());
+		}
+		return Connection->FindActorChannelRef(TWeakObjectPtr<AActor>(const_cast<AActor*>(Actor))) != nullptr;
+	}
+}
+
+EValhallaCombatEventRoute AValhallaGameState::RouteCombatEvent(const FValhallaCombatEventViewer& Viewer,
+	const FValhallaCombatEventActor& Target, const FValhallaCombatEventActor& Instigator, FName EventZone)
+{
+	const FValhallaCombatEventActor* Actors[2] = { &Target, &Instigator };
+
+	auto IsPartyMember = [&Viewer](const FValhallaCombatEventActor& Actor)
+	{
+		return Viewer.PartyId != 0 && Actor.PartyId == Viewer.PartyId;
+	};
+
+	// The player's own events, and their party's while the member is in the
+	// same zone (decision 4): the combat log is written from these.
+	for (const FValhallaCombatEventActor* Actor : Actors)
+	{
+		if (!Actor->Actor)
+		{
+			continue;
+		}
+		const bool bSelf = Actor->Actor == Viewer.Pawn || (Actor->PlayerState && Actor->PlayerState == Viewer.PlayerState);
+		if (bSelf || (IsPartyMember(*Actor) && Actor->ZoneId == Viewer.ZoneId))
+		{
+			return EValhallaCombatEventRoute::Guaranteed;
+		}
+	}
+
+	// B-24: on a loading screen nothing around the player is drawn.
+	if (Viewer.bInTransit)
+	{
+		return EValhallaCombatEventRoute::Skip;
+	}
+
+	bool bNamesAnActor = false;
+	for (const FValhallaCombatEventActor* Actor : Actors)
+	{
+		if (!Actor->Actor)
+		{
+			continue;
+		}
+		bNamesAnActor = true;
+		// A party member's pawn is on every member's client wherever it is (the
+		// visibility subsystem's party rule), so being there says nothing about
+		// being seen: a member in another zone does not count (one in the same
+		// zone was guaranteed above).
+		if (Actor->bOnClient && !IsPartyMember(*Actor))
+		{
+			return EValhallaCombatEventRoute::Seen;
+		}
+	}
+
+	// An event with no actor at all (its caster gone): whoever is in its zone.
+	if (!bNamesAnActor && !EventZone.IsNone() && EventZone == Viewer.ZoneId)
+	{
+		return EValhallaCombatEventRoute::Seen;
+	}
+	return EValhallaCombatEventRoute::Skip;
+}
+
+void AValhallaGameState::RouteCombatEvents(const TArray<FValhallaCombatEvent>& Batch)
+{
+	UWorld* World = GetWorld();
+	if (!World || GetNetMode() == NM_Standalone)
+	{
+		return;
+	}
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvents_Route);
+
+	const bool bRoute = CVarCombatEventRouting.GetValueOnGameThread() != 0;
+
+	// What does not depend on the receiver, once per event.
+	struct FEventFacts
+	{
+		FValhallaCombatEventActor Target;
+		FValhallaCombatEventActor Instigator;
+		FName Zone;
+	};
+	TArray<FEventFacts> Facts;
+	if (bRoute)
+	{
+		const UValhallaZoneSubsystem* Zones = World->GetSubsystem<UValhallaZoneSubsystem>();
+		Facts.Reserve(Batch.Num());
+		for (const FValhallaCombatEvent& Event : Batch)
+		{
+			FEventFacts& Fact = Facts.AddDefaulted_GetRef();
+			Fact.Target = DescribeEventActor(Event.Target);
+			Fact.Instigator = DescribeEventActor(Event.Instigator);
+			if (!Event.Target && !Event.Instigator && Zones)
+			{
+				const FValhallaZoneDef* Zone = Zones->GetZoneAt(Event.Location);
+				Fact.Zone = Zone ? Zone->ZoneId : NAME_None;
+			}
+		}
+	}
+
+	int32 SentGuaranteed = 0;
+	int32 SentSeen = 0;
+	int32 Skipped = 0;
+	TArray<FValhallaCombatEvent> Guaranteed;
+	TArray<FValhallaCombatEvent> Seen;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		AValhallaPlayerController* Controller = Cast<AValhallaPlayerController>(It->Get());
+		// A local controller (the listen-server host) already has the events.
+		if (!Controller || Controller->IsLocalController())
+		{
+			continue;
+		}
+
+		if (!bRoute)
+		{
+			Controller->ClientCombatEvents(Batch);
+			SentGuaranteed += Batch.Num();
+			continue;
+		}
+
+		const AValhallaPlayerState* PlayerState = Controller->GetPlayerState<AValhallaPlayerState>();
+		FValhallaCombatEventViewer Viewer;
+		Viewer.Pawn = Controller->GetPawn();
+		Viewer.PlayerState = PlayerState;
+		Viewer.ZoneId = PlayerState ? PlayerState->ZoneId : NAME_None;
+		Viewer.PartyId = PlayerState ? PlayerState->PartyId : 0;
+		Viewer.bInTransit = PlayerState && PlayerState->bInZoneTransit;
+
+		Guaranteed.Reset();
+		Seen.Reset();
+		for (int32 Index = 0; Index < Batch.Num(); ++Index)
+		{
+			FEventFacts& Fact = Facts[Index];
+			Fact.Target.bOnClient = IsOnClient(Controller, Fact.Target.Actor);
+			Fact.Instigator.bOnClient = IsOnClient(Controller, Fact.Instigator.Actor);
+			switch (RouteCombatEvent(Viewer, Fact.Target, Fact.Instigator, Fact.Zone))
+			{
+			case EValhallaCombatEventRoute::Guaranteed:
+				Guaranteed.Add(Batch[Index]);
+				break;
+			case EValhallaCombatEventRoute::Seen:
+				Seen.Add(Batch[Index]);
+				break;
+			default:
+				++Skipped;
+				break;
+			}
+		}
+
+		// The guaranteed batch first, so on a clean link a frame's events arrive
+		// in the order they were raised.
+		if (Guaranteed.Num() > 0)
+		{
+			Controller->ClientCombatEvents(Guaranteed);
+			SentGuaranteed += Guaranteed.Num();
+		}
+		if (Seen.Num() > 0)
+		{
+			Controller->ClientCombatEventsSeen(Seen);
+			SentSeen += Seen.Num();
+		}
+	}
+
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsSentGuaranteed, SentGuaranteed, ECsvCustomStatOp::Accumulate);
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsSentSeen, SentSeen, ECsvCustomStatOp::Accumulate);
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsSkipped, Skipped, ECsvCustomStatOp::Accumulate);
+}
+
+void AValhallaGameState::ReceiveCombatEvents(const TArray<FValhallaCombatEvent>& Events)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_CombatEvents);
-	// Every client gets every batch (a GameState multicast): how many per frame, for the CSV profiler.
-	CSV_CUSTOM_STAT(Valhalla, CombatEventsReceived, Events.Num(), ECsvCustomStatOp::Accumulate);
+	// How many per frame, for the CSV profiler; and how many arrived naming no
+	// actor this client has (the events of a fight it cannot see: B-27's target is 0).
+	int32 Unresolved = 0;
 	for (const FValhallaCombatEvent& Event : Events)
 	{
+		Unresolved += (!Event.Target && !Event.Instigator) ? 1 : 0;
 		RecordCombatEvent(Event);
 	}
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsReceived, Events.Num(), ECsvCustomStatOp::Accumulate);
+	CSV_CUSTOM_STAT(Valhalla, CombatEventsUnresolved, Unresolved, ECsvCustomStatOp::Accumulate);
 }
 
 void AValhallaGameState::MirrorCooldownFromEvent(const FValhallaCombatEvent& Event)

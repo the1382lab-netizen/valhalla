@@ -7,7 +7,53 @@
 #include "ValhallaGameTypes.h"
 #include "ValhallaGameState.generated.h"
 
+class APlayerState;
+
 /**
+ * B-27 Phase 3: how one combat event reaches one player.
+ *
+ *   Guaranteed — the player is part of it, or a party member in the same zone
+ *                is: the combat log is written from these, so they go on the
+ *                reliable batch.
+ *   Seen       — it names an actor that exists on the player's client (the
+ *                replication system has it on their connection): the swing,
+ *                the flinch and the spell effect, on the unreliable batch.
+ *   Skip       — anything else. A fight the player cannot see costs them nothing.
+ */
+enum class EValhallaCombatEventRoute : uint8
+{
+	Skip,
+	Seen,
+	Guaranteed,
+};
+
+/** The router's view of one player receiving events. Server only; plain data so the rule is testable. */
+struct FValhallaCombatEventViewer
+{
+	const AActor* Pawn = nullptr;
+	const APlayerState* PlayerState = nullptr;
+	FName ZoneId;
+	/** 0: no party. */
+	int32 PartyId = 0;
+	/** B-24's loading screen: only the player's own and their party's guaranteed events. */
+	bool bInTransit = false;
+};
+
+/** The router's view of one actor an event names (its Target or its Instigator). */
+struct FValhallaCombatEventActor
+{
+	const AActor* Actor = nullptr;
+	/** The actor's player, null for an NPC. */
+	const APlayerState* PlayerState = nullptr;
+	/** The actor's player's zone and party (None / 0 for an NPC). */
+	FName ZoneId;
+	int32 PartyId = 0;
+	/** The actor is on the viewer's client. Per viewer. */
+	bool bOnClient = false;
+};
+
+/**
+ * The port of the parts of `GameRoom` that are world state rather than rules:
  * The port of the parts of `GameRoom` that are world state rather than rules:
  * the authoritative clock and the zone every connected player is in.
  *
@@ -70,13 +116,27 @@ public:
 	 * One reliable batch per frame is one RPC call per frame, is never
 	 * dropped, and keeps the events in the order the server raised them.
 	 *
+	 * B-27 Phase 3: no longer a multicast. FlushCombatEvents records the batch
+	 * on the server once and builds one batch per remote player
+	 * (RouteCombatEvent): the events they must have on the reliable
+	 * AValhallaPlayerController::ClientCombatEvents, the ones they can see on
+	 * the unreliable ClientCombatEventsSeen, nothing from fights they cannot
+	 * see. Each is still one RPC per frame, in the order the server raised them.
+	 *
 	 * Called on a client (a listen-less standalone test), records locally.
 	 */
 	void QueueCombatEvent(const FValhallaCombatEvent& Event);
 
-	/** The batch. Reliable; see QueueCombatEvent for why. */
-	UFUNCTION(NetMulticast, Reliable)
-	void MulticastCombatEvents(const TArray<FValhallaCombatEvent>& Events);
+	/**
+	 * B-27 Phase 3: where one event goes for one player. Pure; tested
+	 * (Valhalla.Game.CombatPerf.Routing). `EventZone` is the zone at the event's
+	 * Location, used only when it names no actor at all.
+	 */
+	static EValhallaCombatEventRoute RouteCombatEvent(const FValhallaCombatEventViewer& Viewer,
+		const FValhallaCombatEventActor& Target, const FValhallaCombatEventActor& Instigator, FName EventZone);
+
+	/** Client: a batch from the server (either RPC). Records every event, counts them for the CSV profiler. */
+	void ReceiveCombatEvents(const TArray<FValhallaCombatEvent>& Events);
 
 	/** Fired on every end for every recorded event. The HUD's combat log and floaters listen here. */
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnValhallaCombatEvent, const FValhallaCombatEvent&);
@@ -89,7 +149,7 @@ public:
 	 */
 	const TArray<TPair<double, FValhallaCombatEvent>>& GetRecentEvents() const { return RecentEvents; }
 
-	/** Record an event locally. Called by the multicast and by caster-private RPCs. */
+	/** Record an event locally. Called by the flush on the server, the batch RPCs and caster-private RPCs. */
 	void RecordCombatEvent(const FValhallaCombatEvent& Event);
 
 	/** How long a floating number stays up, seconds. */
@@ -182,8 +242,11 @@ private:
 	/** Events raised this frame, sent by FlushCombatEvents at the end of Tick. Server only. */
 	TArray<FValhallaCombatEvent> PendingCombatEvents;
 
-	/** Send PendingCombatEvents as one batch. */
+	/** Record PendingCombatEvents here and send each remote player their batch. */
 	void FlushCombatEvents();
+
+	/** B-27 Phase 3: each remote player's guaranteed and seen batches (RouteCombatEvent). */
+	void RouteCombatEvents(const TArray<FValhallaCombatEvent>& Batch);
 
 	/**
 	 * Client only: mirror a cooldown locally when our own skillEffect arrives.

@@ -2442,6 +2442,32 @@ re-laid out, both compiled and saved. PIE: L_World, PIE_Client, 2 clients (cleri
   simulated-proxy speed jitter is larger than the 10 cm/s hysteresis. Not changed here (Kevin's
   rule): a small tolerance on the way up (e.g. `Speed + 1 >= JogSpeed`) and a wider or time-based
   hysteresis for proxies would do it. `valhalla.Speed 0` afterwards.
+- [x] **Gait fix: 200 jogs, other clients' views do not flicker.** Rule (`ChooseGait`, new `Tolerance`
+      argument): jog at `Speed >= JogSpeed - JogTolerance` (196), from a jog back to a walk only below
+      `JogSpeed - JogTolerance - Hysteresis` (186). 200 is still the jog; the tolerance only absorbs the
+      movement component measuring a hair under MaxWalkSpeed (199.4 in PIE). A simulated proxy
+      (`GetLocalRole() == ROLE_SimulatedProxy`) chooses from its speed averaged over ~0.15 s
+      (`SmoothProxySpeed`, `ProxySpeedTimeConstant`) with `ProxyHysteresis` (drops to a walk below 156);
+      the average restarts from the raw speed whenever the proxy is idle, and idle is always the raw
+      speed. Local and server bodies keep the raw speed and `GaitHysteresis`. Settings `JogTolerance` 4
+      and `ProxyHysteresis` 40 (DefaultGame.ini). A proxy's log line adds the raw speed:
+      `gait Idle->Jog at 199 cm/s (proxy, raw 199, rate 0.60)`. Test `Valhalla.Game.Anim.Gait`: 196 jogs /
+      195 walks from a walk, 187 jogs / 185 walks from a jog, a 200 +- 15 proxy stream never leaves the
+      jog (raw and averaged; the same stream with 10 cm/s does flicker), smoothing and the new defaults.
+      Full `Valhalla.` run: 46 tests, 45 pass, the known `MeshIdFallback` fails.
+      PIE (L_World, PIE_Client, 2 clients, cleric walking on open ground at (1600, 1500) with
+      `valhalla.UI @cleric walk d 4`, warrior watching; `Saved/ClaudeOps/gait/fix_*`): 200 (two runs):
+      `Idle->Jog at 200` on the owning client and the server, `Idle->Jog at 199 (proxy)` on the other
+      client, then `Jog->Idle` at the stop, 0 Walk / Jog changes on any of the three; the proxy's
+      sampled raw speed was a steady 199.4 the whole way. 150: `Idle->Walk at 150` on all three. 250:
+      `Idle->Jog at 250` on all three. The 147 / 170 in the first run were most likely real slowdowns
+      at the spawn's fences rather than network jitter (in-process PIE replicates a steady 199.4 on open
+      ground): walked from the spawn along the fences, the owner and server log `Jog->Walk at 141 / 143
+      / 186` themselves, while the other client's view stayed a jog through it (raw 143-200, below 156
+      only for single samples). Known trade-off: a proxy that slows from a jog to a steady
+      156-185 keeps jogging while the owner walks. Server-side NPCs chasing at 200 still flip Walk / Jog
+      a few times a second (path-following speed dips to 150-190 on the server itself; not a gait-rule
+      issue, the proxies of them are now averaged). `valhalla.Speed 0` afterwards; PIE settings put back.
 - Known: the party rows are buttons, so in edit mode (unlocked) the party panel is dragged by its title
   or border, not its rows (IsInteractiveChild lets buttons through). A HUD call driven from
   the console through MCP (a `valhalla.UI`-style verb tried during the run, since removed) ran the

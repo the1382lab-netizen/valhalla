@@ -187,17 +187,29 @@ public:
 
 	/**
 	 * The locomotion cycle for a ground speed, cm/s (Project Settings >
-	 * Valhalla > Locomotion supplies the three numbers):
+	 * Valhalla > Locomotion supplies the numbers):
 	 *
 	 *   Speed < MovingSpeed                       Idle
-	 *   otherwise, from Idle or Walk              Jog if Speed >= JogSpeed, else Walk
-	 *   otherwise, from Jog                       Walk only once Speed < JogSpeed - Hysteresis
+	 *   otherwise, from Idle or Walk              Jog if Speed >= JogSpeed - Tolerance, else Walk
+	 *   otherwise, from Jog                       Walk only once Speed < JogSpeed - Tolerance - Hysteresis
 	 *
-	 * so exactly JogSpeed jogs, and a jog slowing through the threshold keeps
-	 * jogging for Hysteresis cm/s before it walks. Pure; pinned by
-	 * Valhalla.Game.Anim.Gait.
+	 * so JogSpeed jogs even when measured a hair under it (Tolerance), and a
+	 * jog slowing through the threshold keeps jogging for Hysteresis cm/s
+	 * before it walks. Negative Hysteresis / Tolerance count as 0. Pure;
+	 * pinned by Valhalla.Game.Anim.Gait.
 	 */
-	static EValhallaGait ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis);
+	static EValhallaGait ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis, float Tolerance);
+
+	/**
+	 * One step of the exponential average a simulated proxy's speed goes
+	 * through before ChooseGait: Smoothed moves toward Raw by
+	 * 1 - exp(-DeltaSeconds / TimeConstant). A non-positive TimeConstant
+	 * returns Raw. Pure; pinned by Valhalla.Game.Anim.Gait.
+	 */
+	static float SmoothProxySpeed(float Smoothed, float Raw, float DeltaSeconds, float TimeConstant);
+
+	/** Time constant of the proxy speed average, seconds. */
+	static constexpr float ProxySpeedTimeConstant = 0.15f;
 
 	/** The gait the body is in now. */
 	EValhallaGait GetGait() const { return Gait; }
@@ -214,9 +226,10 @@ protected:
 
 	/**
 	 * Idle, walk or jog, from the owner's ground speed (ChooseGait), and the
-	 * cycle's play rate matched to that speed.
+	 * cycle's play rate matched to that speed. A simulated proxy chooses from
+	 * its smoothed speed with ProxyHysteresis; idle is always the raw speed.
 	 */
-	void TickLocomotion();
+	void TickLocomotion(float DeltaSeconds);
 
 	/** Poll the skill component's replicated cast state. */
 	void TickCastHold();
@@ -275,6 +288,9 @@ private:
 
 	/** The locomotion cycle, from ChooseGait. Walk and Jog both drive the blend's moving slot. */
 	EValhallaGait Gait = EValhallaGait::Idle;
+
+	/** A simulated proxy's averaged ground speed (SmoothProxySpeed); reseeded from the raw speed whenever it is idle. */
+	float SmoothedProxySpeed = 0.f;
 
 	/** What the current cast hold is, so its end plays the matching release. */
 	enum class EHeldCast : uint8 { None, Spell, Staff, Bow };

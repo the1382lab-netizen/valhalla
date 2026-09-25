@@ -579,22 +579,35 @@ const TCHAR* LexToString(EValhallaGait Gait)
 	return TEXT("Idle");
 }
 
-EValhallaGait UValhallaAnimComponent::ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis)
+EValhallaGait UValhallaAnimComponent::ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis, float Tolerance)
 {
 	if (Speed < MovingSpeed)
 	{
 		return EValhallaGait::Idle;
 	}
+	// JogSpeed is the jog; the tolerance only absorbs a character capped at
+	// MaxWalkSpeed JogSpeed measuring a hair under it (199.x at 200).
+	const float JogThreshold = JogSpeed - FMath::Max(0.f, Tolerance);
 	if (Previous == EValhallaGait::Jog)
 	{
 		// Only the way down is delayed: a jog slowing through the threshold
 		// keeps jogging until it is clearly below it.
-		return Speed < JogSpeed - FMath::Max(0.f, Hysteresis) ? EValhallaGait::Walk : EValhallaGait::Jog;
+		return Speed < JogThreshold - FMath::Max(0.f, Hysteresis) ? EValhallaGait::Walk : EValhallaGait::Jog;
 	}
-	return Speed >= JogSpeed ? EValhallaGait::Jog : EValhallaGait::Walk;
+	return Speed >= JogThreshold ? EValhallaGait::Jog : EValhallaGait::Walk;
 }
 
-void UValhallaAnimComponent::TickLocomotion()
+float UValhallaAnimComponent::SmoothProxySpeed(float Smoothed, float Raw, float DeltaSeconds, float TimeConstant)
+{
+	if (TimeConstant <= 0.f)
+	{
+		return Raw;
+	}
+	const float Alpha = 1.f - FMath::Exp(-FMath::Max(0.f, DeltaSeconds) / TimeConstant);
+	return Smoothed + (Raw - Smoothed) * Alpha;
+}
+
+void UValhallaAnimComponent::TickLocomotion(float DeltaSeconds)
 {
 	const AActor* Owner = GetOwner();
 	if (!Owner)
@@ -605,8 +618,32 @@ void UValhallaAnimComponent::TickLocomotion()
 	const UValhallaLocomotionSettings* Settings = GetDefault<UValhallaLocomotionSettings>();
 	const float Speed = Owner->GetVelocity().Size2D();
 
+	// Another client's body (a simulated proxy) moves on replicated velocity,
+	// which jitters by far more than GaitHysteresis at a steady 200: its gait
+	// is chosen from a short average of its speed with the wider
+	// ProxyHysteresis. Local and server bodies keep the raw speed. Idle is
+	// never delayed: below MovingSpeed the raw speed goes straight through,
+	// and the average restarts from the raw speed on the first moving tick,
+	// so a proxy starting off does not walk while the average climbs.
+	const bool bProxy = Owner->GetLocalRole() == ROLE_SimulatedProxy;
+	float GaitSpeed = Speed;
+	float Hysteresis = Settings->GaitHysteresis;
+	if (bProxy)
+	{
+		Hysteresis = Settings->ProxyHysteresis;
+		if (Speed < Settings->MovingSpeed || Gait == EValhallaGait::Idle)
+		{
+			SmoothedProxySpeed = Speed;
+		}
+		else
+		{
+			SmoothedProxySpeed = SmoothProxySpeed(SmoothedProxySpeed, Speed, DeltaSeconds, ProxySpeedTimeConstant);
+		}
+		GaitSpeed = Speed < Settings->MovingSpeed ? Speed : SmoothedProxySpeed;
+	}
+
 	const EValhallaGait Previous = Gait;
-	Gait = ChooseGait(Speed, Previous, Settings->MovingSpeed, Settings->JogSpeed, Settings->GaitHysteresis);
+	Gait = ChooseGait(GaitSpeed, Previous, Settings->MovingSpeed, Settings->JogSpeed, Hysteresis, Settings->JogTolerance);
 	SetLocomotion(Gait == EValhallaGait::Idle ? EValhallaAnim::Idle : EValhallaAnim::Walk);
 
 	// The moving slot of the blend plays the walk or the jog, on either body
@@ -642,15 +679,17 @@ void UValhallaAnimComponent::TickLocomotion()
 		const APawn* Pawn = Cast<APawn>(Owner);
 		const bool bPlayer = Pawn && Pawn->GetPlayerState();
 		const TCHAR* Where = Owner->GetNetMode() == NM_Client ? TEXT("client") : TEXT("server");
+		// A proxy logs the averaged speed it chose from, and the raw one.
+		const FString Proxy = bProxy ? FString::Printf(TEXT("proxy, raw %.0f, "), Speed) : FString();
 		if (bPlayer || Gait == EValhallaGait::Jog || Previous == EValhallaGait::Jog)
 		{
-			UE_LOG(LogValhallaVisual, Log, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (rate %.2f)"),
-				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), Speed, Rate);
+			UE_LOG(LogValhallaVisual, Log, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (%srate %.2f)"),
+				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), GaitSpeed, *Proxy, Rate);
 		}
 		else
 		{
-			UE_LOG(LogValhallaVisual, Verbose, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (rate %.2f)"),
-				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), Speed, Rate);
+			UE_LOG(LogValhallaVisual, Verbose, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (%srate %.2f)"),
+				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), GaitSpeed, *Proxy, Rate);
 		}
 	}
 }
@@ -706,7 +745,7 @@ void UValhallaAnimComponent::TickComponent(float DeltaSeconds, ELevelTick TickTy
 	// Sitting is a held pose: no cast hold on top of it (casting stands you up).
 	if (bSitting)
 	{
-		TickLocomotion();
+		TickLocomotion(DeltaSeconds);
 		return;
 	}
 
@@ -718,7 +757,7 @@ void UValhallaAnimComponent::TickComponent(float DeltaSeconds, ELevelTick TickTy
 		TickCastHold();
 	}
 
-	TickLocomotion();
+	TickLocomotion(DeltaSeconds);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -227,20 +227,20 @@ bool FValhallaActionBarSavedBarFilterTest::RunTest(const FString& /*Parameters*/
 	{
 		return false;
 	}
-	TestEqual(TEXT("slot 1 cross-class kept"), Bar[0], FName(TEXT("melee_attack")));
+	TestEqual(TEXT("slot 1 cross-class kept"), Bar[0].ToString(), FString(TEXT("melee_attack")));
 	TestTrue(TEXT("slot 2 empty stays empty"), Bar[1].IsNone());
 	TestTrue(TEXT("slot 3 another class's skill left empty"), Bar[2].IsNone());
 	TestTrue(TEXT("slot 4 locked skill left empty"), Bar[3].IsNone());
 	TestTrue(TEXT("slot 5 unknown skill left empty"), Bar[4].IsNone());
-	TestEqual(TEXT("slot 6 kept in its own slot"), Bar[5], FName(TEXT("warrior_shield_bash")));
-	TestEqual(TEXT("slot 7 kept in its own slot"), Bar[6], FName(TEXT("warrior_taunt")));
+	TestEqual(TEXT("slot 6 kept in its own slot"), Bar[5].ToString(), FString(TEXT("warrior_shield_bash")));
+	TestEqual(TEXT("slot 7 kept in its own slot"), Bar[6].ToString(), FString(TEXT("warrior_taunt")));
 	TestTrue(TEXT("slot 8 empty stays empty"), Bar[7].IsNone());
 
 	// A short save fills the front and leaves the rest empty.
 	const TArray<FName> Short = UValhallaSkillComponent::BuildActionBarFromSave({ FString(), TEXT("warrior_taunt") }, CanPlace);
 	TestEqual(TEXT("short save -> eight slots"), Short.Num(), ValhallaActionBarSlots);
 	TestTrue(TEXT("short save slot 1 empty"), Short[0].IsNone());
-	TestEqual(TEXT("short save slot 2"), Short[1], FName(TEXT("warrior_taunt")));
+	TestEqual(TEXT("short save slot 2"), Short[1].ToString(), FString(TEXT("warrior_taunt")));
 	TestTrue(TEXT("short save slot 3 empty"), Short[2].IsNone());
 
 	// Nothing saved (a new character): eight empty slots.

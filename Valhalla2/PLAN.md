@@ -311,9 +311,9 @@ and `valhalla.FrontEnd.PieServerAddress` is where the travel goes in PIE.
 
 - [ ] Character *deletion* of the account itself. The backend has no route for
       it and 2.0 does not invent one.
-- [ ] The action bar is carried through a load and a save untouched; Phase 8
-      owns it. Dropping it here would have silently wiped a bar the 1.0 client
-      still renders.
+- [x] The action bar is saved and loaded with the character: the game mode puts
+      the saved bar on the pawn at spawn and saves the pawn's bar back (2026-09-24,
+      see "Action bar — empty by default" below).
 
 ## Phase 8 — Polish
 
@@ -360,7 +360,8 @@ canvas HUD is behind `valhalla.DebugHud 1`.
       textures, check-before-create), tooltips, click to equip/unequip, drag to
       move/equip, right-click drop with a confirm.
 - [x] Skills pane (K): drag, or click a skill then click a slot
-      (`ServerSetActionBar`).
+      (`ServerSetActionBar`). Drag a skill off the bar, or right-click it, to
+      remove it (2026-09-24).
 - [x] Loot panel: Phase 9's `TryOpenLootBag` (click a bag or its label) opens
       it; take one, Loot All, Close; closes out of reach or when emptied.
 - [x] Live layout: `valhalla.ReloadUI`, and a 2 s poll of the file's
@@ -639,8 +640,8 @@ blocked. It was applied with Live Coding; the on-disk DLL needs a normal
   - Player DoTs ignore god mode and shield.
   - Single-enemy skills do not check `bFriendly`.
   - The i-frame map `GInvulnerableUntil` is global and never pruned.
-- Not persisted: `bAlive`, god/freeze/mute, buffs, cooldowns, and a customised
-  action bar (saved as eight empty strings).
+- Not persisted: `bAlive`, god/freeze/mute, buffs and cooldowns. (The action bar
+  is, since 2026-09-24.)
 - Relevancy fails open while a joiner has no pawn, which is the whole async load.
 - Warrior, cleric and ranger have no `startingItems`. `M_Rope` and
   `M_Cloth_Blue` lack the SkeletalMesh usage flag. The front end logs
@@ -2021,6 +2022,40 @@ for now; clickable doors are B-23.
 - **Tools.** `scaffold_zone` and the retired builders no longer write overlays (a zone "exists"
   when a zone volume with its id is loaded, or its levels exist); `handedited.json` lists levels
   only; `npc_setup.migrate_overlay_spawns` (one-time, long done) is deleted.
+
+## Action bar — empty by default, drag to place, drag off to remove (2026-09-24)
+
+Kevin: a new character starts with a blank action bar and fills it from the
+skills pane (K); a newly unlocked skill is dragged on the same way; a skill is
+removed by dragging it off the bar. The bar used to be pre-filled with the
+first eight of `classSkills[classId]` and was never saved.
+
+- **Empty by default.** `UValhallaSkillComponent::InitializeActionBarFromClass`
+  (server, once the class is known) now only empties the eight slots. Nothing is
+  added automatically on level-up.
+- **Saved with the character.** `AValhallaGameMode::SpawnLoadedPawn` puts the
+  backend's saved bar on the pawn (`ApplySavedActionBar`); `SaveCharacterFor`
+  reads it back (`GetActionBarForSave`: eight ids, `""` for an empty slot) into
+  the session before every save (autosave, logout). A saved entry that no longer
+  passes the rule below (a skill removed from the data, another class's) is left
+  empty with a warning.
+- **The rule, server-side.** `CanPlaceOnActionBar`: one of the class's skills
+  (`classSkills[classId]`) or a cross-class one (`classId` null, like
+  `melee_attack`), and unlocked (`level >= levelRequired`).
+  `ServerSetActionBar` refuses anything else and the slot keeps what it had
+  (it used to clear it); clearing a slot is always allowed. The static
+  `CanPlaceOnActionBar(Skill, ClassSkills, Level)` and `BuildActionBarFromSave`
+  are the pure parts (`Valhalla.Game.ActionBar.*`).
+- **HUD.** The skills pane lists the class's skills in pane order; a locked one
+  is dimmed with "(Lv N)" and dragging or clicking it onto the bar is refused on
+  the client too, with a system line "You must be level N to use <skill>."
+  Dragging a bar skill onto another bar cell swaps (onto an empty one, moves);
+  let go on the cell it came from or in a gap between cells, nothing changes;
+  let go anywhere else — another HUD cell (skills pane, inventory), a panel, the
+  chat, the world — and it comes off the bar (`UValhallaHUDDragOperation`:
+  UMG's `DragCancelled` when no widget took the drop, and `HandleSlotDropped`
+  for an action cell dropped on a non-action cell). Right-click also clears a
+  slot. Keys 1–8 on an empty slot do nothing.
 
 ## Backlog
 

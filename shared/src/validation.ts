@@ -342,7 +342,7 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
     }
   }
 
-  // classSkills: the class → skill list the action bar is built from
+  // classSkills: the skills a class may place on its action bar, in pane order
   for (const [classId, list] of Object.entries(classSkills)) {
     if (!classes[classId]) add('error', 'skills', `classSkills.${classId}`, `class "${classId}" does not exist`);
     if (!Array.isArray(list)) {

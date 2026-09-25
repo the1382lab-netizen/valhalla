@@ -27,9 +27,11 @@ Lengths and loops are kept from the first pass (30 fps): Idle 60 f loop,
 Walk 24 -> 20 f loop (foot-slide match, above), Attack 20 f, Shoot 20 f,
 Cast 24 f loop-able, Hit 12 f, Death 36 f hold.
 
-New (A-030, not wired into gameplay): A_Run 16 f loop, A_Sit 30 f hold,
-A_Emote_Wave 40 f, A_Emote_Cheer 40 f, A_Emote_Bow 45 f, A_Attack2H 26 f,
-A_Block 20 f, A_Dodge 18 f.
+New (A-030): A_Run 16 f loop, A_Sit 30 f hold, A_Emote_Wave 40 f,
+A_Emote_Cheer 40 f, A_Emote_Bow 45 f, A_Attack2H 26 f, A_Block 20 f,
+A_Dodge 18 f. A_Run is the legacy body's jog (2026-09-24: jog at 200 cm/s and
+above, UValhallaVisuals::LegacyJogClipSpeed 278.6 = its 2.79 m/s below), and
+the walk / jog now play at speed / clip speed rather than rate 1.
 
 How they are made: every clip is a list of poses (radians on the bones'
 local axes, metres for the pelvis) at chosen frames, Bezier-eased between

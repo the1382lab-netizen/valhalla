@@ -2210,6 +2210,41 @@ redesign may come later.
   `Valhalla.Core.Data.MeshIdFallback` (iron_dagger / bone_totem author a meshId), unrelated.
   Not yet seen in PIE: a swing's damage against the numbers above.
 
+## Locomotion gaits — walk below 200 cm/s, jog at 200+ (2026-09-24)
+
+Kevin: the cycle a body plays is chosen by its absolute ground speed, not by which clip's play
+rate is nearer 1. Every class (baseSpeed 200) jogs; the rogue (250) jogs like everyone else, no
+special case. A third "run" gait is parked as backlog B-22.
+
+- **Rule** (`UValhallaAnimComponent::ChooseGait`, pure): idle below `MovingSpeed`; from idle or a
+  walk, jog at `Speed >= JogSpeed`, else walk; from a jog, back to a walk only once
+  `Speed < JogSpeed - GaitHysteresis` (so exactly 200 jogs, and a jog slowing to 190 still jogs, 189
+  walks). Only the way down is delayed. Replaces the Phase 8 play-rate crossover (`bJogging`,
+  1.15 / 1.35), which put the switch at ~265 cm/s on the MetaHuman.
+- **Settings:** Project Settings › Valhalla › Locomotion (`UValhallaLocomotionSettings`,
+  `[/Script/ValhallaGame.ValhallaLocomotionSettings]` in DefaultGame.ini): `JogSpeed` 200,
+  `GaitHysteresis` 10, `MovingSpeed` 10 (the idle cutoff, was the `WalkSpeedThreshold` constant;
+  also what cancels an emote), `bMatchPlayRateToSpeed` true, `MinPlayRate` 0.6, `MaxPlayRate` 1.6.
+  Read every tick, so a change applies in a running PIE.
+- **Both bodies, players and NPCs** (same component). MetaHuman: walk `MH_MF_Unarmed_Walk_Fwd`, jog
+  `MH_MF_Unarmed_Jog_Fwd`. Legacy body (`valhalla.Visual.BodyProfile 0`): its jog slot is now
+  `A_Run` (was a fallback to `A_Walk`). A body missing its jog clip walks.
+- **Play rate:** speed / (clip speed × body scale), clamped [0.6, 1.6]; 1.0 when
+  `bMatchPlayRateToSpeed` is off. Clip speeds: MetaHuman walk 290 / jog 581 cm/s unscaled (×0.677 →
+  196 / 393 on screen); legacy `A_Walk` 113 / `A_Run` 279 cm/s (from `wave2_anims.py`: 2 × reach /
+  (stance × cycle); scale 1), previously played at rate 1. The MetaHuman jog at 200 cm/s wants ~0.51
+  of its authored cadence and is floored at 0.6, so there is slight foot slide from 200 up to ~235;
+  at 250 it plays at 0.64, matched. The walk below 200 plays 0.6–1.0 (slides below ~118 cm/s, i.e.
+  60–80 cm/s NPCs; the old floor was 0.45).
+- **Log:** one line per gait change, `<actor> [server|client]: gait Walk->Jog at 203 cm/s (rate 0.60)`
+  (players always; NPCs only for changes to or from Jog, Idle↔Walk at Verbose).
+- **Dev command:** `valhalla.Speed <cm/s> [classId]` sets MaxWalkSpeed on the server's pawn and the
+  owning client's (it is not replicated); `valhalla.Speed 0` restores the class `baseSpeed`. PIE or a
+  listen-server host only; not compiled into Shipping.
+- **Tests:** `Valhalla.Game.Anim.Gait` (0 idle, 150 / 199.9 walk, 200 / 250 / 399 / 400 / 450 jog,
+  hysteresis 195 / 190 jog and 189 walk from a jog, 195 walk from a walk, cutoff 5 idle / 10 walk,
+  the settings' defaults).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

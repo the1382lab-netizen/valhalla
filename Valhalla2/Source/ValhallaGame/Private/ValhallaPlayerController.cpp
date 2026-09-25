@@ -10,6 +10,7 @@
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "InputAction.h"
@@ -2583,4 +2584,99 @@ namespace
 					ValhallaPS->PartyId, *FString::Join(ValhallaPS->PartyMemberNames, TEXT(", ")));
 			});
 		}));
+
+#if !UE_BUILD_SHIPPING
+	/**
+	 * `valhalla.Speed <cm/s> [classId]` — set a player's walk speed, to see the
+	 * gaits (Project Settings > Valhalla > Locomotion) at any speed without
+	 * editing classes.json. `valhalla.Speed 0` puts the class's baseSpeed back.
+	 *
+	 * MaxWalkSpeed is not replicated, so, like AValhallaCharacter::
+	 * ApplyClassAppearance, it is written on both ends: the server's copy of
+	 * the pawn (which the moves are checked against) and the owning client's
+	 * (which predicts them). A one-process PIE has both worlds in this process;
+	 * a standalone listen-server host is both ends at once. A remote client
+	 * cannot reach the server's copy, so it refuses rather than set only its
+	 * own and be corrected back every move.
+	 */
+	FAutoConsoleCommandWithWorldAndArgs GSpeedCommand(
+		TEXT("valhalla.Speed"),
+		TEXT("Dev only. valhalla.Speed <cm/s> [classId] — set a player's MaxWalkSpeed on server and owning client; 0 restores the class baseSpeed."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* InWorld)
+		{
+			if (Args.Num() < 1 || !Args[0].IsNumeric() || FCString::Atof(*Args[0]) < 0.f)
+			{
+				UE_LOG(LogValhallaGame, Warning, TEXT("valhalla.Speed needs a speed in cm/s (0 = the class speed), e.g. 'valhalla.Speed 250 warrior'."));
+				return;
+			}
+			if (!AuthorityWorldFor(InWorld))
+			{
+				UE_LOG(LogValhallaGame, Warning, TEXT("valhalla.Speed only works on a listen-server host or in PIE (MaxWalkSpeed has to be set on the server too)."));
+				return;
+			}
+
+			const float Requested = FCString::Atof(*Args[0]);
+			const FString ClassFilter = ClassFilterFromArgs(Args, 1);
+
+			TArray<UWorld*> Worlds;
+#if WITH_EDITOR
+			if (GEngine)
+			{
+				for (const FWorldContext& Context : GEngine->GetWorldContexts())
+				{
+					if (Context.WorldType == EWorldType::PIE && Context.World())
+					{
+						Worlds.Add(Context.World());
+					}
+				}
+			}
+#endif
+			if (Worlds.Num() == 0 && InWorld)
+			{
+				Worlds.Add(InWorld);
+			}
+
+			for (UWorld* World : Worlds)
+			{
+				const TCHAR* Mode = World->GetNetMode() == NM_Client ? TEXT("client") : TEXT("server");
+				for (TActorIterator<AValhallaCharacter> It(World); It; ++It)
+				{
+					AValhallaCharacter* Body = *It;
+					const AValhallaPlayerState* BodyPS = Body->GetValhallaPlayerState();
+					UCharacterMovementComponent* Movement = Body->GetCharacterMovement();
+					// The two copies that move the pawn; a simulated proxy only
+					// replays replicated positions.
+					if (!BodyPS || !Movement || !(Body->HasAuthority() || Body->IsLocallyControlled()))
+					{
+						continue;
+					}
+					if (!ClassFilter.IsEmpty() && !BodyPS->ClassId.ToString().Equals(ClassFilter, ESearchCase::IgnoreCase))
+					{
+						continue;
+					}
+
+					float Speed = Requested;
+					if (Speed <= 0.f)
+					{
+						const UGameInstance* GameInstance = World->GetGameInstance();
+						const UValhallaDataSubsystem* Data = GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
+						const FValhallaClassTemplate* ClassTemplate = Data ? Data->FindClass(BodyPS->ClassId) : nullptr;
+						if (!ClassTemplate)
+						{
+							UE_LOG(LogValhallaGame, Warning, TEXT("valhalla.Speed [%s]: no class '%s' to restore the speed from."),
+								Mode, *BodyPS->ClassId.ToString());
+							continue;
+						}
+						Speed = ClassTemplate->BaseSpeed;
+					}
+
+					Movement->MaxWalkSpeed = Speed;
+					Movement->MaxWalkSpeedCrouched = Speed;
+					UE_LOG(LogValhallaGame, Log, TEXT("valhalla.Speed [%s]: %s (%s) MaxWalkSpeed=%.0f%s"),
+						Mode, *BodyPS->CharacterName, *BodyPS->ClassId.ToString(), Speed,
+						Requested <= 0.f ? TEXT(" (class baseSpeed)") : TEXT(""));
+				}
+			}
+		}));
+#endif // !UE_BUILD_SHIPPING
 }

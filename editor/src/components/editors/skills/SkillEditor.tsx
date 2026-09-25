@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { IdField, NewIdDialog, renameKey } from '../../shared/TemplateId';
 
 interface SkillTemplate {
   id: string;
@@ -106,6 +107,9 @@ export const SkillEditor: React.FC = () => {
   const { skills, classes, selectedSkillId, setSelectedSkillId, updateData, markDirty, saveSection } = useEditorStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterTab, setFilterTab] = useState<string>('all');
+  /** The New / Copy prompt that asks for a name and id. */
+  const [idPrompt, setIdPrompt] = useState<'new' | 'copy' | null>(null);
+  const npcTemplates = useEditorStore(s => s.npcTemplates.data);
 
   const skillsData = skills.data.skills;
   const classesData = classes.data.classes;
@@ -122,7 +126,8 @@ export const SkillEditor: React.FC = () => {
 
   const filteredSkills = useMemo(() => {
     const ids = Object.keys(skillsData);
-    let filtered = ids.filter((id) => id.toLowerCase().includes(searchQuery.toLowerCase()));
+    const q = searchQuery.toLowerCase();
+    let filtered = ids.filter((id) => id.toLowerCase().includes(q) || (skillsData[id]?.name || '').toLowerCase().includes(q));
 
     if (filterTab !== 'all') {
       filtered = filtered.filter((id) => skillsData[id]?.classId === filterTab);
@@ -133,28 +138,40 @@ export const SkillEditor: React.FC = () => {
 
   const selectedSkill = selectedSkillId ? skillsData[selectedSkillId] : null;
 
+  /** What in the shared data uses the selected skill: class skill lists and NPC skills. */
+  const skillRefs = useMemo(() => {
+    if (!selectedSkillId) return [];
+    const refs: string[] = [];
+    for (const [classId, list] of Object.entries(skills.data.classSkills || {})) {
+      if (Array.isArray(list) && list.includes(selectedSkillId)) refs.push(`${classId} class skills`);
+    }
+    for (const [id, n] of Object.entries(npcTemplates)) {
+      if (Array.isArray(n.skills) && n.skills.includes(selectedSkillId)) refs.push(`NPC ${id}`);
+    }
+    return refs;
+  }, [selectedSkillId, skills.data.classSkills, npcTemplates]);
+
   const handleSelectSkill = (id: string) => {
     setSelectedSkillId(id);
   };
 
-  const handleCreateSkill = () => {
-    const newId = `skill_${Date.now()}`;
+  const handleCreateSkill = (name: string, newId: string) => {
     const newSkill: SkillTemplate = {
       id: newId,
       ...DEFAULT_SKILL,
+      name,
     };
     const newSkills = { ...skillsData, [newId]: newSkill };
     updateData('skills', { ...skills.data, skills: newSkills });
     setSelectedSkillId(newId);
   };
 
-  const handleDuplicateSkill = () => {
+  const handleDuplicateSkill = (name: string, newId: string) => {
     if (!selectedSkill) return;
-    const newId = `skill_${Date.now()}`;
     const newSkill: SkillTemplate = {
       ...selectedSkill,
       id: newId,
-      name: `${selectedSkill.name} (Copy)`,
+      name,
     };
     const newSkills = { ...skillsData, [newId]: newSkill };
     updateData('skills', { ...skills.data, skills: newSkills });
@@ -168,6 +185,11 @@ export const SkillEditor: React.FC = () => {
     const syncedClassSkills = syncClassSkills(remaining, skills.data.classSkills);
     updateData('skills', { skills: remaining, classSkills: syncedClassSkills });
     setSelectedSkillId(null);
+  };
+
+  const handleRenameSkill = (newId: string) => {
+    updateData('skills', { ...skills.data, skills: renameKey(skillsData, selectedSkillId!, newId) });
+    setSelectedSkillId(newId);
   };
 
   const handleUpdateSkill = (updates: Partial<SkillTemplate>) => {
@@ -228,6 +250,7 @@ export const SkillEditor: React.FC = () => {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>ID</th>
                 <th>Lvl</th>
                 <th>Cost</th>
                 <th>Cast</th>
@@ -238,7 +261,7 @@ export const SkillEditor: React.FC = () => {
             <tbody>
               {filteredSkills.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <td colSpan={7} style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
                     No skills found
                   </td>
                 </tr>
@@ -254,6 +277,7 @@ export const SkillEditor: React.FC = () => {
                       onClick={() => handleSelectSkill(id)}
                     >
                       <td>{skill.name}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{id}</td>
                       <td>{skill.levelRequired}</td>
                       <td>{skill.resourceCost}</td>
                       <td>{formatTime(skill.castTimeMs)}s</td>
@@ -269,10 +293,10 @@ export const SkillEditor: React.FC = () => {
 
           {/* Action Buttons */}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-primary" onClick={handleCreateSkill}>
+            <button className="btn btn-primary" onClick={() => setIdPrompt('new')}>
               New
             </button>
-            <button className="btn btn-ghost" onClick={handleDuplicateSkill} disabled={!selectedSkill}>
+            <button className="btn btn-ghost" onClick={() => setIdPrompt('copy')} disabled={!selectedSkill}>
               Duplicate
             </button>
             <button className="btn btn-danger" onClick={handleDeleteSkill} disabled={!selectedSkill}>
@@ -290,6 +314,14 @@ export const SkillEditor: React.FC = () => {
         <div className="panel-body">
           {selectedSkill ? (
             <form onSubmit={(e) => { e.preventDefault(); }}>
+              <IdField
+                id={selectedSkillId!}
+                hint="Used by classSkills and NPC skills."
+                taken={Object.keys(skillsData)}
+                referencedBy={skillRefs}
+                onRename={handleRenameSkill}
+              />
+
               {/* Icon Preview */}
               <div className="form-group" style={{ marginBottom: 16 }}>
                 <label className="form-label">Icon Preview</label>
@@ -772,6 +804,20 @@ export const SkillEditor: React.FC = () => {
           )}
         </div>
       </div>
+
+      {idPrompt && (
+        <NewIdDialog
+          title={idPrompt === 'new' ? 'New Skill' : 'Duplicate Skill'}
+          initialName={idPrompt === 'new' || !selectedSkill ? 'New Skill' : `${selectedSkill.name} (copy)`}
+          initialId={idPrompt === 'copy' && selectedSkillId ? `${selectedSkillId}_copy` : undefined}
+          taken={Object.keys(skillsData)}
+          onCancel={() => setIdPrompt(null)}
+          onCreate={(name, id) => {
+            if (idPrompt === 'new') handleCreateSkill(name, id); else handleDuplicateSkill(name, id);
+            setIdPrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 };

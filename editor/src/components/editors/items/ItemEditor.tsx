@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { IdField, NewIdDialog, renameKey } from '../../shared/TemplateId';
 
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary'];
 // Must match ItemCategory in shared/src/items.ts
@@ -57,9 +58,14 @@ export const ItemEditor: React.FC = () => {
   const setSelectedItemId = useEditorStore(s => s.setSelectedItemId);
   const updateData = useEditorStore(s => s.updateData);
   const saveSection = useEditorStore(s => s.saveSection);
+  const lootTables = useEditorStore(s => s.lootTables.data);
+  const classes = useEditorStore(s => s.classes.data.classes);
+  const npcTemplates = useEditorStore(s => s.npcTemplates.data);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  /** The New / Copy prompt that asks for a name and id. */
+  const [idPrompt, setIdPrompt] = useState<'new' | 'copy' | null>(null);
   const [meshIds, setMeshIds] = useState<string[]>([]);
   const [iconFiles, setIconFiles] = useState<string[]>([]);
 
@@ -104,15 +110,31 @@ export const ItemEditor: React.FC = () => {
     ? items.data[selectedItemId]
     : null;
 
+  /** What in the shared data uses the selected item: loot tables, starting items, NPC vendors and weapons. */
+  const itemRefs = useMemo(() => {
+    if (!selectedItemId) return [];
+    const refs: string[] = [];
+    for (const [id, t] of Object.entries(lootTables)) {
+      if ((t.entries || []).some((e: any) => e?.itemId === selectedItemId)) refs.push(`loot table ${id}`);
+    }
+    for (const [id, c] of Object.entries(classes || {})) {
+      if ((c.startingItems || []).some((e: any) => e?.itemId === selectedItemId)) refs.push(`${id} starting items`);
+    }
+    for (const [id, n] of Object.entries(npcTemplates)) {
+      if (n.weaponId === selectedItemId) refs.push(`NPC ${id} weapon`);
+      if ((n.vendorInventory || []).some((v: any) => (typeof v === 'string' ? v : v?.itemId) === selectedItemId)) refs.push(`NPC ${id} vendor`);
+    }
+    return refs;
+  }, [selectedItemId, lootTables, classes, npcTemplates]);
+
   const handleSelectItem = (id: string) => {
     setSelectedItemId(id);
   };
 
-  const handleNewItem = () => {
-    const newId = `item_${Date.now()}`;
+  const handleNewItem = (name: string, newId: string) => {
     const newItem: ItemTemplate = {
       id: newId,
-      name: 'New Item',
+      name,
       description: '',
       category: 'misc',
       rarity: 'common',
@@ -126,13 +148,12 @@ export const ItemEditor: React.FC = () => {
     setSelectedItemId(newId);
   };
 
-  const handleDuplicateItem = () => {
+  const handleDuplicateItem = (name: string, newId: string) => {
     if (!selectedItem) return;
-    const newId = `item_${Date.now()}`;
     const duplicated: ItemTemplate = {
       ...selectedItem,
       id: newId,
-      name: `${selectedItem.name} (copy)`,
+      name,
     };
     const updatedItems = { ...items.data, [newId]: duplicated };
     updateData('items', updatedItems);
@@ -145,6 +166,11 @@ export const ItemEditor: React.FC = () => {
     delete updatedItems[selectedItemId!];
     updateData('items', updatedItems);
     setSelectedItemId(null);
+  };
+
+  const handleRenameItem = (newId: string) => {
+    updateData('items', renameKey(items.data, selectedItemId!, newId));
+    setSelectedItemId(newId);
   };
 
   const handleUpdateItem = (updates: Partial<ItemTemplate>) => {
@@ -206,8 +232,8 @@ export const ItemEditor: React.FC = () => {
           </div>
 
           <div style={{ marginBottom: 12, display: 'flex', gap: 6 }}>
-            <button className="btn btn-primary" onClick={handleNewItem}>+ New</button>
-            <button className="btn btn-ghost" onClick={handleDuplicateItem} disabled={!selectedItem}>Copy</button>
+            <button className="btn btn-primary" onClick={() => setIdPrompt('new')}>+ New</button>
+            <button className="btn btn-ghost" onClick={() => setIdPrompt('copy')} disabled={!selectedItem}>Copy</button>
             <button className="btn btn-danger" onClick={handleDeleteItem} disabled={!selectedItem}>Delete</button>
           </div>
 
@@ -216,6 +242,7 @@ export const ItemEditor: React.FC = () => {
               <thead>
                 <tr>
                   <th>Name</th>
+                  <th>ID</th>
                   <th>Category</th>
                 </tr>
               </thead>
@@ -229,6 +256,7 @@ export const ItemEditor: React.FC = () => {
                       onClick={() => handleSelectItem(id)}
                     >
                       <td>{item.name}</td>
+                      <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{id}</td>
                       <td>{item.category}</td>
                     </tr>
                   );
@@ -247,6 +275,14 @@ export const ItemEditor: React.FC = () => {
         <div className="panel-body">
           {selectedItem ? (
             <>
+              <IdField
+                id={selectedItemId!}
+                hint="Used by loot tables, vendors and starting items."
+                taken={Object.keys(items.data)}
+                referencedBy={itemRefs}
+                onRename={handleRenameItem}
+              />
+
               <div className="form-group">
                 <label className="form-label">Name</label>
                 <input
@@ -519,6 +555,20 @@ export const ItemEditor: React.FC = () => {
           )}
         </div>
       </div>
+
+      {idPrompt && (
+        <NewIdDialog
+          title={idPrompt === 'new' ? 'New Item' : 'Copy Item'}
+          initialName={idPrompt === 'new' || !selectedItem ? 'New Item' : `${selectedItem.name} (copy)`}
+          initialId={idPrompt === 'copy' && selectedItemId ? `${selectedItemId}_copy` : undefined}
+          taken={Object.keys(items.data)}
+          onCancel={() => setIdPrompt(null)}
+          onCreate={(name, id) => {
+            if (idPrompt === 'new') handleNewItem(name, id); else handleDuplicateItem(name, id);
+            setIdPrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 };

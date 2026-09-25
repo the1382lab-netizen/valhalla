@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { IdField, NewIdDialog, renameKey } from '../../shared/TemplateId';
 
 interface NPCTemplate {
   id: string;
@@ -60,6 +61,8 @@ export const NPCEditor: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [skillDropdownOpen, setSkillDropdownOpen] = useState(false);
   const [newSkillFilter, setNewSkillFilter] = useState('');
+  /** The New / Copy prompt that asks for a name and id. */
+  const [idPrompt, setIdPrompt] = useState<'new' | 'copy' | null>(null);
 
   const npcList = useMemo(() => {
     const ids = Object.keys(npcTemplates.data);
@@ -116,11 +119,10 @@ export const NPCEditor: React.FC = () => {
     setSelectedNpcId(id);
   };
 
-  const handleNewNpc = () => {
-    const newId = `npc_${Date.now()}`;
+  const handleNewNpc = (name: string, newId: string) => {
     const newNpc: NPCTemplate = {
       id: newId,
-      name: 'New NPC',
+      name,
       description: '',
       type: 'npc',
       level: 1,
@@ -143,13 +145,12 @@ export const NPCEditor: React.FC = () => {
     setSelectedNpcId(newId);
   };
 
-  const handleDuplicateNpc = () => {
+  const handleDuplicateNpc = (name: string, newId: string) => {
     if (!selectedNpc) return;
-    const newId = `npc_${Date.now()}`;
     const duplicated: NPCTemplate = {
       ...selectedNpc,
       id: newId,
-      name: `${selectedNpc.name} (copy)`,
+      name,
     };
     const updatedNpcs = { ...npcTemplates.data, [newId]: duplicated };
     updateData('npcTemplates', updatedNpcs);
@@ -162,6 +163,12 @@ export const NPCEditor: React.FC = () => {
     delete updatedNpcs[selectedNpcId!];
     updateData('npcTemplates', updatedNpcs);
     setSelectedNpcId(null);
+  };
+
+  // Nothing in the shared data points at an NPC template; Unreal Blueprints do.
+  const handleRenameNpc = (newId: string) => {
+    updateData('npcTemplates', renameKey(npcTemplates.data, selectedNpcId!, newId));
+    setSelectedNpcId(newId);
   };
 
   const handleUpdateNpc = (updates: Partial<NPCTemplate>) => {
@@ -225,8 +232,8 @@ export const NPCEditor: React.FC = () => {
           </div>
 
           <div style={{ marginBottom: 12, display: 'flex', gap: 6 }}>
-            <button className="btn btn-primary" onClick={handleNewNpc}>+ New</button>
-            <button className="btn btn-ghost" onClick={handleDuplicateNpc} disabled={!selectedNpc}>
+            <button className="btn btn-primary" onClick={() => setIdPrompt('new')}>+ New</button>
+            <button className="btn btn-ghost" onClick={() => setIdPrompt('copy')} disabled={!selectedNpc}>
               Copy
             </button>
             <button className="btn btn-danger" onClick={handleDeleteNpc} disabled={!selectedNpc}>
@@ -238,6 +245,7 @@ export const NPCEditor: React.FC = () => {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>ID</th>
                 <th>Type</th>
                 <th>Level</th>
                 <th>Behavior</th>
@@ -253,6 +261,7 @@ export const NPCEditor: React.FC = () => {
                     onClick={() => handleSelectNpc(id)}
                   >
                     <td>{npc.name}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{id}</td>
                     <td>{npc.type}</td>
                     <td>{npc.level}</td>
                     <td>{npc.behaviorType}</td>
@@ -269,6 +278,14 @@ export const NPCEditor: React.FC = () => {
         <div className="panel-body" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
           {selectedNpc ? (
             <>
+              <IdField
+                id={selectedNpcId!}
+                hint="Unreal: put this in the NPC Type Blueprint's Default Template Id (Class Defaults)."
+                taken={Object.keys(npcTemplates.data)}
+                renameNote="Referenced by Unreal NPC Type Blueprints: rename there too."
+                onRename={handleRenameNpc}
+              />
+
               <div className="form-group">
                 <label className="form-label">Name</label>
                 <input
@@ -818,6 +835,20 @@ export const NPCEditor: React.FC = () => {
           )}
         </div>
       </div>
+
+      {idPrompt && (
+        <NewIdDialog
+          title={idPrompt === 'new' ? 'New NPC' : 'Copy NPC'}
+          initialName={idPrompt === 'new' || !selectedNpc ? 'New NPC' : `${selectedNpc.name} (copy)`}
+          initialId={idPrompt === 'copy' && selectedNpcId ? `${selectedNpcId}_copy` : undefined}
+          taken={Object.keys(npcTemplates.data)}
+          onCancel={() => setIdPrompt(null)}
+          onCreate={(name, id) => {
+            if (idPrompt === 'new') handleNewNpc(name, id); else handleDuplicateNpc(name, id);
+            setIdPrompt(null);
+          }}
+        />
+      )}
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useEditorStore } from '../../../store/editorStore';
+import { IdField, NewIdDialog, renameKey } from '../../shared/TemplateId';
 
 interface LootEntry {
   itemId: string;
@@ -22,8 +23,11 @@ export const LootTableEditor: React.FC = () => {
   const setSelectedLootTableId = useEditorStore(s => s.setSelectedLootTableId);
   const updateData = useEditorStore(s => s.updateData);
   const saveSection = useEditorStore(s => s.saveSection);
+  const npcTemplates = useEditorStore(s => s.npcTemplates.data);
 
   const [searchQuery, setSearchQuery] = useState('');
+  /** The New prompt that asks for a name and id. */
+  const [idPrompt, setIdPrompt] = useState(false);
 
   const lootTableList = useMemo(() => {
     const ids = Object.keys(lootTables.data);
@@ -46,15 +50,19 @@ export const LootTableEditor: React.FC = () => {
     return Object.keys(items.data || {}).sort();
   }, [items.data]);
 
+  /** NPC templates that drop from the selected table. */
+  const tableRefs = useMemo(() => Object.entries(npcTemplates)
+    .filter(([, n]) => selectedLootTableId && n.lootTableId === selectedLootTableId)
+    .map(([id]) => `NPC ${id}`), [npcTemplates, selectedLootTableId]);
+
   const handleSelectTable = (id: string) => {
     setSelectedLootTableId(id);
   };
 
-  const handleNewTable = () => {
-    const newId = `loot_${Date.now()}`;
+  const handleNewTable = (name: string, newId: string) => {
     const newTable: LootTable = {
       id: newId,
-      name: 'New Loot Table',
+      name,
       entries: [],
     };
     const updatedTables = { ...lootTables.data, [newId]: newTable };
@@ -68,6 +76,11 @@ export const LootTableEditor: React.FC = () => {
     delete updatedTables[selectedLootTableId!];
     updateData('lootTables', updatedTables);
     setSelectedLootTableId(null);
+  };
+
+  const handleRenameTable = (newId: string) => {
+    updateData('lootTables', renameKey(lootTables.data, selectedLootTableId!, newId));
+    setSelectedLootTableId(newId);
   };
 
   const handleUpdateTable = (updates: Partial<LootTable>) => {
@@ -143,7 +156,7 @@ export const LootTableEditor: React.FC = () => {
           </div>
 
           <div style={{ marginBottom: 12, display: 'flex', gap: 6 }}>
-            <button className="btn btn-primary" onClick={handleNewTable}>+ New</button>
+            <button className="btn btn-primary" onClick={() => setIdPrompt(true)}>+ New</button>
             <button className="btn btn-danger" onClick={handleDeleteTable} disabled={!selectedTable}>
               Delete
             </button>
@@ -153,6 +166,7 @@ export const LootTableEditor: React.FC = () => {
             <thead>
               <tr>
                 <th>Name</th>
+                <th>ID</th>
                 <th>Entries</th>
               </tr>
             </thead>
@@ -166,6 +180,7 @@ export const LootTableEditor: React.FC = () => {
                     onClick={() => handleSelectTable(id)}
                   >
                     <td>{table.name}</td>
+                    <td style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{id}</td>
                     <td>{table.entries.length}</td>
                   </tr>
                 );
@@ -180,6 +195,14 @@ export const LootTableEditor: React.FC = () => {
         <div className="panel-body" style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 120px)' }}>
           {selectedTable ? (
             <>
+              <IdField
+                id={selectedLootTableId!}
+                hint="Used by NPC templates (Loot Table)."
+                taken={Object.keys(lootTables.data)}
+                referencedBy={tableRefs}
+                onRename={handleRenameTable}
+              />
+
               <div className="form-group">
                 <label className="form-label">Name</label>
                 <input
@@ -360,6 +383,16 @@ export const LootTableEditor: React.FC = () => {
           )}
         </div>
       </div>
+
+      {idPrompt && (
+        <NewIdDialog
+          title="New Loot Table"
+          initialName="New Loot Table"
+          taken={Object.keys(lootTables.data)}
+          onCancel={() => setIdPrompt(false)}
+          onCreate={(name, id) => { handleNewTable(name, id); setIdPrompt(false); }}
+        />
+      )}
     </div>
   );
 };

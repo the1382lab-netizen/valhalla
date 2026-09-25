@@ -2122,6 +2122,12 @@ calls for help, and similar NPCs nearby join the fight.
   - wall: a Bandit 135 cm from the pulled one but on the far side of a wall did not answer.
 - No template has social aggro switched on yet; that is for 1.9 population.
 
+## Web editor — template IDs (2026-09-24)
+
+- NPC, Item, Skill and Loot Table editors show the id at the top of the details panel (monospace, Copy button) and as a list column; search matches ids.
+- New / Copy asks for a name and derives a snake_case id (editable, must match `^[a-z][a-z0-9_]*$` and be unused), so no more `npc_<timestamp>` ids; Cancel creates nothing.
+- The id can be renamed in place while nothing in the shared data references it (the field lists what does); NPC renames also need the `BP_NPC_*` Default Template Id changed in Unreal. Shared bits: `editor/src/components/shared/TemplateId.tsx`.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

@@ -107,9 +107,8 @@ struct VALHALLAGAME_API FValhallaVerifiedToken
  * it is for the admin API, and for the same reason — `L_Desert` sits at world
  * X +40000 and that offset must never reach a database column.
  *
- * `ActionBar` is carried through unread. Phase 8 owns the action bar; dropping
- * it here would mean every 2.0 save silently wiped a bar the 1.0 client still
- * renders, which is the sort of data loss that is only noticed once.
+ * `ActionBar` is the character's saved bar (eight skill ids, "" for empty):
+ * the game mode puts it on the pawn at spawn and saves the pawn's bar back.
  */
 USTRUCT(BlueprintType)
 struct VALHALLAGAME_API FValhallaLoadedCharacter

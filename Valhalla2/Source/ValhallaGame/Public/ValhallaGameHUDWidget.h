@@ -22,6 +22,7 @@
 
 #include "CoreMinimal.h"
 #include "Blueprint/UserWidget.h"
+#include "Blueprint/DragDropOperation.h"
 #include "Components/Button.h"
 #include "Layout/SlateRect.h"
 #include "ValhallaGameTypes.h"
@@ -232,6 +233,21 @@ private:
 	bool bDesignerStack = false;
 	/** Designer tree: Frame's own colour, restored when deselected. */
 	FLinearColor DesignerFrameColour = FLinearColor::White;
+};
+
+/**
+ * The drag a HUD cell starts. Its payload is the cell. A drag that ends where
+ * nothing takes it (the world, a panel's background, anywhere off the cells)
+ * is cancelled; for an action bar cell that means "take it off the bar"
+ * (UValhallaGameHUDWidget::HandleSlotDraggedOff).
+ */
+UCLASS()
+class VALHALLAGAME_API UValhallaHUDDragOperation : public UDragDropOperation
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void DragCancelled_Implementation(const FPointerEvent& PointerEvent) override;
 };
 
 /**
@@ -732,6 +748,12 @@ public:
 	void HandleSlotRightClicked(UValhallaHUDSlotWidget* Cell, const FVector2D& ScreenPosition);
 	void HandleSlotHovered(UValhallaHUDSlotWidget* Cell, bool bHovered);
 	void HandleSlotDropped(UValhallaHUDSlotWidget* Source, UValhallaHUDSlotWidget* Target);
+	/** An action bar cell dragged off the bar and let go anywhere but another bar cell: the slot is cleared. */
+	void HandleSlotDraggedOff(UValhallaHUDSlotWidget* Source);
+	/** True when a screen point is over the action bar row; a drag let go there (between cells) is not off the bar. */
+	bool IsOverActionBar(const FVector2D& ScreenPosition) const;
+	/** The system line for a skill that cannot go on the bar: "You must be level N to use <skill>." */
+	void ExplainSkillNotPlaceable(FName SkillId);
 	void HandleButton(EValhallaHUDButton Action, int32 Index);
 
 	/** The 1.0 combat-log filter keys, in menu order. */

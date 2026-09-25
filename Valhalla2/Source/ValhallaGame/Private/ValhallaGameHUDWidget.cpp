@@ -950,7 +950,7 @@ void UValhallaHUDSlotWidget::NativeOnDragDetected(const FGeometry& InGeometry, c
 {
 	bPressed = false;
 
-	UDragDropOperation* Operation = NewObject<UDragDropOperation>();
+	UValhallaHUDDragOperation* Operation = NewObject<UValhallaHUDDragOperation>();
 	Operation->Payload = this;
 	Operation->Pivot = EDragPivot::CenterCenter;
 
@@ -968,12 +968,33 @@ bool UValhallaHUDSlotWidget::NativeOnDrop(const FGeometry& InGeometry, const FDr
 {
 	UValhallaHUDSlotWidget* Source = InOperation ? Cast<UValhallaHUDSlotWidget>(InOperation->Payload) : nullptr;
 	UValhallaGameHUDWidget* Owner = Hud.Get();
-	if (Source && Owner && Source != this)
+	if (Source == this)
+	{
+		// Let go where it started: handled, so the drag is not "cancelled" (which
+		// for an action bar cell would take the skill off the bar).
+		return true;
+	}
+	if (Source && Owner)
 	{
 		Owner->HandleSlotDropped(Source, this);
 		return true;
 	}
 	return false;
+}
+
+void UValhallaHUDDragOperation::DragCancelled_Implementation(const FPointerEvent& PointerEvent)
+{
+	Super::DragCancelled_Implementation(PointerEvent);
+	UValhallaHUDSlotWidget* Source = Cast<UValhallaHUDSlotWidget>(Payload);
+	if (Source && Source->Kind == EValhallaHUDSlotKind::Action)
+	{
+		UValhallaGameHUDWidget* Owner = Source->Hud.Get();
+		// Let go in a gap between two bar cells: still on the bar, so kept.
+		if (Owner && !Owner->IsOverActionBar(PointerEvent.GetScreenSpacePosition()))
+		{
+			Owner->HandleSlotDraggedOff(Source);
+		}
+	}
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -2646,6 +2667,16 @@ void UValhallaGameHUDWidget::TickCastBar()
 	const UValhallaSkillComponent* Skills = Pawn ? Pawn->GetSkillComponent() : nullptr;
 	if (!Skills || Skills->CastingSkillId.IsNone())
 	{
+		// Nothing casting: no cast bar, except while the HUD is unlocked, when a
+		// placeholder bar stands in so the panel can be moved and scaled
+		// (TickEditMode ghosts it; SetEditMode(false) collapses it again).
+		if (bEditMode)
+		{
+			CastBar->SetFraction(0.6f);
+			CastBar->SetLabel(TEXT("Cast bar"));
+			CastBarRoot->SetVisibility(ESlateVisibility::HitTestInvisible);
+			return;
+		}
 		CastBarRoot->SetVisibility(ESlateVisibility::Collapsed);
 		return;
 	}
@@ -3666,7 +3697,7 @@ void UValhallaGameHUDWidget::RefreshSkillsPane()
 		}
 	}
 	SkillsHint->SetText(AsText(ArmedSkill.IsNone()
-		? FString(TEXT("Drag a skill to the action bar, or click it and then click a slot."))
+		? FString(TEXT("Drag a skill to the action bar, or click it and then click a slot. Drag a skill off the bar to remove it."))
 		: FString::Printf(TEXT("Now click an action bar slot for %s (Esc to cancel)."), *ArmedSkill.ToString())));
 }
 
@@ -3712,6 +3743,12 @@ void UValhallaGameHUDWidget::HandleSlotClicked(UValhallaHUDSlotWidget* Cell)
 		break;
 
 	case EValhallaHUDSlotKind::Skill:
+		// A skill not unlocked yet cannot go on the bar.
+		if (ArmedSkill != Cell->Id && Skills && !Skills->CanPlaceOnActionBar(Cell->Id))
+		{
+			ExplainSkillNotPlaceable(Cell->Id);
+			break;
+		}
 		ArmSkill(ArmedSkill == Cell->Id ? NAME_None : Cell->Id);
 		break;
 
@@ -3873,6 +3910,17 @@ void UValhallaGameHUDWidget::HandleSlotDropped(UValhallaHUDSlotWidget* Source, U
 			PC->ServerLootItem(Bag, Source->Index);
 		}
 	}
+	else if (Source->Kind == K::Skill && Target->Kind == K::Action && Skills && !Skills->CanPlaceOnActionBar(Source->Id))
+	{
+		// Not unlocked yet (the pane shows it dimmed with its level): nothing changes.
+		UE_LOG(LogValhallaHUD, Log, TEXT("drag: %s is not unlocked; the bar is unchanged."), *Source->Id.ToString());
+		ExplainSkillNotPlaceable(Source->Id);
+	}
+	else if (Source->Kind == K::Action && Target->Kind != K::Action)
+	{
+		// Off the bar onto some other cell (the skills pane, the inventory): removed.
+		HandleSlotDraggedOff(Source);
+	}
 	else if ((Source->Kind == K::Skill || Source->Kind == K::Action) && Target->Kind == K::Action && Skills)
 	{
 		const FName Moving = Source->Id;
@@ -3884,6 +3932,41 @@ void UValhallaGameHUDWidget::HandleSlotDropped(UValhallaHUDSlotWidget* Source, U
 			Skills->ServerSetActionBar(Source->Index, Displaced);
 		}
 	}
+}
+
+void UValhallaGameHUDWidget::HandleSlotDraggedOff(UValhallaHUDSlotWidget* Source)
+{
+	VALHALLA_HUD_PIE_SCOPE(this);
+	AValhallaCharacter* Pawn = GetValhallaPawn();
+	UValhallaSkillComponent* Skills = Pawn ? Pawn->GetSkillComponent() : nullptr;
+	if (!Source || Source->Kind != EValhallaHUDSlotKind::Action || !Skills)
+	{
+		return;
+	}
+	UE_LOG(LogValhallaHUD, Log, TEXT("action bar: %s dragged off slot %d"), *Source->Id.ToString(), Source->Index);
+	Skills->ServerSetActionBar(Source->Index, NAME_None);
+	HideTooltip();
+}
+
+bool UValhallaGameHUDWidget::IsOverActionBar(const FVector2D& ScreenPosition) const
+{
+	return ActionBarRoot && ActionBarRoot->GetCachedGeometry().IsUnderLocation(ScreenPosition);
+}
+
+void UValhallaGameHUDWidget::ExplainSkillNotPlaceable(FName SkillId)
+{
+	AValhallaPlayerController* PC = GetValhallaController();
+	const AValhallaPlayerState* PS = GetValhallaPlayerState();
+	const UValhallaDataSubsystem* Data = GetData();
+	const FValhallaSkillTemplate* Skill = Data ? Data->FindSkill(SkillId) : nullptr;
+	if (!PC)
+	{
+		return;
+	}
+	const FString SkillName = Skill ? Skill->Name : SkillId.ToString();
+	PC->ShowLocalSystemMessage((Skill && PS && PS->Level < Skill->LevelRequired)
+		? FString::Printf(TEXT("You must be level %d to use %s."), Skill->LevelRequired, *SkillName)
+		: FString::Printf(TEXT("You cannot use %s."), *SkillName));
 }
 
 void UValhallaGameHUDWidget::RequestDrop(EValhallaHUDSlotKind Kind, int32 Index)
@@ -4920,6 +5003,15 @@ bool UValhallaGameHUDWidget::IsPanelWantedByGame(FName Key, const UWidget* Widge
 	if (Key == TEXT("Loot"))                              { return LootBag.IsValid(); }
 	if (Key == TEXT("Skills"))                            { return bSkillsOpen; }
 	if (Key == TEXT("Character") || Key == TEXT("Inventory")) { return bInventoryOpen; }
+	// The cast bar's canvas child is its frame (CastBarSize), which stays up;
+	// TickCastBar shows and hides the bar inside it. Wanted = a spell is casting
+	// (not the edit-mode placeholder).
+	if (Key == TEXT("CastBar"))
+	{
+		const AValhallaCharacter* Pawn = GetValhallaPawn();
+		const UValhallaSkillComponent* Skills = Pawn ? Pawn->GetSkillComponent() : nullptr;
+		return Skills && !Skills->CastingSkillId.IsNone();
+	}
 	return Widget && Widget->GetVisibility() != ESlateVisibility::Collapsed && Widget->GetVisibility() != ESlateVisibility::Hidden;
 }
 
@@ -4995,8 +5087,18 @@ void UValhallaGameHUDWidget::SetEditMode(bool bOn)
 			// Back to what the game (or the player) wants: the Tick code shows
 			// the cast bar, target and party again if they are needed.
 			Widget->SetRenderOpacity(1.f);
-			if (State.bUserHidden || !IsPanelWantedByGame(Entry.Key, Widget)
-				|| Entry.Key == TEXT("CastBar") || Entry.Key == TEXT("TargetFrame") || Entry.Key == TEXT("Party"))
+			if (Entry.Key == TEXT("CastBar"))
+			{
+				// Collapse the bar, not its frame: TickCastBar only ever shows the
+				// bar again, so a collapsed frame would hide it for good. A frame
+				// the player hid stays hidden (EnforceUserHiddenPanels).
+				if (State.bUserHidden)
+				{
+					Widget->SetVisibility(ESlateVisibility::Collapsed);
+				}
+			}
+			else if (State.bUserHidden || !IsPanelWantedByGame(Entry.Key, Widget)
+				|| Entry.Key == TEXT("TargetFrame") || Entry.Key == TEXT("Party"))
 			{
 				Widget->SetVisibility(ESlateVisibility::Collapsed);
 			}
@@ -5015,6 +5117,11 @@ void UValhallaGameHUDWidget::SetEditMode(bool bOn)
 				Box->ClearHeightOverride();
 			}
 		}
+	}
+	// The edit-mode placeholder goes; TickCastBar shows the real bar during a cast.
+	if (CastBarRoot)
+	{
+		CastBarRoot->SetVisibility(ESlateVisibility::Collapsed);
 	}
 	EnforceUserHiddenPanels();
 	UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: locked."));

@@ -502,9 +502,9 @@ void AValhallaCharacter::ApplyClassAppearance()
 		}
 	}
 
-	// The action bar's default loadout is `classSkills[classId]`, so this is the
-	// first moment the server can fill it in. BeginPlay is too early: the player
-	// state may not have been assigned yet.
+	// The action bar starts empty once the class is known; the game mode puts
+	// a returning character's saved bar on right after (SpawnLoadedPawn).
+	// BeginPlay is too early: the player state may not have been assigned yet.
 	if (HasAuthority() && SkillComponent)
 	{
 		SkillComponent->InitializeActionBarFromClass();

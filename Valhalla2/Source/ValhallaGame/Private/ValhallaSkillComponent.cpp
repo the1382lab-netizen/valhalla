@@ -111,21 +111,83 @@ void UValhallaSkillComponent::InitializeActionBarFromClass()
 		return;
 	}
 
+	// Kevin, 2026-09-24: a new character starts with an empty bar and fills it
+	// from the skills pane. A returning character's saved bar goes on after
+	// this (AValhallaGameMode::SpawnLoadedPawn -> ApplySavedActionBar).
 	ActionBar.Reset();
 	ActionBar.SetNum(ValhallaActionBarSlots);
 
-	// classSkills is authored in the order the 1.0 UI laid the bar out in, so
-	// "the first eight" is the designers' default loadout, not an arbitrary cut.
-	const TArray<FName> ClassSkills = Data->GetClassSkills(PlayerState->ClassId);
-	const int32 Count = FMath::Min(ClassSkills.Num(), ValhallaActionBarSlots);
-	for (int32 Index = 0; Index < Count; ++Index)
-	{
-		ActionBar[Index] = ClassSkills[Index];
-	}
+	UE_LOG(LogValhallaGame, Log, TEXT("%s action bar: empty"), *PlayerState->CharacterName);
+}
 
-	UE_LOG(LogValhallaGame, Log, TEXT("%s action bar: %s"),
-		*PlayerState->CharacterName,
+bool UValhallaSkillComponent::CanPlaceOnActionBar(FName SkillId) const
+{
+	const AValhallaPlayerState* PlayerState = GetValhallaPlayerState();
+	const UValhallaDataSubsystem* Data = GetData();
+	if (!PlayerState || !Data || SkillId.IsNone())
+	{
+		return false;
+	}
+	return CanPlaceOnActionBar(Data->FindSkill(SkillId), Data->GetClassSkills(PlayerState->ClassId), PlayerState->Level);
+}
+
+bool UValhallaSkillComponent::CanPlaceOnActionBar(const FValhallaSkillTemplate* Skill, const TArray<FName>& ClassSkills, int32 Level)
+{
+	if (!Skill || Skill->Id.IsNone())
+	{
+		return false;
+	}
+	// GameRoom.ts:277 — a class skill or a cross-class skill (classId null,
+	// like melee_attack), and nothing else. And only once it is unlocked.
+	const bool bOwnSkill = Skill->ClassId.IsNone() || ClassSkills.Contains(Skill->Id);
+	return bOwnSkill && Level >= Skill->LevelRequired;
+}
+
+TArray<FName> UValhallaSkillComponent::BuildActionBarFromSave(const TArray<FString>& Saved, TFunctionRef<bool(FName)> CanPlace)
+{
+	TArray<FName> Bar;
+	Bar.SetNum(ValhallaActionBarSlots);
+	for (int32 Index = 0; Index < Saved.Num() && Index < ValhallaActionBarSlots; ++Index)
+	{
+		if (Saved[Index].IsEmpty())
+		{
+			continue;
+		}
+		const FName SkillId(*Saved[Index]);
+		if (CanPlace(SkillId))
+		{
+			Bar[Index] = SkillId;
+		}
+	}
+	return Bar;
+}
+
+void UValhallaSkillComponent::ApplySavedActionBar(const TArray<FString>& Saved)
+{
+	const AValhallaPlayerState* PlayerState = GetValhallaPlayerState();
+	ActionBar = BuildActionBarFromSave(Saved, [this](FName SkillId) { return CanPlaceOnActionBar(SkillId); });
+	for (int32 Index = 0; Index < Saved.Num() && Index < ValhallaActionBarSlots; ++Index)
+	{
+		if (!Saved[Index].IsEmpty() && ActionBar[Index].IsNone())
+		{
+			UE_LOG(LogValhallaGame, Warning, TEXT("%s's saved action bar slot %d holds '%s', which it cannot use; left empty."),
+				PlayerState ? *PlayerState->CharacterName : TEXT("?"), Index + 1, *Saved[Index]);
+		}
+	}
+	UE_LOG(LogValhallaGame, Log, TEXT("%s action bar (saved): %s"),
+		PlayerState ? *PlayerState->CharacterName : TEXT("?"),
 		*FString::JoinBy(ActionBar, TEXT(", "), [](const FName& Id) { return Id.IsNone() ? TEXT("-") : Id.ToString(); }));
+}
+
+TArray<FString> UValhallaSkillComponent::GetActionBarForSave() const
+{
+	TArray<FString> Out;
+	Out.SetNum(ValhallaActionBarSlots);
+	for (int32 Index = 0; Index < ActionBar.Num() && Index < ValhallaActionBarSlots; ++Index)
+	{
+		Out[Index] = ActionBar[Index].IsNone() ? FString() : ActionBar[Index].ToString();
+	}
+	return Out;
 }
 
 FName UValhallaSkillComponent::GetSlotSkillId(int32 Slot) const
@@ -156,21 +218,16 @@ void UValhallaSkillComponent::ServerSetActionBar_Implementation(int32 Slot, FNam
 		return;
 	}
 
-	// GameRoom.ts:277 — a slot may hold a class skill or a cross-class skill
-	// (classId null, like melee_attack), and nothing else. A client that asks for
-	// another class's spell gets the slot cleared, not the spell.
-	const TArray<FName> ClassSkills = Data->GetClassSkills(PlayerState->ClassId);
-	const FValhallaSkillTemplate* Skill = Data->FindSkill(SkillId);
-
-	if (ClassSkills.Contains(SkillId) || (Skill && Skill->ClassId.IsNone()))
+	// A skill the character may not use (another class's, or not unlocked yet)
+	// is refused and the slot keeps what it had.
+	if (CanPlaceOnActionBar(SkillId))
 	{
 		ActionBar[Index] = SkillId;
 	}
 	else
 	{
-		ActionBar[Index] = NAME_None;
-		UE_LOG(LogValhallaGame, Warning, TEXT("%s asked for '%s' in slot %d; not a skill of class '%s'."),
-			*PlayerState->CharacterName, *SkillId.ToString(), Slot, *PlayerState->ClassId.ToString());
+		UE_LOG(LogValhallaGame, Warning, TEXT("%s asked for '%s' in slot %d; not an unlocked skill of class '%s' (level %d)."),
+			*PlayerState->CharacterName, *SkillId.ToString(), Slot, *PlayerState->ClassId.ToString(), PlayerState->Level);
 	}
 }
 

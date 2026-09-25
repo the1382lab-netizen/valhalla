@@ -902,6 +902,16 @@ void AValhallaGameMode::SpawnLoadedPawn(APlayerController* NewPlayer, const FVal
 			bHavePosition ? TEXT("loaded position") : TEXT("default spawn"));
 
 		NotePlayerPosition(ValhallaPS);
+
+		// The saved action bar, over the empty one the pawn started with
+		// (AValhallaCharacter::ApplyClassAppearance). A new character has none.
+		if (const AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(SpawnedPawn))
+		{
+			if (UValhallaSkillComponent* Skills = ValhallaPawn->GetSkillComponent())
+			{
+				Skills->ApplySavedActionBar(Session->ActionBar);
+			}
+		}
 	}
 	else
 	{
@@ -999,6 +1009,16 @@ void AValhallaGameMode::SaveCharacterFor(AValhallaPlayerState* ValhallaPS, const
 	if (!Backend)
 	{
 		return;
+	}
+
+	// The bar as the player has it now; remembered, like the position, for a
+	// save after the pawn has gone.
+	if (const AValhallaCharacter* ValhallaPawn = Cast<AValhallaCharacter>(ValhallaPS->GetPawn()))
+	{
+		if (const UValhallaSkillComponent* Skills = ValhallaPawn->GetSkillComponent())
+		{
+			Session->ActionBar = Skills->GetActionBarForSave();
+		}
 	}
 
 	// Refresh the remembered position if there is a pawn to read it off, then

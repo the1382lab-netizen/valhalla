@@ -75,7 +75,10 @@ public:
 	// ── Replicated action bar (PlayerState.ts:107 `actionBar`) ──────────
 
 	/**
-	 * Eight skill ids, defaulted to the first eight of `classSkills[classId]`.
+	 * Eight skill ids. A new character's bar is empty: the player drags skills
+	 * onto it from the skills pane (a newly unlocked skill too), and drags them
+	 * off to remove them. The bar is saved with the character (ApplySavedActionBar
+	 * on login, GetActionBarForSave on save).
 	 *
 	 * Replicated rather than client-side because the server is what runs
 	 * OnActionBarPressed's cast: if the two disagreed about what is in slot 3,
@@ -146,8 +149,40 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Valhalla|ActionBar")
 	FName GetSlotSkillId(int32 Slot) const;
 
-	/** Fill ActionBar from classSkills. Server only; called once the class is known. */
+	/** Empty the bar. Server only; called once the class is known (the saved bar goes on after). */
 	void InitializeActionBarFromClass();
+
+	/**
+	 * Server only: the bar the backend saved (ids, "" for an empty slot). Each
+	 * entry goes through CanPlaceOnActionBar; one that no longer passes (a skill
+	 * removed from the data, another class's) is left empty.
+	 */
+	void ApplySavedActionBar(const TArray<FString>& Saved);
+
+	/** The bar as the backend stores it: eight ids, "" for an empty slot. */
+	TArray<FString> GetActionBarForSave() const;
+
+	/**
+	 * Whether this character may put a skill on the bar: one of its class's
+	 * skills or a cross-class one (classId null, like melee_attack), and
+	 * unlocked (level >= levelRequired).
+	 */
+	bool CanPlaceOnActionBar(FName SkillId) const;
+
+	/**
+	 * The rule under CanPlaceOnActionBar, with no world: `Skill` is on the
+	 * class's skill list (`ClassSkills`, classSkills[classId]) or cross-class
+	 * (classId null), and `Level` has reached its levelRequired. A null skill
+	 * never is.
+	 */
+	static bool CanPlaceOnActionBar(const FValhallaSkillTemplate* Skill, const TArray<FName>& ClassSkills, int32 Level);
+
+	/**
+	 * The body of ApplySavedActionBar, with no world: eight slots from the saved
+	 * ids ("" is empty, past the eighth is ignored), each kept only if
+	 * `CanPlace` passes it and otherwise left empty.
+	 */
+	static TArray<FName> BuildActionBarFromSave(const TArray<FString>& Saved, TFunctionRef<bool(FName)> CanPlace);
 
 	/**
 	 * Cast whatever is in a 1-based slot at the given target and aim point.

@@ -50,7 +50,7 @@ struct VALHALLAGAME_API FValhallaBackendSession
 	/** The zone that position is local to. */
 	FName LastZoneId;
 
-	/** Phase 8's, carried through a load and a save untouched. */
+	/** The saved action bar: applied to the pawn at spawn, refreshed from it at every save. */
 	TArray<FString> ActionBar;
 
 	/** The 30 s autosave. Cleared on Logout. */

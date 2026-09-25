@@ -11,6 +11,7 @@
 #include "ValhallaCharacter.h"
 #include "ValhallaDataSubsystem.h"
 #include "ValhallaGame.h"
+#include "ValhallaLocomotionSettings.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
 
@@ -245,7 +246,7 @@ FString UValhallaAnimComponent::DescribeBlend() const
 
 	FString Locomotion = FString::Printf(TEXT("%s %.2f + %s %.2f"),
 		AnimName(EValhallaAnim::Idle), 1.f - Walk,
-		AnimName(EValhallaAnim::Walk), Walk);
+		AnimName(Gait == EValhallaGait::Jog && Sequence(EValhallaAnim::Jog) ? EValhallaAnim::Jog : EValhallaAnim::Walk), Walk);
 
 	if (Action > KINDA_SMALL_NUMBER)
 	{
@@ -536,6 +537,32 @@ bool UValhallaAnimComponent::IsActionFinished() const
 	return !World || World->GetTimeSeconds() >= ActionEndTime;
 }
 
+const TCHAR* LexToString(EValhallaGait Gait)
+{
+	switch (Gait)
+	{
+	case EValhallaGait::Idle: return TEXT("Idle");
+	case EValhallaGait::Walk: return TEXT("Walk");
+	case EValhallaGait::Jog:  return TEXT("Jog");
+	}
+	return TEXT("Idle");
+}
+
+EValhallaGait UValhallaAnimComponent::ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis)
+{
+	if (Speed < MovingSpeed)
+	{
+		return EValhallaGait::Idle;
+	}
+	if (Previous == EValhallaGait::Jog)
+	{
+		// Only the way down is delayed: a jog slowing through the threshold
+		// keeps jogging until it is clearly below it.
+		return Speed < JogSpeed - FMath::Max(0.f, Hysteresis) ? EValhallaGait::Walk : EValhallaGait::Jog;
+	}
+	return Speed >= JogSpeed ? EValhallaGait::Jog : EValhallaGait::Walk;
+}
+
 void UValhallaAnimComponent::TickLocomotion()
 {
 	const AActor* Owner = GetOwner();
@@ -544,22 +571,56 @@ void UValhallaAnimComponent::TickLocomotion()
 		return;
 	}
 
+	const UValhallaLocomotionSettings* Settings = GetDefault<UValhallaLocomotionSettings>();
 	const float Speed = Owner->GetVelocity().Size2D();
-	SetLocomotion(Speed > WalkSpeedThreshold ? EValhallaAnim::Walk : EValhallaAnim::Idle);
 
-	// Speed-matched locomotion on an external body: the walk or the jog,
-	// whichever needs the rate nearer 1, played at speed / (clip speed x the
-	// body's drawn scale) so the planted foot does not slide.
-	if (AnimInstance && UValhallaVisuals::UseExternalBody() && BodyMesh && Speed > WalkSpeedThreshold)
+	const EValhallaGait Previous = Gait;
+	Gait = ChooseGait(Speed, Previous, Settings->MovingSpeed, Settings->JogSpeed, Settings->GaitHysteresis);
+	SetLocomotion(Gait == EValhallaGait::Idle ? EValhallaAnim::Idle : EValhallaAnim::Walk);
+
+	// The moving slot of the blend plays the walk or the jog, on either body
+	// (the legacy body's jog is A_Run). A body missing its jog clip walks.
+	// Standing still leaves the slot alone, so the blend out fades the cycle
+	// that was actually playing.
+	float Rate = 1.f;
+	if (AnimInstance && Gait != EValhallaGait::Idle)
 	{
-		const float Scale = FMath::Max(0.01f, static_cast<float>(BodyMesh->GetComponentScale().Z));
-		const float WalkRate = Speed / (UValhallaVisuals::WalkClipSpeed * Scale);
-		const float JogRate = Speed / (UValhallaVisuals::JogClipSpeed * Scale);
-		// Hysteresis around the crossover so a speed hovering there does not flicker.
-		const float Crossover = bJogging ? 1.15f : 1.35f;
-		bJogging = Sequence(EValhallaAnim::Jog) && WalkRate > Crossover;
-		UAnimSequence* Cycle = bJogging ? Sequence(EValhallaAnim::Jog) : Sequence(EValhallaAnim::Walk);
-		AnimInstance->SetWalkSequence(Cycle, FMath::Clamp(bJogging ? JogRate : WalkRate, 0.45f, 1.6f));
+		EValhallaAnim Cycle = Gait == EValhallaGait::Jog ? EValhallaAnim::Jog : EValhallaAnim::Walk;
+		if (!Sequence(Cycle))
+		{
+			Cycle = EValhallaAnim::Walk;
+		}
+
+		// Matched: speed / (the clip's authored speed x the body's drawn
+		// scale) keeps the planted foot on the ground. The floor means a jog
+		// just over the threshold slides a little rather than crawling.
+		if (Settings->bMatchPlayRateToSpeed && BodyMesh)
+		{
+			const float Scale = FMath::Max(0.01f, static_cast<float>(BodyMesh->GetComponentScale().Z));
+			const float ClipSpeed = FMath::Max(1.f, UValhallaVisuals::LocomotionClipSpeed(Cycle) * Scale);
+			const float MinRate = FMath::Max(0.01f, Settings->MinPlayRate);
+			Rate = FMath::Clamp(Speed / ClipSpeed, MinRate, FMath::Max(MinRate, Settings->MaxPlayRate));
+		}
+		AnimInstance->SetWalkSequence(Sequence(Cycle), Rate);
+	}
+
+	if (Gait != Previous)
+	{
+		// Players always; NPCs only for the jog, so a camp of wanderers does
+		// not fill the log with every step they take.
+		const APawn* Pawn = Cast<APawn>(Owner);
+		const bool bPlayer = Pawn && Pawn->GetPlayerState();
+		const TCHAR* Where = Owner->GetNetMode() == NM_Client ? TEXT("client") : TEXT("server");
+		if (bPlayer || Gait == EValhallaGait::Jog || Previous == EValhallaGait::Jog)
+		{
+			UE_LOG(LogValhallaVisual, Log, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (rate %.2f)"),
+				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), Speed, Rate);
+		}
+		else
+		{
+			UE_LOG(LogValhallaVisual, Verbose, TEXT("%s [%s]: gait %s->%s at %.0f cm/s (rate %.2f)"),
+				*GetNameSafe(Owner), Where, LexToString(Previous), LexToString(Gait), Speed, Rate);
+		}
 	}
 }
 
@@ -603,7 +664,8 @@ void UValhallaAnimComponent::TickComponent(float DeltaSeconds, ELevelTick TickTy
 
 	// An emote is dropped the moment the character walks off. (A sitter is
 	// stood up by the server, AValhallaCharacter::SetSitting, which replicates.)
-	if (bActionPlaying && bEmoteAction && GetOwner()->GetVelocity().Size2D() > WalkSpeedThreshold)
+	if (bActionPlaying && bEmoteAction
+		&& GetOwner()->GetVelocity().Size2D() >= GetDefault<UValhallaLocomotionSettings>()->MovingSpeed)
 	{
 		bActionPlaying = false;
 		bEmoteAction = false;

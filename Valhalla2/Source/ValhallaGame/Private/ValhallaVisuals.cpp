@@ -92,14 +92,13 @@ FString UValhallaVisuals::AnimPath(EValhallaAnim Anim)
 	}
 
 	// Legacy body: its seven clips; the newer slots fall back to the nearest
-	// one, and the stance poses do not exist for it.
+	// one, and the stance poses do not exist for it. Its jog is A_Run.
 	switch (Anim)
 	{
 	case EValhallaAnim::AttackSword:
 	case EValhallaAnim::AttackDagger:
 	case EValhallaAnim::AttackMace:
 	case EValhallaAnim::AttackStaff:   Anim = EValhallaAnim::Attack; break;
-	case EValhallaAnim::Jog:           Anim = EValhallaAnim::Walk;   break;
 	case EValhallaAnim::BowDraw:
 	case EValhallaAnim::BowRelease:    Anim = EValhallaAnim::Shoot;  break;
 	case EValhallaAnim::CastChannel:
@@ -118,6 +117,7 @@ FString UValhallaVisuals::AnimPath(EValhallaAnim Anim)
 	{
 	case EValhallaAnim::Idle:   Name = TEXT("A_Idle");   break;
 	case EValhallaAnim::Walk:   Name = TEXT("A_Walk");   break;
+	case EValhallaAnim::Jog:    Name = TEXT("A_Run");    break;
 	case EValhallaAnim::Attack: Name = TEXT("A_Attack"); break;
 	case EValhallaAnim::Shoot:  Name = TEXT("A_Shoot");  break;
 	case EValhallaAnim::Cast:   Name = TEXT("A_Cast");   break;
@@ -134,6 +134,16 @@ FString UValhallaVisuals::AnimPath(EValhallaAnim Anim)
 	}
 
 	return FString::Printf(TEXT("%s/Animations/%s"), CharactersRoot(), Name);
+}
+
+float UValhallaVisuals::LocomotionClipSpeed(EValhallaAnim Cycle)
+{
+	const bool bJog = Cycle == EValhallaAnim::Jog;
+	if (UseExternalBody())
+	{
+		return bJog ? JogClipSpeed : WalkClipSpeed;
+	}
+	return bJog ? LegacyJogClipSpeed : LegacyWalkClipSpeed;
 }
 
 EValhallaBodyProfile UValhallaVisuals::ActiveBodyProfile()

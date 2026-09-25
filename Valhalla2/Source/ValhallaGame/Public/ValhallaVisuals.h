@@ -314,6 +314,18 @@ public:
 	static constexpr float JogClipSpeed = 581.f;
 
 	/**
+	 * The same for the legacy body's A_Walk and A_Run (its jog slot), from
+	 * how Blender assets/scripts/wave2_anims.py keys them: the planted foot
+	 * travels 2 x reach in stance x cycle seconds — A_Walk 0.34 m in 0.30 s,
+	 * A_Run 0.52 m in 0.187 s.
+	 */
+	static constexpr float LegacyWalkClipSpeed = 113.3f;
+	static constexpr float LegacyJogClipSpeed = 278.6f;
+
+	/** Unscaled cm/s of the active body's walk (Walk) or jog (Jog) cycle. */
+	static float LocomotionClipSpeed(EValhallaAnim Cycle);
+
+	/**
 	 * The animation a skill plays when it goes off.
 	 *
 	 * Offensive, debuff, healing and buff skills are spellcasting and play

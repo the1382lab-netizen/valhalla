@@ -8,21 +8,98 @@
         {
           "itemId": "cloth_hood",
           "weight": 1,
-          "dropChance": 1,
+          "dropChance": 0.07,
           "minQuantity": 1,
           "maxQuantity": 1
         },
         {
           "itemId": "cloth_robe",
-          "weight": 1,
-          "dropChance": 1,
+          "weight": 0.2,
+          "dropChance": 0.12,
           "minQuantity": 1,
           "maxQuantity": 1
         },
         {
           "itemId": "cloth_pants",
           "weight": 1,
-          "dropChance": 1,
+          "dropChance": 0.34,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "bone_totem",
+          "weight": 1,
+          "dropChance": 0.08,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "chainmail",
+          "weight": 1,
+          "dropChance": 0.17,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "cloth_wraps",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_buckler",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_dagger",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_kite_shield",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_boots",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_gloves",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "oak_staff",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "rat_tail",
+          "weight": 1,
+          "dropChance": 0.07,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.07,
           "minQuantity": 1,
           "maxQuantity": 1
         }

@@ -13,6 +13,17 @@ class USkeletalMeshComponent;
 class UValhallaAnimInstance;
 class UValhallaSkillComponent;
 
+/** The locomotion cycle a body is in, from its ground speed (UValhallaAnimComponent::ChooseGait). */
+enum class EValhallaGait : uint8
+{
+	Idle,
+	Walk,
+	Jog,
+};
+
+/** "Idle", "Walk", "Jog". For the log. */
+VALHALLAGAME_API const TCHAR* LexToString(EValhallaGait Gait);
+
 /**
  * The animation state machine: five states, driving a blended node tree.
  *
@@ -163,6 +174,25 @@ public:
 	/** The anim component on an actor, or null. */
 	static UValhallaAnimComponent* Find(AActor* Actor);
 
+	// ── Gait ────────────────────────────────────────────────────────────
+
+	/**
+	 * The locomotion cycle for a ground speed, cm/s (Project Settings >
+	 * Valhalla > Locomotion supplies the three numbers):
+	 *
+	 *   Speed < MovingSpeed                       Idle
+	 *   otherwise, from Idle or Walk              Jog if Speed >= JogSpeed, else Walk
+	 *   otherwise, from Jog                       Walk only once Speed < JogSpeed - Hysteresis
+	 *
+	 * so exactly JogSpeed jogs, and a jog slowing through the threshold keeps
+	 * jogging for Hysteresis cm/s before it walks. Pure; pinned by
+	 * Valhalla.Game.Anim.Gait.
+	 */
+	static EValhallaGait ChooseGait(float Speed, EValhallaGait Previous, float MovingSpeed, float JogSpeed, float Hysteresis);
+
+	/** The gait the body is in now. */
+	EValhallaGait GetGait() const { return Gait; }
+
 protected:
 	/** Point the locomotion blend at Idle or Walk. */
 	void SetLocomotion(EValhallaAnim Anim);
@@ -173,7 +203,10 @@ protected:
 	 */
 	void EnsureAnimInstance();
 
-	/** Idle or Walk, from the owner's ground speed. */
+	/**
+	 * Idle, walk or jog, from the owner's ground speed (ChooseGait), and the
+	 * cycle's play rate matched to that speed.
+	 */
 	void TickLocomotion();
 
 	/** Poll the skill component's replicated cast state. */
@@ -199,9 +232,6 @@ protected:
 
 	/** The cast being held ended by interruption: lower, do not release. */
 	void NoteCastInterrupted();
-
-	/** Ground speed above which the body walks, cm/s. */
-	static constexpr float WalkSpeedThreshold = 10.f;
 
 private:
 	/** The leader mesh. Weak in spirit — it is a sibling component, not owned. */
@@ -233,7 +263,9 @@ private:
 	bool bStanceGripRight = false;
 	bool bStanceGripLeft = false;
 	bool bStanceShieldArm = false;
-	bool bJogging = false;
+
+	/** The locomotion cycle, from ChooseGait. Walk and Jog both drive the blend's moving slot. */
+	EValhallaGait Gait = EValhallaGait::Idle;
 
 	/** What the current cast hold is, so its end plays the matching release. */
 	enum class EHeldCast : uint8 { None, Spell, Staff, Bow };

@@ -8,9 +8,9 @@
       "baseStats": {
         "hp": 150,
         "mana": 0,
-        "strength": 20,
-        "stamina": 18,
-        "dexterity": 10,
+        "strength": 5,
+        "stamina": 12,
+        "dexterity": 8,
         "intelligence": 4,
         "wisdom": 4,
         "physicalResist": 8,
@@ -42,7 +42,9 @@
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 3600,
       "baseRangedAttackSpeedMs": 0,
-      "visionRange": 1200
+      "visionRange": 1200,
+      "baseMeleeDamage": 5,
+      "baseRangedDamage": 5
     },
     "cleric": {
       "id": "cleric",
@@ -85,7 +87,9 @@
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4400,
       "baseRangedAttackSpeedMs": 0,
-      "visionRange": 1200
+      "visionRange": 1200,
+      "baseMeleeDamage": 3,
+      "baseRangedDamage": 3
     },
     "ranger": {
       "id": "ranger",
@@ -94,9 +98,9 @@
       "baseStats": {
         "hp": 110,
         "mana": 0,
-        "strength": 10,
-        "stamina": 12,
-        "dexterity": 20,
+        "strength": 6,
+        "stamina": 8,
+        "dexterity": 8,
         "intelligence": 6,
         "wisdom": 6,
         "physicalResist": 4,
@@ -112,7 +116,7 @@
         "mana": 0,
         "strength": 1,
         "stamina": 1,
-        "dexterity": 3,
+        "dexterity": 2,
         "intelligence": 0,
         "wisdom": 0,
         "physicalResist": 0,
@@ -128,7 +132,9 @@
       "canUseMana": false,
       "baseMeleeAttackSpeedMs": 3000,
       "baseRangedAttackSpeedMs": 4000,
-      "visionRange": 1800
+      "visionRange": 1800,
+      "baseMeleeDamage": 3,
+      "baseRangedDamage": 5
     },
     "rogue": {
       "id": "rogue",
@@ -188,7 +194,9 @@
           "quantity": 1,
           "equipped": true
         }
-      ]
+      ],
+      "baseMeleeDamage": 5,
+      "baseRangedDamage": 2
     },
     "shaman": {
       "id": "shaman",
@@ -231,7 +239,9 @@
       "canUseMana": true,
       "baseMeleeAttackSpeedMs": 4000,
       "baseRangedAttackSpeedMs": 0,
-      "visionRange": 1200
+      "visionRange": 1200,
+      "baseMeleeDamage": 3,
+      "baseRangedDamage": 1
     },
     "wizard": {
       "id": "wizard",
@@ -286,7 +296,9 @@
           "quantity": 1,
           "equipped": true
         }
-      ]
+      ],
+      "baseMeleeDamage": 3,
+      "baseRangedDamage": 1
     }
   },
   "classColors": {

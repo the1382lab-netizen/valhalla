@@ -466,4 +466,29 @@ private:
 
 	/** B-16: a chasing NPC this close to its target is never "stuck" (crowding at melee range is normal), cm beyond attack range. */
 	static constexpr double StuckIgnoreNearCm = 150.0;
+
+	/**
+	 * B-10 social aggro: true once this NPC has called for help in the current
+	 * fight. Cleared when it has no target any more, leashes, dies or respawns.
+	 * One call per fight is what makes chains finite.
+	 */
+	bool bCalledForHelp = false;
+
+	/**
+	 * B-10: call same-group NPCs within the template's social range that can
+	 * see this one and are not already fighting; each that answers takes
+	 * Target (1 threat, like a proximity pull). Server only. Returns how many
+	 * joined.
+	 */
+	int32 CallForHelp(AActor* Target);
+
+	/** B-10: answer another NPC's call — take Target as if it had walked into aggro range. */
+	void JoinFight(AActor* Target, const AValhallaNPC* Caller);
+
+public:
+	/** B-10: the template's social group (the template id when blank). */
+	FName GetSocialGroup() const { return Template.SocialGroup.IsNone() ? TemplateId : Template.SocialGroup; }
+
+	/** B-10: whether this NPC has a target or anyone on its threat table. */
+	bool IsEngaged() const { return AggroTarget.IsValid() || ThreatTable.Num() > 0; }
 };

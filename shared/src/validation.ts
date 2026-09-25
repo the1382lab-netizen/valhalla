@@ -418,6 +418,14 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
       }
     }
     if (npc.respawnMs !== undefined && !(isNum(npc.respawnMs) && npc.respawnMs >= 0)) add('error', 'npcs', id, 'respawn time must be 0 or more');
+    // B-10 social aggro
+    if (npc.socialRange !== undefined && !(isNum(npc.socialRange) && npc.socialRange >= 0)) add('error', 'npcs', id, 'social range must be 0 or more');
+    if (npc.socialGroup !== undefined && typeof npc.socialGroup !== 'string') add('error', 'npcs', id, 'social group must be text');
+    if (npc.canSocialAggro === true) {
+      const canAggro = npc.canAggro ?? (npc.type === 'enemy');
+      if (npc.type === 'npc') add('warning', 'npcs', id, 'has Social Aggro on, but friendly NPCs never aggro, so it never calls for help');
+      else if (!canAggro) add('warning', 'npcs', id, 'has Social Aggro on, but Can Aggro is off, so it never calls for help');
+    }
   }
 
   // ── Zones and overlays ────────────────────────────────────────────────

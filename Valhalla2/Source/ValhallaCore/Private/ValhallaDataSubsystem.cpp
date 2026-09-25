@@ -498,6 +498,20 @@ namespace
 
 		OptFloat(Obj, TEXT("aggroRange"), Out.AggroRange);
 
+		// B-10 social aggro. A blank group means "this template only"; a blank
+		// or zero range means the aggro range.
+		OptBool(Obj, TEXT("canSocialAggro"), Out.bCanSocialAggro);
+		OptName(Obj, TEXT("socialGroup"), Out.SocialGroup);
+		if (Out.SocialGroup.IsNone())
+		{
+			Out.SocialGroup = Out.Id;
+		}
+		OptFloat(Obj, TEXT("socialRange"), Out.SocialRange);
+		if (Out.SocialRange <= 0.f)
+		{
+			Out.SocialRange = Out.AggroRange;
+		}
+
 		// npcs.ts:24 — leashRange defaults to aggroRange * 3.
 		Out.LeashRange = Out.AggroRange * 3.f;
 		OptFloat(Obj, TEXT("leashRange"), Out.LeashRange);

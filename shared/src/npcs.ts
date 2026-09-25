@@ -29,6 +29,17 @@ export interface NPCTemplate {
   behaviorType: 'passive' | 'aggressive' | 'patrol' | 'stationary' | 'fleeing';
   /** Whether this NPC can aggro. Defaults to true for enemies, false for friendly NPCs. A friendly NPC never aggroes, whatever this says. */
   canAggro?: boolean;
+  /**
+   * Social aggro (B-10): when this NPC picks up a target it calls for help, and
+   * every NPC of the same social group within socialRange that can see it and
+   * isn't already fighting joins in (and calls its own neighbours if it has
+   * this on too). Off by default. Only meaningful when the NPC can aggro.
+   */
+  canSocialAggro?: boolean;
+  /** Who answers the call. NPCs with the same group help each other; blank means this template only. */
+  socialGroup?: string;
+  /** How far the call reaches (same units as aggroRange). Blank or 0 means aggroRange. */
+  socialRange?: number;
   aggroRange?: number;
   /** Max distance from spawn before NPC resets (default: aggroRange * 3). */
   leashRange?: number;

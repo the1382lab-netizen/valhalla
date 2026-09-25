@@ -15,6 +15,10 @@ interface NPCTemplate {
   lootTableId?: string;
   behaviorType: 'passive' | 'aggressive' | 'patrol' | 'stationary' | 'fleeing';
   canAggro?: boolean;
+  /** B-10 social aggro: call same-group NPCs within socialRange when this one aggroes. */
+  canSocialAggro?: boolean;
+  socialGroup?: string;
+  socialRange?: number;
   aggroRange?: number;
   leashRange?: number;
   damage?: number;
@@ -399,6 +403,53 @@ export const NPCEditor: React.FC = () => {
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                     Default: on for enemies, off for friendly NPCs
                   </div>
+                  {(selectedNpc.canAggro ?? (selectedNpc.type === 'enemy')) && (
+                    <div style={{ marginTop: 10 }}>
+                      <label className="form-label">
+                        <input
+                          type="checkbox"
+                          checked={selectedNpc.canSocialAggro ?? false}
+                          onChange={(e) => handleUpdateNpc({ canSocialAggro: e.target.checked })}
+                          style={{ marginRight: 6 }}
+                        />
+                        Social Aggro
+                      </label>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                        When it aggroes, NPCs of the same social group within range that can see it join in (and call their own neighbours if they have this on too).
+                      </div>
+                      {selectedNpc.canSocialAggro && (
+                        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <label className="form-label">Social Group</label>
+                            <input
+                              className="form-input"
+                              type="text"
+                              placeholder={selectedNpc.id}
+                              value={selectedNpc.socialGroup ?? ''}
+                              onChange={(e) => handleUpdateNpc({ socialGroup: e.target.value || undefined })}
+                            />
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                              Blank = this template only
+                            </div>
+                          </div>
+                          <div style={{ flex: 1 }}>
+                            <label className="form-label">Social Range</label>
+                            <input
+                              className="form-input"
+                              type="number"
+                              min="0"
+                              placeholder={String(selectedNpc.aggroRange || 0)}
+                              value={selectedNpc.socialRange ?? ''}
+                              onChange={(e) => handleUpdateNpc({ socialRange: e.target.value === '' ? undefined : (parseInt(e.target.value, 10) || 0) })}
+                            />
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                              Blank = aggro range
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">

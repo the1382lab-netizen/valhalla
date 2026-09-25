@@ -2093,6 +2093,35 @@ direction the chase and the walk home push changes.
 - **Not done here:** patrol routes and roaming (B-10 / population), crowd avoidance (NPCs still
   just collide), the L_LoSTest doorway check (the town checks cover the same case).
 
+## B-10 part 1 — Social aggro (2026-09-24)
+
+Kevin: an NPC that can aggro gets a second checkbox, Social Aggro. When it picks up a target it
+calls for help, and similar NPCs nearby join the fight.
+
+- **Data** (npc-templates.json, all optional): `canSocialAggro` (off by default), `socialGroup`
+  (who answers; blank means this template only) and `socialRange` (how far the call reaches;
+  blank or 0 means the aggro range). Loaded into FValhallaNPCTemplate; `npm run validate` errors on
+  a negative range and warns when the box is ticked on a friendly NPC or one with Can Aggro off.
+- **Web editor, NPCs page:** a Social Aggro checkbox under Can Aggro (shown only when Can Aggro
+  is ticked), with Social Group and Social Range showing their defaults as placeholders.
+- **Game server** (AValhallaNPC::CallForHelp / JoinFight, rule in FValhallaSocialAggro):
+  - the first fixed step an NPC has a target (proximity, a hit, a miss or a taunt), it calls once
+    per fight, if its template has the box ticked;
+  - an NPC answers when it is in the same social group, alive, can aggro, is not already fighting,
+    is within the caller's social range (XY) and can see the caller: a VisionBlocker trace at eye
+    height, so walls, cliffs and the TH thickets stop the call;
+  - it joins with 1 threat, like a proximity pull, so whoever hits it takes it over;
+  - chaining (Kevin's choice): an NPC that joins calls its own neighbours if its own box is ticked.
+    Chains end because an NPC already fighting never answers and each NPC calls once per fight
+    (reset when it loses its target, leashes, dies or respawns).
+- **Tests:** `Valhalla.Game.NPC.SocialAggro` pins the answer rule (group, range edge, sight,
+  already fighting, dead, can't aggro, zero range). PIE, with Test Enemy (Bandit) temporarily set to
+  `canSocialAggro`, group `bandits`, range 400 (npc-templates.json restored afterwards):
+  - chain: the player pulled Bandit A; Bandit B 250 cm away answered A; Bandit C 600 cm from A but
+    350 cm from B answered B;
+  - wall: a Bandit 135 cm from the pulled one but on the far side of a wall did not answer.
+- No template has social aggro switched on yet; that is for 1.9 population.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

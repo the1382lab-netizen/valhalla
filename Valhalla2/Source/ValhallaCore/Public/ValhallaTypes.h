@@ -690,6 +690,22 @@ struct VALHALLACORE_API FValhallaNPCTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	bool bCanAggro = false;
 
+	/**
+	 * JSON `canSocialAggro` (B-10) — when this NPC picks up a target it calls for
+	 * help: same-SocialGroup NPCs within SocialRange that can see it and are not
+	 * already fighting join in. Off by default.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	bool bCanSocialAggro = false;
+
+	/** JSON `socialGroup` — who answers the call; the template id when blank. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	FName SocialGroup;
+
+	/** JSON `socialRange` — how far the call reaches; AggroRange when blank or 0. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	float SocialRange = 0.f;
+
 	/** JSON `aggroRange` — 1.0 pixels. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float AggroRange = 0.f;

@@ -28,6 +28,7 @@
 #include "ValhallaGame.h"
 #include "ValhallaGameMode.h"
 #include "ValhallaNPCSpawner.h"
+#include "ValhallaSocialAggro.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaVisibilitySubsystem.h"
 #include "ValhallaVisuals.h"
@@ -742,6 +743,7 @@ void AValhallaNPC::Respawn()
 
 	SetActorLocation(HomeLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	MovePath.Reset();
+	bCalledForHelp = false;
 	OnRep_Alive();
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s respawned at %s with %.0f hp."),
@@ -1008,6 +1010,7 @@ void AValhallaNPC::ResetToHome()
 
 	SetActorLocation(HomeLocation, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
 	MovePath.Reset();
+	bCalledForHelp = false;
 
 	// NPCSystem.ts:172 — a leashed NPC heals to full. Without it, a player could
 	// pull an enemy, run out of leash range, and repeat until it died of
@@ -1021,6 +1024,88 @@ void AValhallaNPC::ResetToHome()
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s leashed: reset to %s and healed to %.0f."),
 		*DisplayName, *HomeLocation.ToCompactString(), MaxHp);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  B-10 — social aggro
+// ─────────────────────────────────────────────────────────────────────────────
+
+int32 AValhallaNPC::CallForHelp(AActor* Target)
+{
+	UWorld* World = GetWorld();
+	if (!World || !HasAuthority() || !Target)
+	{
+		return 0;
+	}
+
+	const FName Group = GetSocialGroup();
+	const double Range = Template.SocialRange > 0.f ? Template.SocialRange
+		: (Template.AggroRange > 0.f ? Template.AggroRange : DefaultAggroRange);
+	const FVector MyLocation = GetActorLocation();
+
+	int32 Joined = 0;
+	for (TActorIterator<AValhallaNPC> It(World); It; ++It)
+	{
+		AValhallaNPC* Other = *It;
+		if (!Other || Other == this)
+		{
+			continue;
+		}
+
+		FValhallaSocialAggro::FCandidate Candidate;
+		Candidate.Group = Other->GetSocialGroup();
+		Candidate.bAlive = Other->IsAlive();
+		Candidate.bCanAggro = Other->CanEverAggro();
+		Candidate.bEngaged = Other->IsEngaged();
+		Candidate.DistanceSq = FVector::DistSquared2D(MyLocation, Other->GetActorLocation());
+
+		// The cheap tests first; the trace only for NPCs that would otherwise join.
+		Candidate.bLineOfSight = true;
+		if (!FValhallaSocialAggro::ShouldAnswer(Group, Range, Candidate))
+		{
+			continue;
+		}
+
+		// Sight blockers (walls, cliffs, the TH thickets) stop the call, on the
+		// same channel and at the same eye height the players' sight uses.
+		FCollisionQueryParams Params(SCENE_QUERY_STAT(ValhallaSocialAggro), /*bTraceComplex*/ false);
+		Params.AddIgnoredActor(this);
+		Params.AddIgnoredActor(Other);
+		const FVector Eye(0.f, 0.f, ValhallaEyeHeight);
+		Candidate.bLineOfSight = !World->LineTraceTestByChannel(
+			MyLocation + Eye, Other->GetActorLocation() + Eye, ValhallaVisionBlockerChannel, Params);
+		if (!FValhallaSocialAggro::ShouldAnswer(Group, Range, Candidate))
+		{
+			continue;
+		}
+
+		Other->JoinFight(Target, this);
+		++Joined;
+	}
+
+	if (Joined > 0)
+	{
+		UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) calls for help against %s: %d %s joined (group %s, %.0f cm)."),
+			*DisplayName, *GetName(), *UValhallaCombatLibrary::GetDisplayName(Target), Joined,
+			Joined == 1 ? TEXT("NPC") : TEXT("NPCs"), *Group.ToString(), Range);
+	}
+	return Joined;
+}
+
+void AValhallaNPC::JoinFight(AActor* Target, const AValhallaNPC* Caller)
+{
+	if (!HasAuthority() || !bAlive || !Target || IsEngaged() || !CanEverAggro())
+	{
+		return;
+	}
+
+	// The same token threat a proximity pull seeds (UpdateAggro), so whoever
+	// actually hits this NPC takes it over.
+	ThreatTable.Add(Target, 1.f);
+	AggroTarget = Target;
+
+	UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) answers %s's call for help against %s."),
+		*DisplayName, *GetName(), Caller ? *Caller->GetName() : TEXT("?"), *UValhallaCombatLibrary::GetDisplayName(Target));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1107,6 +1192,23 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 	}
 
 	AActor* Target = AggroTarget.Get();
+
+	// ── Social aggro (B-10) ─────────────────────────────────────────────
+	// The first step of a fight: call same-group neighbours. Once per fight;
+	// an NPC that answers calls its own neighbours on its next step, which is
+	// how a chain spreads through a camp.
+	if (!Target)
+	{
+		bCalledForHelp = false;
+	}
+	else if (!bCalledForHelp)
+	{
+		bCalledForHelp = true;
+		if (Template.bCanSocialAggro && CanEverAggro() && UValhallaCombatLibrary::IsAliveTarget(Target))
+		{
+			CallForHelp(Target);
+		}
+	}
 
 	if (Target && Template.BehaviorType != EValhallaNPCBehavior::Stationary)
 	{

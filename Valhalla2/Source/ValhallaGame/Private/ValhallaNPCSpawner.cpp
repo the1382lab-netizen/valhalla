@@ -9,10 +9,13 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/World.h"
+#include "Misc/Paths.h"
+#include "NavigationSystem.h"
 #include "TimerManager.h"
 #include "ValhallaDataSubsystem.h"
 #include "ValhallaGame.h"
 #include "ValhallaNPC.h"
+#include "ValhallaPatrolRouteComponent.h"
 #include "ValhallaVisuals.h"
 
 #if WITH_EDITOR
@@ -41,6 +44,38 @@ namespace
 		const UGameInstance* GameInstance = World ? World->GetGameInstance() : nullptr;
 		return GameInstance ? GameInstance->GetSubsystem<UValhallaDataSubsystem>() : nullptr;
 	}
+
+	/**
+	 * How far a hand-placed patrol point may be from the nav mesh and still
+	 * count as on it, cm. Generous vertically: the designer drops points on
+	 * the floor and the nav mesh floats a little above it.
+	 */
+	const FVector RoutePointNavExtent(100.0, 100.0, 150.0);
+
+	/** A follow chain longer than this is a loop (or absurd). */
+	constexpr int32 MaxFollowChain = 16;
+
+	/** A template id the running game (or, in the editor, the JSON on disk) knows. */
+	bool IsKnownTemplate(const UObject* Context, FName Id)
+	{
+		if (Id.IsNone())
+		{
+			return false;
+		}
+		if (const UValhallaDataSubsystem* Data = GetData(Context))
+		{
+			return Data->FindNPCTemplate(Id) != nullptr;
+		}
+		FValhallaNPCTemplate Unused;
+		return AValhallaNPC::ReadTemplateFromDisk(Id, Unused);
+	}
+
+	/** The world's nav system and the default agent's nav data, or nulls (L_GreyBox, tests). */
+	const ANavigationData* FindNavData(const UWorld* World, UNavigationSystemV1*& OutNav)
+	{
+		OutNav = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(const_cast<UWorld*>(World)) : nullptr;
+		return OutNav ? OutNav->GetNavDataForProps(FNavAgentProperties::DefaultProperties) : nullptr;
+	}
 }
 
 AValhallaNPCSpawner::AValhallaNPCSpawner()
@@ -65,6 +100,12 @@ AValhallaNPCSpawner::AValhallaNPCSpawner()
 		FacingArrow->ArrowColor = FColor(255, 170, 40);
 		FacingArrow->ArrowSize = 0.8f;
 		FacingArrow->SetRelativeLocation(FVector(0.f, 0.f, 10.f));
+	}
+
+	RouteVisual = CreateEditorOnlyDefaultSubobject<UValhallaPatrolRouteComponent>(TEXT("RouteVisual"));
+	if (RouteVisual)
+	{
+		RouteVisual->SetupAttachment(Marker);
 	}
 
 	PreviewBody = CreateEditorOnlyDefaultSubobject<USkeletalMeshComponent>(TEXT("PreviewBody"));
@@ -171,6 +212,157 @@ float AValhallaNPCSpawner::GetSecondsUntilRespawn() const
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  Patrol, pairs, roaming and rare spawns (B-10 part 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool AValhallaNPCSpawner::IsFollowing() const
+{
+	return FollowSpawner != nullptr && FollowSpawner != this;
+}
+
+bool AValhallaNPCSpawner::HasPatrolRoute() const
+{
+	return !IsFollowing() && FValhallaNPCPatrolRules::HasRoute(PatrolMode, PatrolPoints.Num() + 1);
+}
+
+float AValhallaNPCSpawner::GetEffectiveWanderRadius() const
+{
+	return (IsFollowing() || HasPatrolRoute()) ? 0.f : FMath::Max(0.f, WanderRadius);
+}
+
+void AValhallaNPCSpawner::GetPatrolStopsWorld(TArray<FVector>& OutStops) const
+{
+	// MakeEditWidget points are in the actor's space, so the spawn point's
+	// yaw turns the whole route with it, as a designer rotating it expects.
+	const FTransform& Transform = GetActorTransform();
+	OutStops.Reset(PatrolPoints.Num() + 1);
+	OutStops.Add(GetActorLocation());
+	for (const FVector& Local : PatrolPoints)
+	{
+		OutStops.Add(Transform.TransformPosition(Local));
+	}
+}
+
+FValhallaNPCPatrolSetup AValhallaNPCSpawner::BuildPatrolSetup(const FVector& Home) const
+{
+	FValhallaNPCPatrolSetup Setup;
+	Setup.PauseMinSeconds = PatrolPauseMinSeconds;
+	Setup.PauseMaxSeconds = PatrolPauseMaxSeconds;
+	Setup.SpeedFraction = FMath::Clamp(PatrolSpeedFraction, 0.1f, 1.f);
+	Setup.WanderRadius = GetEffectiveWanderRadius();
+
+	if (!HasPatrolRoute())
+	{
+		return Setup;
+	}
+
+	Setup.Mode = PatrolMode;
+	GetPatrolStopsWorld(Setup.Stops);
+	Setup.Stops[0] = Home;
+
+	// The designer put the points on the floor; the nav mesh floats a little
+	// above it and the path query wants a point on it. A point that does not
+	// project stays as placed (CheckZones warns about it) and the NPC walks
+	// straight at it, skipping it if it gets stuck.
+	UNavigationSystemV1* Nav = nullptr;
+	if (FindNavData(GetWorld(), Nav) && Nav)
+	{
+		for (int32 Index = 1; Index < Setup.Stops.Num(); ++Index)
+		{
+			FNavLocation Projected;
+			if (Nav->ProjectPointToNavigation(Setup.Stops[Index], Projected, RoutePointNavExtent))
+			{
+				Setup.Stops[Index] = Projected.Location;
+			}
+		}
+	}
+	return Setup;
+}
+
+FName AValhallaNPCSpawner::GetEffectiveRareTemplateId() const
+{
+	if (!RareTemplateId.IsNone())
+	{
+		return RareTemplateId;
+	}
+	const AValhallaNPC* RareDefaults = RareNPCClass ? RareNPCClass->GetDefaultObject<AValhallaNPC>() : nullptr;
+	return RareDefaults ? RareDefaults->DefaultTemplateId : NAME_None;
+}
+
+void AValhallaNPCSpawner::CollectPatrolProblems(TArray<FString>& OutProblems) const
+{
+	// ── Pairs ──
+	if (FollowSpawner == this)
+	{
+		OutProblems.Add(TEXT("follows itself; Follow Spawn Point is ignored."));
+	}
+	else if (FollowSpawner)
+	{
+		if (!FollowSpawner->NPCClass)
+		{
+			OutProblems.Add(FString::Printf(TEXT("follows %s, which has no NPC Type, so there is nobody to follow."), *FollowSpawner->GetName()));
+		}
+
+		// A follows B follows A: both stand waiting for the other forever.
+		const AValhallaNPCSpawner* Walk = FollowSpawner;
+		for (int32 Hop = 0; Walk && Hop < MaxFollowChain; ++Hop)
+		{
+			if (Walk == this)
+			{
+				OutProblems.Add(TEXT("is part of a follow loop (A follows B follows A); nobody in it leads."));
+				break;
+			}
+			Walk = Walk->IsFollowing() ? Walk->FollowSpawner.Get() : nullptr;
+		}
+
+		if (PatrolPoints.Num() > 0 && PatrolMode != EValhallaPatrolMode::None)
+		{
+			OutProblems.Add(TEXT("has Patrol Points and a Follow Spawn Point; the points are ignored while it follows."));
+		}
+	}
+
+	// ── Route points on the nav mesh ──
+	if (HasPatrolRoute())
+	{
+		UNavigationSystemV1* Nav = nullptr;
+		if (FindNavData(GetWorld(), Nav) && Nav)
+		{
+			TArray<FVector> Stops;
+			GetPatrolStopsWorld(Stops);
+			for (int32 Index = 1; Index < Stops.Num(); ++Index)
+			{
+				FNavLocation Projected;
+				if (!Nav->ProjectPointToNavigation(Stops[Index], Projected, RoutePointNavExtent))
+				{
+					OutProblems.Add(FString::Printf(TEXT("patrol point %d at %s is not on the nav mesh (nothing within 1 m); the NPC will skip it when it gets stuck."),
+						Index, *Stops[Index].ToCompactString()));
+				}
+			}
+		}
+	}
+
+	// ── Rare spawn ──
+	if (RareChance > 0.f)
+	{
+		const FName Rare = GetEffectiveRareTemplateId();
+		if (Rare.IsNone())
+		{
+			OutProblems.Add(FString::Printf(TEXT("has Rare Chance %.2f but no Rare Template (and no Rare NPC Type with a default template); it never spawns a rare."),
+				RareChance));
+		}
+		else if (!IsKnownTemplate(this, Rare))
+		{
+			OutProblems.Add(FString::Printf(TEXT("names rare template '%s', which is not in npc-templates.json; rare rolls spawn the normal NPC."),
+				*Rare.ToString()));
+		}
+	}
+	else if (!RareTemplateId.IsNone() && !IsKnownTemplate(this, RareTemplateId))
+	{
+		OutProblems.Add(FString::Printf(TEXT("names rare template '%s', which is not in npc-templates.json."), *RareTemplateId.ToString()));
+	}
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -247,8 +439,35 @@ void AValhallaNPCSpawner::SpawnNPC()
 	}
 
 	UClass* SpawnClass = NPCClass ? NPCClass.Get() : AValhallaNPC::StaticClass();
-	const FName EffectiveTemplateId = GetEffectiveTemplateId();
+	FName EffectiveTemplateId = GetEffectiveTemplateId();
 	const FValhallaNPCTemplate* Template = Data->FindNPCTemplate(EffectiveTemplateId);
+
+	// ── Rare roll (B-10 part 2) ──────────────────────────────────────────
+	// Once per spawn, logged either way so a designer can see the odds work.
+	// A rare whose template is missing falls back to the normal spawn: a typo
+	// should cost the rare, not the spawn point.
+	bRareSpawned = false;
+	if (RareChance > 0.f)
+	{
+		const FName RareId = GetEffectiveRareTemplateId();
+		const float Roll = FMath::FRand();
+		const bool bRare = FValhallaNPCPatrolRules::RollsRare(RareChance, Roll);
+		const FValhallaNPCTemplate* RareTemplate = bRare ? Data->FindNPCTemplate(RareId) : nullptr;
+		UE_LOG(LogValhallaGame, Log, TEXT("%s: rare roll %.3f against %.3f -> %s ('%s')."),
+			*GetName(), Roll, RareChance, bRare ? (RareTemplate ? TEXT("RARE") : TEXT("rare, but its template is unknown; normal")) : TEXT("normal"),
+			*RareId.ToString());
+		if (RareTemplate)
+		{
+			bRareSpawned = true;
+			Template = RareTemplate;
+			EffectiveTemplateId = RareId;
+			if (RareNPCClass)
+			{
+				SpawnClass = RareNPCClass.Get();
+			}
+		}
+	}
+
 	if (!Template)
 	{
 		// NPCSystem.ts:80 warned and skipped rather than failing. A designer's
@@ -270,7 +489,9 @@ void AValhallaNPCSpawner::SpawnNPC()
 	}
 
 	Npc->InitializeFromTemplate(*Template, GetActorLocation(), this);
-	if (!DebugLabel.IsEmpty())
+	// The name override is this spawn point's usual NPC; a rare keeps its own
+	// name ("Castellan Ordric Vane", not the lieutenant's).
+	if (!DebugLabel.IsEmpty() && !bRareSpawned)
 	{
 		Npc->DisplayName = DebugLabel;
 	}
@@ -283,11 +504,29 @@ void AValhallaNPCSpawner::SpawnNPC()
 	// it, the NPC must not leash the moment it takes a step.
 	Npc->SetHomeLocation(Npc->GetActorLocation());
 
+	// B-10 part 2: its idle walk, from the settled spot. A fresh NPC starts at
+	// stop 0 (here) with a fresh route state; the rare walks the same route.
+	Npc->ConfigureIdleMovement(BuildPatrolSetup(Npc->GetActorLocation()), IsFollowing() ? FollowSpawner.Get() : nullptr);
+
 	SpawnedNPC = Npc;
 
-	UE_LOG(LogValhallaGame, Log, TEXT("%s spawned '%s' (%s, template '%s') at %s; respawn %.0f s after death."),
-		*GetName(), *Npc->DisplayName, *GetNameSafe(SpawnClass), *EffectiveTemplateId.ToString(),
-		*Npc->GetActorLocation().ToCompactString(), GetEffectiveRespawnSeconds());
+	FString Idle = TEXT("stands");
+	if (IsFollowing())
+	{
+		Idle = FString::Printf(TEXT("follows %s"), *FollowSpawner->GetName());
+	}
+	else if (HasPatrolRoute())
+	{
+		Idle = FString::Printf(TEXT("%s route, %d stops"), PatrolMode == EValhallaPatrolMode::Loop ? TEXT("loop") : TEXT("ping-pong"), PatrolPoints.Num() + 1);
+	}
+	else if (GetEffectiveWanderRadius() > 0.f)
+	{
+		Idle = FString::Printf(TEXT("roams %.0f cm"), GetEffectiveWanderRadius());
+	}
+
+	UE_LOG(LogValhallaGame, Log, TEXT("%s spawned '%s'%s (%s, template '%s') at %s; respawn %.0f s after death; idle: %s."),
+		*GetName(), *Npc->DisplayName, bRareSpawned ? TEXT(" [RARE]") : TEXT(""), *GetNameSafe(SpawnClass), *EffectiveTemplateId.ToString(),
+		*Npc->GetActorLocation().ToCompactString(), GetEffectiveRespawnSeconds(), *Idle);
 }
 
 void AValhallaNPCSpawner::NotifyNPCDied(AValhallaNPC* Npc)
@@ -400,7 +639,35 @@ void AValhallaNPCSpawner::OnConstruction(const FTransform& Transform)
 	if (World && !World->IsGameWorld())
 	{
 		RefreshPreview();
+		RefreshRouteVisual();
 	}
+}
+
+void AValhallaNPCSpawner::RefreshRouteVisual()
+{
+	if (!RouteVisual)
+	{
+		return;
+	}
+
+	// Everything in the spawn point's own space: the component sits on the
+	// root with no offset, so its space is the actor's.
+	TArray<FVector> Local;
+	if (HasPatrolRoute())
+	{
+		Local.Add(FVector::ZeroVector);
+		Local.Append(PatrolPoints);
+	}
+
+	FVector LeaderLocal = FVector::ZeroVector;
+	const bool bFollow = IsFollowing();
+	if (bFollow)
+	{
+		LeaderLocal = GetActorTransform().InverseTransformPosition(FollowSpawner->GetActorLocation());
+	}
+
+	RouteVisual->SetRoute(Local, PatrolMode == EValhallaPatrolMode::Loop, PatrolMode == EValhallaPatrolMode::PingPong,
+		GetEffectiveWanderRadius(), bFollow, LeaderLocal);
 }
 
 void AValhallaNPCSpawner::RefreshPreview()
@@ -438,12 +705,18 @@ void AValhallaNPCSpawner::RefreshPreview()
 	PreviewBody->SetSkeletalMeshAsset(Body);
 	// Same body scale the live NPC gets (ApplyBodyScale): template scale times
 	// the active body profile's normalising scale.
-	PreviewBody->SetRelativeScale3D(FVector(Scale * UValhallaVisuals::ActiveBodyScale()));
+	PreviewBody->SetRelativeScale3D(FVector(Scale * TypeDefaults->GetBaseBodyScale()));
 	PreviewBody->SetWorldLocation(FVector(GetActorLocation().X, GetActorLocation().Y, FloorZ));
 	PreviewBody->SetRelativeRotation(FRotator(0.f, UValhallaVisuals::MeshYaw, 0.f));
 
-	// The active profile's idle, so the preview plays a clip made for its skeleton.
-	UAnimSequence* Idle = LoadObject<UAnimSequence>(nullptr, *UValhallaVisuals::AnimPath(EValhallaAnim::Idle));
+	// The active profile's idle, so the preview plays a clip made for its
+	// skeleton — or, for a type with a body of its own (1.9a), its folder's.
+	FString IdlePath = UValhallaVisuals::AnimPath(EValhallaAnim::Idle);
+	if (TypeDefaults->HasBodyOverride() && !TypeDefaults->AnimFolderOverride.IsEmpty())
+	{
+		IdlePath = TypeDefaults->AnimFolderOverride / FPaths::GetBaseFilename(IdlePath);
+	}
+	UAnimSequence* Idle = LoadObject<UAnimSequence>(nullptr, *IdlePath);
 	if (Idle && Body && Idle->GetSkeleton() != Body->GetSkeleton())
 	{
 		Idle = nullptr;
@@ -454,7 +727,15 @@ void AValhallaNPCSpawner::RefreshPreview()
 		PreviewBody->PlayAnimation(Idle, /*bLooping*/ true);
 	}
 
-	UValhallaVisuals::ApplyActiveHead(PreviewHead, PreviewBody);
+	if (TypeDefaults->HasBodyOverride())
+	{
+		// A body of its own has no player head (1.9a).
+		if (PreviewHead) { PreviewHead->SetSkeletalMeshAsset(nullptr); }
+	}
+	else
+	{
+		UValhallaVisuals::ApplyActiveHead(PreviewHead, PreviewBody);
+	}
 
 	for (int32 Index = 0; Index < PreviewPieces.Num(); ++Index)
 	{
@@ -523,6 +804,16 @@ void AValhallaNPCSpawner::CheckForErrors()
 				->AddToken(FUObjectToken::Create(this))
 				->AddToken(FTextToken::Create(FText::FromString(TEXT("places its NPC inside level geometry; move it into the open."))));
 		}
+	}
+
+	// B-10 part 2: patrol, pair and rare settings (the valhalla.CheckZones list).
+	TArray<FString> PatrolProblems;
+	CollectPatrolProblems(PatrolProblems);
+	for (const FString& Problem : PatrolProblems)
+	{
+		MapCheck.Warning()
+			->AddToken(FUObjectToken::Create(this))
+			->AddToken(FTextToken::Create(FText::FromString(Problem)));
 	}
 }
 

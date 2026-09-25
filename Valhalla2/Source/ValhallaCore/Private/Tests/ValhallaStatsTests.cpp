@@ -466,7 +466,8 @@ bool FValhallaDataLoadsTest::RunTest(const FString& Parameters)
 	// added in 1.0, update these numbers deliberately — do not delete the test.
 	CheckExact(*this, TEXT("class count"), Tables.Classes.Num(), 6);
 	CheckExact(*this, TEXT("skill count"), Tables.Skills.Num(), 41);
-	CheckExact(*this, TEXT("item count"), Tables.Items.Num(), 31);
+	// 35 since B-06 1.9 (iron_cuirass, ashvane_signet, castellans_sword, hound_crest_shield).
+	CheckExact(*this, TEXT("item count"), Tables.Items.Num(), 35);
 	CheckExact(*this, TEXT("zone count"), Tables.Zones.Num(), 4);
 
 	// Spot-check that a record actually converted rather than being an empty

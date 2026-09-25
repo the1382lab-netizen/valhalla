@@ -181,7 +181,10 @@ public:
 	 * no second copy of them anywhere to drift, so the only mistakes left are
 	 * inside the level: a portal whose target zone or entry does not exist, an
 	 * entry in a different zone from the portal that names it, two entries
-	 * sharing an id, a zone with no tagged player start.
+	 * sharing an id, a zone with no tagged player start; and (B-10 part 2) a
+	 * spawn point's patrol point off the nav mesh, a Follow Spawn Point that
+	 * is itself, spawns nothing or closes a loop, Rare Chance with no rare
+	 * template, an unknown rare template (AValhallaNPCSpawner::CollectPatrolProblems).
 	 *
 	 * Runs on the server at `OnWorldBeginPlay` and from `valhalla.CheckZones`.
 	 * Never fatal: every case above has a fallback at runtime (an unknown

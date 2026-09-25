@@ -550,9 +550,30 @@ int32 UValhallaZoneSubsystem::CheckPlacedActors() const
 		}
 	}
 
+	// ── NPC spawn points: patrol routes, pairs and rare spawns (B-10 part 2) ──
+	// Route points off the nav mesh, a Follow Spawn Point that is itself or
+	// spawns nothing, a follow loop, Rare Chance with no rare template, an
+	// unknown rare template. The same list Map Check shows in the editor.
+	int32 RouteCount = 0;
+	for (TActorIterator<AValhallaNPCSpawner> It(World); It; ++It)
+	{
+		const AValhallaNPCSpawner* Spawner = *It;
+		if (Spawner->HasPatrolRoute())
+		{
+			++RouteCount;
+		}
+		TArray<FString> SpawnerProblems;
+		Spawner->CollectPatrolProblems(SpawnerProblems);
+		for (const FString& Problem : SpawnerProblems)
+		{
+			UE_LOG(LogValhallaZones, Warning, TEXT("NPC spawn point %s %s"), *Spawner->GetName(), *Problem);
+			++Problems;
+		}
+	}
+
 	UE_LOG(LogValhallaZones, Log,
-		TEXT("placed actors: %d zones, %d portals, %d zone entries, %d player starts, %d NPC spawn points; %d problem(s)."),
-		Zones.Num(), PortalCount, EntryCount, StartCount, GetSpawnedSpawnerCount(), Problems);
+		TEXT("placed actors: %d zones, %d portals, %d zone entries, %d player starts, %d NPC spawn points (%d with a patrol route); %d problem(s)."),
+		Zones.Num(), PortalCount, EntryCount, StartCount, GetSpawnedSpawnerCount(), RouteCount, Problems);
 
 	return Problems;
 }
@@ -584,7 +605,7 @@ namespace
 	 */
 	FAutoConsoleCommandWithWorld GCheckZonesCommand(
 		TEXT("valhalla.CheckZones"),
-		TEXT("Rediscover the zone volumes and check the placed portals, zone entries and player starts."),
+		TEXT("Rediscover the zone volumes and check the placed portals, zone entries, player starts and NPC spawn points' patrol, pair and rare settings."),
 		FConsoleCommandWithWorldDelegate::CreateStatic([](UWorld* World)
 		{
 			if (!World)

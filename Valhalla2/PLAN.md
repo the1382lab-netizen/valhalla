@@ -2245,6 +2245,142 @@ special case. A third "run" gait is parked as backlog B-26 (run clip + a slow-jo
   hysteresis 195 / 190 jog and 189 walk from a jog, 195 walk from a walk, cutoff 5 idle / 10 walk,
   the settings' defaults).
 
+## B-10 part 2 — Patrols, roaming, pairs, rare spawns (B-06 1.9c, 2026-09-24)
+
+What the Eldmoor roamers (EldmoorDesign.md §6, R1-R8), the bailey patrol pair (§7) and Castellan Vane
+(20% rare in the lieutenant's chair) need from a spawn point. All of it is set on the NPC Spawn Point;
+nothing new in npc-templates.json.
+
+- **Spawn point properties** (`AValhallaNPCSpawner`, tooltips on each):
+  - *Valhalla|Patrol*: `PatrolPoints` (TArray<FVector>, MakeEditWidget, relative to the spawn point;
+    the spawn point itself is always stop 0, so one point = out and back), `PatrolMode` (None / Loop /
+    **PingPong**, the default; None keeps the points but ignores them), `PatrolPauseMinSeconds` 5,
+    `PatrolPauseMaxSeconds` 10, `PatrolSpeedFraction` 0.5 (of the template's move speed, a walk;
+    fights stay full speed), `FollowSpawner` ("Follow Spawn Point", same level only), `WanderRadius`
+    (cm, 0 = off).
+  - *Valhalla|Rare*: `RareNPCClass`, `RareTemplateId` (the same npc-templates dropdown), `RareChance`
+    0-1.
+  - Precedence: a leader beats a route, a route beats roaming (`IsFollowing`, `HasPatrolRoute`,
+    `GetEffectiveWanderRadius`).
+- **Editor viewport**: a new editor-only `UValhallaPatrolRouteComponent` (a primitive with its own
+  scene proxy, so it stays on screen, not only while selected) draws the route in orange (dashed for
+  PingPong, closed for Loop, a cross at each stop), a dashed blue line to the leader and a green roam
+  circle; it refreshes from `OnConstruction`, i.e. on every edit and point drag. The points' diamond
+  handles are the engine's MakeEditWidget.
+- **NPC behaviour** (`AValhallaNPC::TickIdleMovement`, rules in `FValhallaNPCPatrolRules`): a new
+  lowest layer, run only with no target, not returning and no FightStart pending, so the fight, the
+  leash, the walk back and the heal are untouched:
+  - at spawn the spawn point hands the NPC a `FValhallaNPCPatrolSetup` (world-space stops, stop 0 its
+    settled spawn position, the others projected onto the nav mesh within ~1 m);
+  - route: walks stop to stop with `PlanAndSteer` at the speed fraction (slowing over the last half
+    metre), arrives within 35 cm XY, pauses a uniform [min, max], Loop wraps, PingPong turns round.
+    It pauses at stop 0 on spawn too. A pulled patroller records FightStart where it stood, walks back
+    there after the fight or the leash, then carries on to the stop it was heading for. Stuck (the
+    B-16 clock, 3 s) skips to the next stop after a 1 s stand, never warps. Respawn resets to stop 0;
+  - follow: ~1.2 m behind the leader along its facing; stops within 40 cm and sets off again beyond
+    80 cm (hysteresis), matches the leader's walking pace and speeds up to full speed when 1.5-4.5 m
+    behind; faces the leader's way when standing. While the leader fights it holds where it is (social
+    aggro on the template brings the pair in together); while the leader is dead it walks home and
+    waits there, as a non-patrolling NPC does;
+  - roam: random *reachable* nav points within the radius of home (`GetRandomReachablePointInRadius`),
+    same pauses; without nav data a uniform point on the disc;
+  - friendly NPCs patrol too; a Stationary template with a route walks it (route presence drives
+    movement; Stationary still never chases or leashes). Hand-placed NPCs (no spawn point) are as before.
+  - 60 Hz fixed step, no actor tick; one log line per NPC for its idle setup, stuck skips at Log,
+    arrivals at Verbose.
+- **Rare spawns** (`SpawnNPC`): each spawn rolls once (`RollsRare`, logged `rare roll 0.123 against
+  0.200 -> RARE/normal`); a hit spawns `RareNPCClass` (else the normal type) playing
+  `RareTemplateId` (else the rare type's default template). A rare whose template is missing falls
+  back to the normal spawn. The rare keeps its own name (the spawn point's Name Override is not
+  applied), walks the same route, and the respawn time stays the spawn point's.
+- **Checks**: `AValhallaNPCSpawner::CollectPatrolProblems`, logged by `valhalla.CheckZones` /
+  `CheckPlacedActors` and listed by Map Check: a patrol point not on the nav mesh within ~1 m, a
+  Follow Spawn Point that is itself, has no NPC Type or closes a loop, Patrol Points ignored because
+  it follows, Rare Chance > 0 with no rare template, an unknown rare template. The CheckZones summary
+  counts spawn points with a route.
+- **Admin API `/state`**: each spawn point also carries `patrolMode`, `route` (zone-local cm, spawn
+  point first, empty without a route), `followSpawnPointId`, `wanderRadius`, `rareChance`,
+  `rareTemplateId`, `rareSpawned`, always present. **Live Dashboard**: routes as thin orange polylines
+  (dashed for PingPong, closed for Loop), a dotted blue follower-to-leader line, a faint green roam
+  circle; the spawn point tooltip says Patrol / Follows / Roams / Stands and the rare odds.
+- **export_unreal_refs.py** adds `patrolMode`, `patrolPoints` (count), `followSpawner` (label),
+  `wanderRadius`, `rareNpcType`, `rareTemplateId`, `rareChance` to each spawn point (old keys
+  unchanged); `npm run validate` errors on an unknown rare template and warns on Rare Chance without
+  one (optional fields, so older exports still validate).
+- **Tests**: `Valhalla.Game.NPC.Patrol` (next stop for Loop / PingPong incl. 0-, 1- and 2-stop routes,
+  mode None, a shrunken route, arrival XY edge, pause roll edges and bad ranges, follow spot, follow
+  hysteresis and catch-up speed, roam points inside the disc, rare roll edges and an exact 20% over
+  evenly spread rolls); `Valhalla.Game.Admin.StateJson` covers the new spawn point keys (a route, a
+  follower, a roamer). Game target builds; the automation run and the editor-only half (Map Check,
+  the viewport route drawing), which the Game target does not compile, still to do in the editor.
+- **Checked since** (editor build and PIE, with the Eldmoor population below): the editor half
+  compiles; `Valhalla.Game.NPC.Patrol` and `Valhalla.Game.Admin.StateJson` pass; in PIE the R1 footpad
+  walked its PingPong route with pauses, the R7 renegade pair walked their 6-stop route together and
+  turned at the end, the outpost wall guard walked his; the four rare spawn points rolled and logged
+  (`rare roll 0.794 against 0.200 -> normal`); `valhalla.CheckZones` found two bad points on the first
+  placement (see 1.9 below: patrol points are in the spawn point's *local* space, so a rotated spawn
+  point turns its route) and 0 problems after the fix. Still to see: a pulled patroller resuming its
+  route, roaming (no Eldmoor spawn point uses it yet), RareChance 1.0.
+
+## B-06 1.9 — Eldmoor population: goblins, leather / chain / plate, patrols (2026-09-24/25)
+
+Kevin's direction: one or two of the free Fab goblins at every camp; every other enemy outside the
+keep in leather with a mix of weapons; every enemy in Ashvane Keep in plate or chainmail; patrols
+built here (B-10 part 2, above). Fable 5.1 did the animation and Blender work, Opus 5.5 the rest.
+The MetaHuman is the only body: new armour is built for it only.
+
+- **Goblin body (1.9a).** NPC Types can have a body of their own (`AValhallaNPC`, Look › Body):
+  `BodyMeshOverride`, `AnimFolderOverride` (same clip names, retargeted), `BodyMeshScale` (to the
+  122 cm person; spriteSize / ScaleOverride then size it and its capsule) and `OneHandGrip` /
+  `StaffGrip` / `BowGrip` (`FValhallaNPCGripFrame`: bone, location, rotation, prop scale). Such a
+  body has no head, hair or armour pieces. `UValhallaAnimComponent::SetAnimFolderOverride` swaps the
+  folder (set in PostInitializeComponents, before the component loads its clips); the spawn point's
+  editor preview shows the body and its idle.
+  - Assets (Fable 5.1): `/Game/Valhalla/Characters/Goblin/Retarget/IK_Goblin` and
+    `RTG_MetaHuman_to_Goblin` (source `IK_MH_ValhallaBase`); all 41 MetaHuman clips retargeted to
+    `/Game/Valhalla/Characters/Goblin/Animations` (same names); `socket_weapon_r` on
+    `SK_Goblin_Skeleton`; grip frames measured on the goblin. `MI_Goblin` (M_ValhallaPBR with the
+    Fab textures; the Fab material rendered white) on `SK_Goblin`. The goblin is 112.5 cm as
+    imported; `BP_NPC_Eld_Goblin` normalises it (×1.084) and the goblin templates play it at
+    spriteSize 0.72 (≈ 88 cm), props at 0.85.
+- **New art (Fable 5.1, MetaHuman only):** `SK_chest_iron_cuirass` (plate breast/backplate with
+  pauldrons, MI_IronPlate/MI_Gold/MI_LeatherDark, 2,052 tris) and `SM_crossbow_iron` (not used yet:
+  it needs its own grip and shot animation). Script `Blender assets/scripts/wave5b_plate_crossbow.py`.
+  The old-body copy of the cuirass the first pass also made was deleted. `npm run validate` now
+  accepts armour art from `Import/Characters/MetaHuman/Equipment/*.fbx`.
+- **Looks (1.9b):** ten NPC Types in `/Game/Valhalla/NPCs/Eldmoor`, one per look, made by
+  `valhalla_tools/make_eldmoor_npc_types.py`: `Leather` (jerkin, leather legs, ranger boots and
+  bracers, scout hood), `LeatherBare`, `LeatherNamed` (iron gauntlets and sabatons), `Chain` (chain
+  shirt, leather legs, iron boots and gauntlets, full helm), `ChainCaster` (no helm), `Plate` (the new
+  cuirass, iron plate legs, sabatons, gauntlets, full helm), `PlateNamed` (no helm), `OutpostGuard`,
+  `Townsfolk`, `Goblin`. The template's `weaponId` gives each its weapon, so one Type serves many
+  templates.
+- **Data (1.9d/e):** `Tools/eldmoor/gen_population.py` (re-runnable; owns only its ids) writes 67
+  enemy templates (52 humans from the design's section 6 table, the Steadings foragers and the R7
+  patrol as leather renegades, 15 goblins `goblin_<kind>_<camp>`), the 10 Harrow's Rest friendly NPCs
+  (type npc, level 12, hail lines), 8 loot tables (six level bands, the named, Castellan Vane's) and 4
+  items (`iron_cuirass`, `ashvane_signet`, `castellans_sword`, `hound_crest_shield`). First-pass
+  numbers for tuning in the web editor: HP 100 × level × role, damage 3–4.5 × level × role, XP 100 ×
+  level (named ×3), aggro 250 (bows 450, lookouts 640), leash 1500, move 200. Linked archetypes share
+  a faction social group (range 256 cm); single pulls have social aggro off. Casters melee with a
+  staff until NPCs can cast; fleeing is not built.
+- **Placement (1.9f):** `valhalla_tools/place_eldmoor_population.py` (re-runnable; its actors carry
+  the tag `eldmoor_pop`) places 106 spawn points in L_GrasslandsV2_Gameplay from
+  `eldmoor_layout.json`: camps C2–C10 in a ring round each fire (C1's bandits are Kevin's own spawn
+  points; only its goblin is added), 15 goblins, roamers R1–R8 with routes (R5 Loop, the rest
+  PingPong; R5 and R7 are pairs), the keep's 33 at the design's tiles (the hall and the undercroft
+  overlap, so each picks its own floor), the bailey patrol pair, and Harrow's Rest with Orrin and Wyn
+  walking the palisade. Named slots: Merrik Sallow 25%, Selwen Marr 25%, Grimald Hask 30%, Castellan
+  Ordric Vane 20%, with their longer respawns. `maps/unreal-refs.json` re-exported.
+- **Checks:** `valhalla.CheckZones`: 147 NPC spawn points, 11 routes, 0 problems. `npm run validate`
+  0 errors. `Valhalla.` suite: all pass except the known `MeshIdFallback` (`Data.Loads`' item count
+  updated to 35 for the four new items). PIE: 108 NPCs in Eldmoor with the templates above; goblins
+  on `SK_Goblin` at 0.78 scale, animated, holding dagger / totem / bow, no head or armour, textured;
+  hall guards in the cuirass and full helm; a C3 goblin slinger aggroed at 381 cm and called its
+  scrapper (group outlaws); patrols as above.
+- **Not done:** the crossbow in game (grip + animation, Fable), a plate look check from every angle,
+  a playtest pass on camp difficulty with the goblins (1.12).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

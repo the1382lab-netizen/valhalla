@@ -123,7 +123,33 @@ namespace ValhallaAdminTests
 		Point.SecondsUntilRespawn = 12.34;
 		Point.NpcId = TEXT("ValhallaNPC_2");
 		Point.bNpcAlive = false;
+		// B-10 part 2: a ping-pong route of three stops and a 20% rare.
+		Point.PatrolMode = TEXT("pingpong");
+		Point.Route = { FVector2D(640.4, 1440.0), FVector2D(1000.0, 1440.6), FVector2D(1000.0, 2000.0) };
+		Point.RareChance = 0.2;
+		Point.RareTemplateId = TEXT("named_ordric_vane");
+		Point.bRareSpawned = true;
 		Grasslands.SpawnPoints.Add(Point);
+
+		// Its pair: follows the first, so no route of its own; and a roamer.
+		FValhallaAdminSpawnPointInfo Follower;
+		Follower.Id = TEXT("ValhallaNPCSpawner_4");
+		Follower.Label = TEXT("West field 1b");
+		Follower.NpcClass = TEXT("BP_NPC_TestEnemy");
+		Follower.TemplateId = TEXT("npc_1771431708366");
+		Follower.X = 700.0;
+		Follower.Y = 1440.0;
+		Follower.FollowSpawnPointId = TEXT("ValhallaNPCSpawner_3");
+		Grasslands.SpawnPoints.Add(Follower);
+
+		FValhallaAdminSpawnPointInfo Roamer;
+		Roamer.Id = TEXT("ValhallaNPCSpawner_5");
+		Roamer.Label = TEXT("Scree scavenger");
+		Roamer.X = 3000.0;
+		Roamer.Y = 3000.0;
+		Roamer.PatrolMode = TEXT("none");
+		Roamer.WanderRadius = 799.6;
+		Grasslands.SpawnPoints.Add(Roamer);
 
 		// The zone volume's facts and the three kinds of placed zone actor
 		// the dashboard draws from the level.
@@ -306,18 +332,60 @@ bool FValhallaAdminStateJsonTest::RunTest(const FString& /*Parameters*/)
 	// ── A spawn point entry (2.0 only) ───────────────────────────────────
 	if (const TArray<TSharedPtr<FJsonValue>>* Points = GetArray(*this, *Grasslands, TEXT("spawnPoints")))
 	{
-		TestEqual(TEXT("one spawn point"), Points->Num(), 1);
-		if (Points->Num() == 1)
+		TestEqual(TEXT("three spawn points"), Points->Num(), 3);
+		if (Points->Num() == 3)
 		{
 			const TSharedPtr<FJsonObject>& PointObj = (*Points)[0]->AsObject();
 			CheckKeys(*this, PointObj, TEXT("a spawn point"),
 				{ TEXT("id"), TEXT("label"), TEXT("npcClass"), TEXT("templateId"), TEXT("x"), TEXT("y"),
-				  TEXT("respawnSeconds"), TEXT("respawnOverride"), TEXT("respawnIn"), TEXT("npcId"), TEXT("npcAlive") });
+				  TEXT("respawnSeconds"), TEXT("respawnOverride"), TEXT("respawnIn"), TEXT("npcId"), TEXT("npcAlive"),
+				  TEXT("patrolMode"), TEXT("route"), TEXT("followSpawnPointId"), TEXT("wanderRadius"),
+				  TEXT("rareChance"), TEXT("rareTemplateId"), TEXT("rareSpawned") });
 			double PointValue = 0.0;
 			PointObj->TryGetNumberField(TEXT("x"), PointValue);
 			TestEqual(TEXT("spawn point x is rounded"), PointValue, 640.0);
 			PointObj->TryGetNumberField(TEXT("respawnIn"), PointValue);
 			TestEqual(TEXT("respawnIn keeps one decimal"), PointValue, 12.3);
+
+			// ── B-10 part 2: the route, the pair link, the roam, the rare ──
+			FString Mode;
+			PointObj->TryGetStringField(TEXT("patrolMode"), Mode);
+			TestEqual(TEXT("patrolMode"), Mode, FString(TEXT("pingpong")));
+			if (const TArray<TSharedPtr<FJsonValue>>* Route = GetArray(*this, PointObj, TEXT("route")))
+			{
+				TestEqual(TEXT("the route has all three stops, the spawn point first"), Route->Num(), 3);
+				if (Route->Num() == 3)
+				{
+					const TSharedPtr<FJsonObject>& First = (*Route)[0]->AsObject();
+					const TSharedPtr<FJsonObject>& Second = (*Route)[1]->AsObject();
+					double StopX = 0.0, StopY = 0.0;
+					First->TryGetNumberField(TEXT("x"), StopX);
+					TestEqual(TEXT("route stop 0 is the spawn point, rounded"), StopX, 640.0);
+					Second->TryGetNumberField(TEXT("y"), StopY);
+					TestEqual(TEXT("route stops are rounded like x/y"), StopY, 1441.0);
+				}
+			}
+			PointObj->TryGetNumberField(TEXT("rareChance"), PointValue);
+			TestEqual(TEXT("rareChance"), PointValue, 0.2);
+			bool bRare = false;
+			PointObj->TryGetBoolField(TEXT("rareSpawned"), bRare);
+			TestTrue(TEXT("rareSpawned"), bRare);
+
+			const TSharedPtr<FJsonObject>& FollowerObj = (*Points)[1]->AsObject();
+			FString Leader;
+			FollowerObj->TryGetStringField(TEXT("followSpawnPointId"), Leader);
+			TestEqual(TEXT("the follower names its leader"), Leader, FString(TEXT("ValhallaNPCSpawner_3")));
+			FollowerObj->TryGetStringField(TEXT("patrolMode"), Mode);
+			TestEqual(TEXT("an unset patrol mode is written as none, never empty"), Mode, FString(TEXT("none")));
+			const TArray<TSharedPtr<FJsonValue>>* NoRoute = GetArray(*this, FollowerObj, TEXT("route"));
+			TestTrue(TEXT("no route is an empty array, not absent"), NoRoute && NoRoute->Num() == 0);
+
+			const TSharedPtr<FJsonObject>& RoamerObj = (*Points)[2]->AsObject();
+			RoamerObj->TryGetNumberField(TEXT("wanderRadius"), PointValue);
+			TestEqual(TEXT("wanderRadius is rounded"), PointValue, 800.0);
+			FString RareTemplate = TEXT("?");
+			RoamerObj->TryGetStringField(TEXT("rareTemplateId"), RareTemplate);
+			TestTrue(TEXT("no rare: rareTemplateId is empty"), RareTemplate.IsEmpty());
 		}
 	}
 

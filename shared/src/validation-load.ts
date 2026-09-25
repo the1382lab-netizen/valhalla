@@ -40,7 +40,8 @@ function listDir(dir: string, pattern: RegExp): string[] | undefined {
 }
 
 /**
- * Everything under `repoRoot`: shared/data/*.json, Import/Characters/Equipment,
+ * Everything under `repoRoot`: shared/data/*.json, Import/Characters/Equipment and
+ * Import/Characters/MetaHuman/Equipment,
  * Import/UI/Icons and maps/unreal-refs.json.
  */
 export function loadValidationInput(repoRoot: string): { input: ValidationInput; problems: LoadProblem[] } {
@@ -70,7 +71,12 @@ export function loadValidationInput(repoRoot: string): { input: ValidationInput;
     npcTemplates: need('npc-templates.json', loadNPCTemplatesFromJson, {}),
     lootTables: need('loot-tables.json', loadLootTablesFromJson, {}),
     zones: need('zones.json', loadZonesFromJson, {}),
-    meshFiles: listDir(join(repoRoot, 'Import', 'Characters', 'Equipment'), /\.(glb|gltf)$/i),
+    // The MetaHuman is the only body the game uses (Kevin, 2026-09-25): new armour
+    // exists only as Import/Characters/MetaHuman/Equipment/*.fbx, so both folders count.
+    meshFiles: [
+      ...(listDir(join(repoRoot, 'Import', 'Characters', 'Equipment'), /\.(glb|gltf)$/i) ?? []),
+      ...(listDir(join(repoRoot, 'Import', 'Characters', 'MetaHuman', 'Equipment'), /\.fbx$/i) ?? []),
+    ],
     iconFiles: listDir(join(repoRoot, 'Import', 'UI', 'Icons'), /\.png$/i),
     unrealRefs,
   };

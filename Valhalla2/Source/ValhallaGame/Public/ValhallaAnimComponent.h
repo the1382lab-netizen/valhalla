@@ -82,6 +82,15 @@ public:
 	void SetBodyMesh(USkeletalMeshComponent* InBodyMesh);
 
 	/**
+	 * B-06 1.9a: load every clip from this folder instead of the active body's
+	 * (a non-player body, e.g. /Game/Valhalla/Characters/Goblin/Animations).
+	 * The folder holds the same clip names, retargeted onto that body's
+	 * skeleton. Empty = the active body's own folder. Call before BeginPlay;
+	 * a later call reloads the clips.
+	 */
+	void SetAnimFolderOverride(const FString& InFolder);
+
+	/**
 	 * Which cycle a swing plays, from the equipped weapon's `weaponStyle`.
 	 * Set by the owner whenever the weapon slot changes.
 	 */
@@ -295,4 +304,7 @@ private:
 
 	/** True once the mesh has been given its anim instance. */
 	bool bStarted = false;
+
+	/** See SetAnimFolderOverride. */
+	FString AnimFolderOverride;
 };

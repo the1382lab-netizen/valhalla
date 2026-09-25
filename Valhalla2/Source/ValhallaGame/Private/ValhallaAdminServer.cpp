@@ -621,6 +621,34 @@ void UValhallaAdminServer::BuildSnapshot(FValhallaAdminSnapshot& OutSnapshot) co
 			Info.bNpcAlive = Npc->IsAlive();
 		}
 
+		// B-10 part 2: what the NPC does when idle, as the spawn point says it
+		// now (an NPC already standing keeps the setup it spawned with). The
+		// route is converted in the spawn point's own zone, so a route that
+		// strays over a zone edge is still drawn as one line.
+		Info.PatrolMode = TEXT("none");
+		if (Spawner->HasPatrolRoute())
+		{
+			Info.PatrolMode = Spawner->PatrolMode == EValhallaPatrolMode::Loop ? TEXT("loop") : TEXT("pingpong");
+			TArray<FVector> Stops;
+			Spawner->GetPatrolStopsWorld(Stops);
+			for (const FVector& Stop : Stops)
+			{
+				Info.Route.Add(LocalFor(FName(*ZoneKey), Stop));
+			}
+		}
+		if (Spawner->IsFollowing())
+		{
+			Info.FollowSpawnPointId = AdminActorId(Spawner->FollowSpawner.Get());
+		}
+		Info.WanderRadius = Spawner->GetEffectiveWanderRadius();
+		Info.RareChance = FMath::Clamp(Spawner->RareChance, 0.f, 1.f);
+		Info.RareTemplateId = Info.RareChance > 0.0 ? Spawner->GetEffectiveRareTemplateId().ToString() : FString();
+		if (Info.RareTemplateId == TEXT("None"))
+		{
+			Info.RareTemplateId.Reset();
+		}
+		Info.bRareSpawned = Spawner->IsRareSpawned();
+
 		OutSnapshot.Zones.FindOrAdd(ZoneKey).SpawnPoints.Add(MoveTemp(Info));
 	}
 
@@ -817,6 +845,24 @@ TSharedRef<FJsonObject> UValhallaAdminServer::BuildStateJson(const FValhallaAdmi
 			Obj->SetNumberField(TEXT("respawnIn"),       FMath::RoundToDouble(Point.SecondsUntilRespawn * 10.0) / 10.0);
 			Obj->SetStringField(TEXT("npcId"),           Point.NpcId);
 			Obj->SetBoolField  (TEXT("npcAlive"),        Point.bNpcAlive);
+
+			// B-10 part 2. Always present (an empty route, "none", 0), so the
+			// dashboard never has to tell "no patrol" from "old server".
+			Obj->SetStringField(TEXT("patrolMode"),      Point.PatrolMode.IsEmpty() ? FString(TEXT("none")) : Point.PatrolMode);
+			TArray<TSharedPtr<FJsonValue>> RouteJson;
+			for (const FVector2D& Stop : Point.Route)
+			{
+				const TSharedRef<FJsonObject> StopObj = MakeShared<FJsonObject>();
+				StopObj->SetNumberField(TEXT("x"), Round(Stop.X));
+				StopObj->SetNumberField(TEXT("y"), Round(Stop.Y));
+				RouteJson.Add(MakeShared<FJsonValueObject>(StopObj));
+			}
+			Obj->SetArrayField (TEXT("route"),           RouteJson);
+			Obj->SetStringField(TEXT("followSpawnPointId"), Point.FollowSpawnPointId);
+			Obj->SetNumberField(TEXT("wanderRadius"),    Round(Point.WanderRadius));
+			Obj->SetNumberField(TEXT("rareChance"),      FMath::RoundToDouble(Point.RareChance * 1000.0) / 1000.0);
+			Obj->SetStringField(TEXT("rareTemplateId"),  Point.RareTemplateId);
+			Obj->SetBoolField  (TEXT("rareSpawned"),     Point.bRareSpawned);
 			SpawnPointsJson.Add(MakeShared<FJsonValueObject>(Obj));
 		}
 		ZoneJson->SetArrayField(TEXT("spawnPoints"), SpawnPointsJson);

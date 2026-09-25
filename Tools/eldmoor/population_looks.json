@@ -1,0 +1,118 @@
+{
+  "looks": {
+    "bandit_cutpurse": "leather",
+    "bandit_archer": "leather",
+    "bandit_thug": "leather_bare",
+    "wayside_footpad": "leather",
+    "bandit_scout": "leather",
+    "outlaw_footpad": "leather",
+    "outlaw_bowman": "leather",
+    "outlaw_ringleader": "leather_bare",
+    "outlaw_courier": "leather",
+    "poacher": "leather",
+    "poacher_bowman": "leather",
+    "poacher_houndmaster": "leather_bare",
+    "poacher_skinner": "leather_bare",
+    "poacher_captain": "leather_named",
+    "named_merrik_sallow": "leather_named",
+    "poacher_tracker": "leather",
+    "cultist_acolyte": "leather",
+    "cultist_zealot": "leather_bare",
+    "cultist_bloodpriest": "leather_bare",
+    "barrow_hierophant": "leather_named",
+    "named_selwen_marr": "leather_named",
+    "cultist_procession": "leather",
+    "brigand": "leather",
+    "brigand_crossbowman": "leather",
+    "brigand_bruiser": "leather_bare",
+    "brigand_chief": "leather_named",
+    "named_grimald_hask": "leather_named",
+    "brigand_lookout": "leather",
+    "brigand_runner": "leather",
+    "highland_scavenger": "leather_bare",
+    "renegade_forager": "leather",
+    "renegade_forager_archer": "leather",
+    "renegade_forager_sergeant": "leather_named",
+    "renegade_patrol": "leather",
+    "renegade_footman": "chain",
+    "renegade_archer": "chain",
+    "renegade_quartermaster": "chain",
+    "renegade_penitent": "chain",
+    "renegade_corporal": "plate",
+    "renegade_hallguard": "plate",
+    "renegade_steward": "chain_caster",
+    "renegade_lieutenant": "plate_named",
+    "named_ordric_vane": "plate_named",
+    "renegade_armsmaster": "plate",
+    "renegade_signaller": "plate",
+    "ashvane_zealot": "chain_caster",
+    "named_kell_draven": "plate_named",
+    "named_mael_corvane": "plate_named",
+    "named_brann_coll": "plate_named",
+    "renegade_gaoler": "chain",
+    "ashvane_alchemist": "chain_caster",
+    "named_warden_hesk": "plate_named",
+    "goblin_scrapper_c1": "goblin",
+    "goblin_scrapper_c2": "goblin",
+    "goblin_sneak_c2": "goblin",
+    "goblin_scrapper_c3": "goblin",
+    "goblin_slinger_c3": "goblin",
+    "goblin_scrapper_c4": "goblin",
+    "goblin_sneak_c5": "goblin",
+    "goblin_slinger_c5": "goblin",
+    "goblin_sneak_c6": "goblin",
+    "goblin_scrapper_c7": "goblin",
+    "goblin_scrapper_c8": "goblin",
+    "goblin_slinger_c8": "goblin",
+    "goblin_sneak_c9": "goblin",
+    "goblin_scrapper_c10": "goblin",
+    "goblin_sneak_c10": "goblin",
+    "npc_harrow_captain": "plate_named",
+    "npc_harrow_guard_tam": "outpost_guard",
+    "npc_harrow_guard_iselle": "outpost_guard",
+    "npc_harrow_guard_orrin": "outpost_guard",
+    "npc_harrow_guard_wyn": "outpost_guard",
+    "npc_harrow_smith": "townsfolk",
+    "npc_harrow_armourer": "townsfolk",
+    "npc_harrow_provisioner": "townsfolk",
+    "npc_harrow_trader": "townsfolk",
+    "npc_harrow_innkeeper": "townsfolk"
+  },
+  "campGoblins": {
+    "C1": [
+      "goblin_scrapper_c1"
+    ],
+    "C2": [
+      "goblin_scrapper_c2",
+      "goblin_sneak_c2"
+    ],
+    "C3": [
+      "goblin_scrapper_c3",
+      "goblin_slinger_c3"
+    ],
+    "C4": [
+      "goblin_scrapper_c4"
+    ],
+    "C5": [
+      "goblin_sneak_c5",
+      "goblin_slinger_c5"
+    ],
+    "C6": [
+      "goblin_sneak_c6"
+    ],
+    "C7": [
+      "goblin_scrapper_c7"
+    ],
+    "C8": [
+      "goblin_scrapper_c8",
+      "goblin_slinger_c8"
+    ],
+    "C9": [
+      "goblin_sneak_c9"
+    ],
+    "C10": [
+      "goblin_scrapper_c10",
+      "goblin_sneak_c10"
+    ]
+  }
+}

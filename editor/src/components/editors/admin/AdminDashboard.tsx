@@ -47,6 +47,19 @@ interface SpawnPointInfo {
   respawnIn: number;
   npcId: string;
   npcAlive: boolean;
+  /**
+   * B-10 part 2 (absent from older servers). The route is zone-local cm, the
+   * spawn point first; empty unless a route drives the NPC.
+   */
+  patrolMode?: 'none' | 'loop' | 'pingpong';
+  route?: { x: number; y: number }[];
+  /** Id of the spawn point whose NPC this one follows, or ''. */
+  followSpawnPointId?: string;
+  /** Roam radius in cm when it applies, else 0. */
+  wanderRadius?: number;
+  rareChance?: number;
+  rareTemplateId?: string;
+  rareSpawned?: boolean;
 }
 
 interface NPCInfo {
@@ -480,6 +493,58 @@ export const AdminDashboard: React.FC = () => {
       ctx.stroke();
     }
 
+    // ── Patrol routes, pair links, roam radii (B-10 part 2) ──
+    // Under the spawn point markers: a thin orange polyline for a route (dashed
+    // for ping-pong, closed for a loop), a dotted blue line from a follower to
+    // its leader, a faint green circle for a roam radius.
+    for (const sp of zoneData.spawnPoints ?? []) {
+      const isHovered = hoveredEntity === `spawn_${sp.id}`;
+      const route = sp.route ?? [];
+      if (route.length >= 2) {
+        ctx.beginPath();
+        route.forEach((p, i) => {
+          const s = worldToScreen(p.x, p.y);
+          if (i === 0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+        });
+        if (sp.patrolMode === 'loop') ctx.closePath();
+        ctx.strokeStyle = SPAWN_ENEMY_COLOR;
+        ctx.globalAlpha = isHovered ? 0.9 : 0.5;
+        ctx.lineWidth = isHovered ? 2 : 1;
+        ctx.setLineDash(sp.patrolMode === 'pingpong' ? [6, 4] : []);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        for (const p of route.slice(1)) {
+          const s = worldToScreen(p.x, p.y);
+          ctx.fillStyle = SPAWN_ENEMY_COLOR;
+          ctx.fillRect(s.x - 2, s.y - 2, 4, 4);
+        }
+        ctx.globalAlpha = 1;
+      }
+      if (sp.followSpawnPointId) {
+        const leader = (zoneData.spawnPoints ?? []).find(o => o.id === sp.followSpawnPointId);
+        if (leader) {
+          const a = worldToScreen(sp.x, sp.y);
+          const b = worldToScreen(leader.x, leader.y);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.strokeStyle = 'rgba(120, 200, 255, 0.7)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+      if ((sp.wanderRadius ?? 0) > 0) {
+        const s = worldToScreen(sp.x, sp.y);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, (sp.wanderRadius ?? 0) * zoom, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(140, 230, 120, 0.35)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+      }
+    }
+
     // ── NPC Spawn Points (placed in Unreal) ──
     // A hollow orange diamond; a countdown under it while its NPC is down.
     for (const sp of zoneData.spawnPoints ?? []) {
@@ -788,7 +853,17 @@ export const AdminDashboard: React.FC = () => {
           found = `spawn_${sp.id}`;
           const timer = `${Math.round(sp.respawnSeconds)}s ${sp.respawnOverride ? '(spawn point override)' : '(template respawnMs)'}`;
           const status = sp.npcAlive ? 'NPC up' : (sp.respawnIn > 0 ? `respawning in ${Math.ceil(sp.respawnIn)}s` : 'no NPC');
-          ttText = `NPC Spawn Point: ${sp.label}\n${sp.npcClass} · ${sp.templateId}\nRespawn: ${timer}\n${status}\nPos: ${sp.x}, ${sp.y}`;
+          const leader = sp.followSpawnPointId
+            ? (zoneData.spawnPoints ?? []).find(o => o.id === sp.followSpawnPointId)?.label ?? sp.followSpawnPointId
+            : '';
+          const idle = leader ? `Follows: ${leader}`
+            : (sp.route?.length ?? 0) >= 2 ? `Patrol: ${sp.patrolMode === 'loop' ? 'loop' : 'ping-pong'}, ${sp.route!.length} stops`
+            : (sp.wanderRadius ?? 0) > 0 ? `Roams: ${Math.round(sp.wanderRadius!)} cm`
+            : 'Stands';
+          const rare = (sp.rareChance ?? 0) > 0
+            ? `\nRare: ${Math.round((sp.rareChance ?? 0) * 100)}% ${sp.rareTemplateId || '(no template)'}${sp.rareSpawned ? ' — UP NOW' : ''}`
+            : '';
+          ttText = `NPC Spawn Point: ${sp.label}\n${sp.npcClass} · ${sp.templateId}\nRespawn: ${timer}\n${status}\n${idle}${rare}\nPos: ${sp.x}, ${sp.y}`;
           break;
         }
       }

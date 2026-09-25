@@ -7,6 +7,7 @@
 #include "Engine/GameInstance.h"
 #include "GameFramework/Actor.h"
 #include "Kismet/GameplayStatics.h"
+#include "Misc/Paths.h"
 #include "ValhallaAnimInstance.h"
 #include "ValhallaCharacter.h"
 #include "ValhallaDataSubsystem.h"
@@ -152,6 +153,31 @@ void UValhallaAnimComponent::SetBodyMesh(USkeletalMeshComponent* InBodyMesh)
 	EnsureAnimInstance();
 }
 
+void UValhallaAnimComponent::SetAnimFolderOverride(const FString& InFolder)
+{
+	if (AnimFolderOverride == InFolder)
+	{
+		return;
+	}
+	AnimFolderOverride = InFolder;
+
+	// Clips already loaded were the other body's; they would not play on this
+	// skeleton. Load again, and hand the anim instance the new cycles.
+	if (bLoaded)
+	{
+		bLoaded = false;
+		Sequences.Reset();
+		LoadSequences();
+		if (AnimInstance)
+		{
+			AnimInstance->SetLocomotionSequences(Sequence(EValhallaAnim::Idle), Sequence(EValhallaAnim::Walk));
+			AnimInstance->SetStancePoses(
+				Sequence(EValhallaAnim::PoseGripRight), Sequence(EValhallaAnim::PoseGripLeft), Sequence(EValhallaAnim::PoseShieldArm));
+			ApplyStance();
+		}
+	}
+}
+
 UValhallaAnimInstance* UValhallaAnimComponent::GetAnimInstance() const
 {
 	return AnimInstance;
@@ -208,10 +234,15 @@ void UValhallaAnimComponent::LoadSequences()
 	for (int32 Index = 0; Index < AnimCount; ++Index)
 	{
 		const EValhallaAnim Anim = static_cast<EValhallaAnim>(Index);
-		const FString Path = UValhallaVisuals::AnimPath(Anim);
+		FString Path = UValhallaVisuals::AnimPath(Anim);
 		if (Path.IsEmpty())
 		{
 			continue;   // a slot this body profile does not have
+		}
+		if (!AnimFolderOverride.IsEmpty())
+		{
+			// Same clip name, the other body's folder (B-06 1.9a).
+			Path = AnimFolderOverride / FPaths::GetBaseFilename(Path);
 		}
 		UAnimSequence* Loaded = LoadObject<UAnimSequence>(nullptr, *Path);
 		Sequences[Index] = Loaded;

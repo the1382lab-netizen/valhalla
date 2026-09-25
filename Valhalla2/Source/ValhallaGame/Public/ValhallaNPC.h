@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "ValhallaGameTypes.h"
 #include "ValhallaNPCPath.h"
+#include "ValhallaNPCPatrolRules.h"
 #include "ValhallaTypes.h"
 #include "ValhallaNPC.generated.h"
 
@@ -40,6 +41,31 @@ struct VALHALLAGAME_API FValhallaNPCBuffInfo
 };
 
 /**
+ * B-06 1.9a: where a held prop sits on a non-player body, relative to a bone —
+ * the same numbers UValhallaVisuals' grip frames use for the player body.
+ * An empty Bone means "use the player body's frame".
+ */
+USTRUCT(BlueprintType)
+struct VALHALLAGAME_API FValhallaNPCGripFrame
+{
+	GENERATED_BODY()
+
+	/** Bone (or socket) the prop rides on, e.g. hand_r. Empty = not overridden. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Valhalla|Grip")
+	FName Bone;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Valhalla|Grip")
+	FVector Location = FVector::ZeroVector;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Valhalla|Grip")
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	/** Prop size relative to its modelled size (props are modelled for a 122 cm person). */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Valhalla|Grip", meta = (ClampMin = "0.05"))
+	float PropScale = 1.f;
+};
+
+/**
  * One live enemy or friendly NPC. The port of `NPCState` + `NPCSystem`.
  *
  * **NPC types are Blueprints of this class.** `/Game/Valhalla/NPCs/BP_NPC_*` is
@@ -70,6 +96,13 @@ struct VALHALLAGAME_API FValhallaNPCBuffInfo
  * PlanAndSteer) instead of pushing in a straight line, so NPCs walk round walls
  * and through doorways. Where the ground is clear they still steer straight at
  * the target, so melee spacing and every authored range mean what they did.
+ *
+ * B-10 part 2: an *idle* layer under all of that. With no target, not walking
+ * back and no fight to finish, an NPC whose spawn point gave it one walks a
+ * patrol route, follows a leader or roams (TickIdleMovement). It is the lowest
+ * layer, so the 1.0 machine above it is untouched: a fight records FightStart
+ * wherever the NPC stood on its route, the leash and the walk back return it
+ * there, and the idle layer then carries on to the stop it was heading for.
  */
 UCLASS()
 class VALHALLAGAME_API AValhallaNPC : public ACharacter
@@ -175,6 +208,49 @@ public:
 	/** Skin tint. Leave alpha at 0 to use the template's `spriteColor`. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Look")
 	FLinearColor TintOverride = FLinearColor(0.f, 0.f, 0.f, 0.f);
+
+	// ── Body (B-06 1.9a: a non-player body, e.g. the goblin) ────────────
+
+	/**
+	 * A body of its own instead of the player body. When set, the NPC draws
+	 * this mesh, has no head, hair or armour pieces (the mesh is its own
+	 * outfit), plays the clips in AnimFolderOverride and holds its weapon with
+	 * the grip frames below. The mesh must face +Y with its feet at the origin,
+	 * like the player body.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body")
+	TSoftObjectPtr<USkeletalMesh> BodyMeshOverride;
+
+	/**
+	 * Folder of the game's clips retargeted onto that body's skeleton, same
+	 * names as the player body's (e.g. /Game/Valhalla/Characters/Goblin/Animations).
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body")
+	FString AnimFolderOverride;
+
+	/**
+	 * Scales the override body to the game's 122 cm person (122 / the mesh's
+	 * own height in cm). Its real size then comes from ScaleOverride or the
+	 * template's spriteSize, which also scale the capsule. 0 = 1.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body", meta = (ClampMin = "0.0"))
+	float BodyMeshScale = 0.f;
+
+	/** Sword, mace, dagger, totem on the override body. Empty bone = the player body's frame. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body")
+	FValhallaNPCGripFrame OneHandGrip;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body")
+	FValhallaNPCGripFrame StaffGrip;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|NPC Type|Body")
+	FValhallaNPCGripFrame BowGrip;
+
+	/** True when this type uses BodyMeshOverride. */
+	bool HasBodyOverride() const { return !BodyMeshOverride.IsNull(); }
+
+	/** BodyMesh's scale before spriteSize: the override's BodyMeshScale, else the active body's. */
+	float GetBaseBodyScale() const;
 
 	/** npc-templates.json ids, for the DefaultTemplateId dropdown. */
 	UFUNCTION()
@@ -302,6 +378,25 @@ public:
 	/** Who it is currently trying to kill. Null when it is idle. */
 	AActor* GetAggroTarget() const { return AggroTarget.Get(); }
 
+	// ── Idle movement (B-10 part 2) ─────────────────────────────────────
+
+	/**
+	 * Give it a patrol route, a leader or a roam radius (one of them, in that
+	 * order of precedence), and start from stop 0 with no pause pending.
+	 * Called by its spawn point right after it spawns; server only.
+	 * @param Leader The spawn point whose NPC this one follows, or null.
+	 */
+	void ConfigureIdleMovement(const FValhallaNPCPatrolSetup& Setup, AValhallaNPCSpawner* Leader);
+
+	/** Its idle walking pace, cm/s: the template's move speed times the setup's speed fraction. What a follower matches. */
+	float GetIdleWalkSpeed() const;
+
+	/** The stop it is walking to (or pausing at); INDEX_NONE without a route. For logs and tests. */
+	int32 GetPatrolTargetIndex() const { return IdleMode == EValhallaNPCIdleMode::Route ? PatrolTargetIndex : INDEX_NONE; }
+
+	/** Which idle movement it has. */
+	EValhallaNPCIdleMode GetIdleMode() const { return IdleMode; }
+
 protected:
 	/** Drop it into the held last frame of `A_Death`, or stand it back up. */
 	UFUNCTION()
@@ -377,6 +472,12 @@ protected:
 
 	/** Draws WeaponId into WeaponMesh and sets the attack cycle it implies. */
 	void ApplyWeaponVisual();
+
+	/** B-06 1.9a: put the override body on BodyMesh (no head). False when this type has none. */
+	bool ApplyBodyOverride();
+
+	/** B-06 1.9a: hang WeaponMesh on the override body with this type's frame for Grip. */
+	void AttachWeaponToOverrideBody(int32 GripIndex);
 
 	/** The animated body — the same rig and the same skeleton a player uses. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Appearance")
@@ -493,8 +594,9 @@ private:
 	 * took a target. The leash is measured from here and a leashed NPC walks
 	 * back here. It stays set through a re-pull on the way back (so a fight
 	 * cannot be dragged further out one leash at a time) and is cleared when
-	 * the NPC gets back, dies or respawns. Until patrols move (B-10) this is
-	 * always its home spot.
+	 * the NPC gets back, dies or respawns. For a patrolling, following or
+	 * roaming NPC (B-10 part 2) it is wherever on its walk it was pulled, so
+	 * after the fight it resumes the walk from there.
 	 */
 	FVector FightStart = FVector::ZeroVector;
 	bool bHasFightStart = false;
@@ -525,6 +627,62 @@ private:
 
 	/** B-10: answer another NPC's call — take Target as if it had walked into aggro range. */
 	void JoinFight(AActor* Target, const AValhallaNPC* Caller);
+
+	// ── B-10 part 2: idle movement (server only) ────────────────────────
+
+	/** Route, Follow, Wander or None; set by ConfigureIdleMovement. */
+	EValhallaNPCIdleMode IdleMode = EValhallaNPCIdleMode::None;
+
+	/** The spawn point's setup, world space, held by value. */
+	FValhallaNPCPatrolSetup Patrol;
+
+	/** The spawn point whose NPC this one follows (Follow mode). Weak, like Spawner. */
+	TWeakObjectPtr<AValhallaNPCSpawner> FollowLeader;
+
+	/** The route stop being walked to, or paused at; see FValhallaNPCPatrolRules::NextStop. */
+	int32 PatrolTargetIndex = 0;
+
+	/** PingPong's direction along the route, +1 or -1. */
+	int32 PatrolDirection = 1;
+
+	/** Server time the current pause at a stop (or a roam goal) ends; standing still until then. */
+	double IdlePauseUntil = 0.0;
+
+	/** Wander: the goal being walked to, when bHasWanderGoal. */
+	FVector WanderGoal = FVector::ZeroVector;
+	bool bHasWanderGoal = false;
+
+	/** Follow: walking (true) or standing behind the leader; the hysteresis in FollowerShouldMove. */
+	bool bFollowWalking = false;
+
+	/** Back to stop 0, no pause, no roam goal. Respawn and ConfigureIdleMovement. */
+	void ResetIdleState();
+
+	/**
+	 * The idle layer, one fixed step: only called with no target, not
+	 * returning and no FightStart pending (see the walk-back block in
+	 * ServerFixedTick). Returns false when this NPC has no idle movement, so
+	 * the caller does the old stand-at-home.
+	 */
+	bool TickIdleMovement(float FixedDeltaSeconds, double Now);
+
+	void TickPatrolRoute(double Now);
+	void TickFollow(float FixedDeltaSeconds, double Now);
+	void TickWander(double Now);
+
+	/**
+	 * One idle step toward Goal along a nav path at InputScale of the move
+	 * speed (slowing over the last half metre). Returns true when the stuck
+	 * clock ran out: the caller skips the stop or picks another goal, it does
+	 * not warp.
+	 */
+	bool IdleWalkToward(const FVector& Goal, float InputScale, double Now);
+
+	/** Stand still this step: clear the stuck clock and any plan. */
+	void IdleStand();
+
+	/** Pick a roam goal round home: a random reachable nav point, or FValhallaNPCPatrolRules::WanderPoint without nav. */
+	bool PickWanderGoal(FVector& OutGoal) const;
 
 public:
 	/** B-10: the template's social group (the template id when blank). */

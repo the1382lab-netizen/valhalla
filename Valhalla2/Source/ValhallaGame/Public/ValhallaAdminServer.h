@@ -132,6 +132,25 @@ struct VALHALLAGAME_API FValhallaAdminSpawnPointInfo
 	/** Its NPC's id, or empty when none exists right now. */
 	FString NpcId;
 	bool bNpcAlive = false;
+
+	// ── B-10 part 2: idle movement and rare spawns ──
+
+	/** "none", "loop" or "pingpong"; "none" whenever Route is empty. */
+	FString PatrolMode;
+	/**
+	 * The patrol route when it drives the NPC (else empty), zone-local cm like
+	 * X/Y: the spawn point first, then each Patrol Point turned into world
+	 * space by the spawn point's transform.
+	 */
+	TArray<FVector2D> Route;
+	/** The spawn point this one's NPC follows (its Id), or empty. */
+	FString FollowSpawnPointId;
+	/** The roam radius when it applies (no route, no leader), cm; 0 otherwise. */
+	double WanderRadius = 0.0;
+	/** Rare spawn: chance 0-1, the template it would play, and whether the NPC up now is the rare. */
+	double RareChance = 0.0;
+	FString RareTemplateId;
+	bool bRareSpawned = false;
 };
 
 /** One `AValhallaPortal` placed in a level: a way out of the zone. */

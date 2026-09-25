@@ -7,7 +7,9 @@ Writes ``maps/unreal-refs.json`` (repo root) with:
 * every NPC Type (``BP_NPC_*`` under /Game/Valhalla/NPCs) and its Default
   Template Id, and
 * every NPC Spawn Point (``AValhallaNPCSpawner``) in the levels currently
-  loaded in the editor, with its NPC Type and Template Override, and
+  loaded in the editor, with its NPC Type and Template Override (and, B-10
+  part 2, its patrol mode and point count, the spawn point it follows, its
+  roam radius and its rare spawn), and
 * every zone actor in those levels: zone volumes (``AValhallaZoneVolume``),
   portals (``AValhallaPortal``), zone entries (``AValhallaZoneEntry``) and
   player starts (``APlayerStart`` and its tag). Unreal is the only source of
@@ -99,17 +101,44 @@ def _by_level(rows):
     return sorted(rows, key=lambda r: (r["level"], r["name"]))
 
 
+def _enum_name(value):
+    """'pingpong' for ValhallaPatrolMode.PING_PONG (however this UE version prints it), '' for None."""
+    if value is None:
+        return ""
+    name = getattr(value, "name", None) or str(value)
+    name = str(name).split(".")[-1].split(":")[0].strip("<> ")
+    return name.replace("_", "").lower()
+
+
+def _number(value, default=0.0):
+    try:
+        return round(float(value), 3)
+    except (TypeError, ValueError):
+        return default
+
+
 def _spawn_points(actors):
     points = []
     for level_name, actor in actors:
         if not isinstance(actor, unreal.ValhallaNPCSpawner):
             continue
         template = _prop(actor, "template_id", "TemplateId")
+        # B-10 part 2 (new keys only; the four above keep their meaning, so
+        # older readers of this file are unaffected).
+        patrol_points = _prop(actor, "patrol_points", "PatrolPoints") or []
+        follow = _prop(actor, "follow_spawner", "FollowSpawner")
         points.append({
             "level": level_name,
             "name": actor.get_actor_label(),
             "npcType": _class_asset_name(_prop(actor, "npc_class", "NPCClass")),
             "templateOverride": _name(template),
+            "patrolMode": _enum_name(_prop(actor, "patrol_mode", "PatrolMode")),
+            "patrolPoints": len(patrol_points),
+            "followSpawner": follow.get_actor_label() if follow is not None else "",
+            "wanderRadius": _number(_prop(actor, "wander_radius", "WanderRadius")),
+            "rareNpcType": _class_asset_name(_prop(actor, "rare_npc_class", "RareNPCClass")),
+            "rareTemplateId": _name(_prop(actor, "rare_template_id", "RareTemplateId")),
+            "rareChance": _number(_prop(actor, "rare_chance", "RareChance")),
         })
     return _by_level(points)
 

@@ -113,6 +113,19 @@ export interface UnrealRefs {
     npcType: string;
     /** Template Override, or ''. */
     templateOverride: string;
+    /**
+     * B-10 part 2, absent from older exports: patrol mode ('none' | 'loop' |
+     * 'pingpong'), number of Patrol Points (the spawn point itself not
+     * counted), the label of the spawn point it follows (''), roam radius (cm).
+     */
+    patrolMode?: string;
+    patrolPoints?: number;
+    followSpawner?: string;
+    wanderRadius?: number;
+    /** Rare spawn: Rare NPC Type asset name (''), Rare Template (''), chance 0-1. */
+    rareNpcType?: string;
+    rareTemplateId?: string;
+    rareChance?: number;
   }[];
   /**
    * Zone actors. Unreal is their only source of truth (the maps/overlays-2.0
@@ -133,7 +146,7 @@ export interface ValidationInput {
   npcTemplates: Record<string, any>;
   lootTables: Record<string, any>;
   zones: Record<string, any>;
-  /** File names in Import/Characters/Equipment, e.g. "SK_chest_chainmail.glb". */
+  /** File names in Import/Characters/Equipment and Import/Characters/MetaHuman/Equipment, e.g. "SK_chest_chainmail.glb". */
   meshFiles?: string[];
   /** File names in Import/UI/Icons, e.g. "sword_iron.png". */
   iconFiles?: string[];
@@ -213,7 +226,7 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
   };
 
   // ── Items ─────────────────────────────────────────────────────────────
-  const meshIndex = input.meshFiles ? new Set(input.meshFiles.map(f => f.replace(/\.(glb|gltf)$/i, ''))) : null;
+  const meshIndex = input.meshFiles ? new Set(input.meshFiles.map(f => f.replace(/\.(glb|gltf|fbx)$/i, ''))) : null;
   const iconIndex = input.iconFiles ? new Set(input.iconFiles.map(f => f.toLowerCase())) : null;
 
   for (const [id, item] of Object.entries(items)) {
@@ -266,7 +279,7 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
           const other = prefix === 'SM_' ? 'SK_' : 'SM_';
           add('warning', 'items', id, meshIndex.has(`${other}${artId}`)
             ? `art "${artId}" exists as ${other}${artId} but a ${slot} item needs ${prefix}${artId}`
-            : `art "${artId}" has no ${prefix}${artId}.glb in Import/Characters/Equipment`);
+            : `art "${artId}" has no ${prefix}${artId} in Import/Characters/Equipment or Import/Characters/MetaHuman/Equipment`);
         }
       }
     }
@@ -490,6 +503,15 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
         if (template && !npcs[template]) add('error', 'unreal', where, `uses ${sp.npcType}, whose template "${template}" does not exist`);
       } else {
         add('warning', 'unreal', where, `NPC Type "${sp.npcType}" was not found among the exported NPC Types`);
+      }
+      // B-10 part 2: the rare spawn's template (Rare Template, else the Rare NPC Type's default).
+      const rareTemplate = sp.rareTemplateId || (sp.rareNpcType ? typeTemplates.get(sp.rareNpcType) || '' : '');
+      if (sp.rareTemplateId && !npcs[sp.rareTemplateId]) {
+        add('error', 'unreal', where, `Rare Template "${sp.rareTemplateId}" does not exist`);
+      } else if ((sp.rareChance ?? 0) > 0 && !rareTemplate) {
+        add('warning', 'unreal', where, `Rare Chance ${sp.rareChance} but no Rare Template (and no Rare NPC Type with a default template): it never spawns a rare`);
+      } else if ((sp.rareChance ?? 0) > 0 && !npcs[rareTemplate]) {
+        add('error', 'unreal', where, `rare template "${rareTemplate}" (from ${sp.rareNpcType}) does not exist`);
       }
     }
 

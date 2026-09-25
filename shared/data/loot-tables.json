@@ -104,6 +104,439 @@
           "maxQuantity": 1
         }
       ]
+    },
+    "loot_eldmoor_4_5": {
+      "id": "loot_eldmoor_4_5",
+      "name": "Eldmoor 4-5 (Downs)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.8,
+          "minQuantity": 2,
+          "maxQuantity": 8
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.15,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_gloves",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_boots",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_helm",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_dagger",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "short_bow",
+          "weight": 1,
+          "dropChance": 0.02,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_5_6": {
+      "id": "loot_eldmoor_5_6",
+      "name": "Eldmoor 5-6 (Vale)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.8,
+          "minQuantity": 3,
+          "maxQuantity": 10
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.15,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "mana_potion",
+          "weight": 1,
+          "dropChance": 0.08,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_tunic",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_leggings",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_sword",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "short_bow",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_6_7": {
+      "id": "loot_eldmoor_6_7",
+      "name": "Eldmoor 6-7 (Thornwood, Kingsbarrow)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.8,
+          "minQuantity": 4,
+          "maxQuantity": 12
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.18,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "mana_potion",
+          "weight": 1,
+          "dropChance": 0.1,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "leather_tunic",
+          "weight": 1,
+          "dropChance": 0.05,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_mace",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "oak_staff",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "bone_totem",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "ring_of_wisdom",
+          "weight": 1,
+          "dropChance": 0.01,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_7_8": {
+      "id": "loot_eldmoor_7_8",
+      "name": "Eldmoor 7-8 (Highlands)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.85,
+          "minQuantity": 5,
+          "maxQuantity": 15
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.2,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "mana_potion",
+          "weight": 1,
+          "dropChance": 0.1,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_helm",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_gauntlets",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_buckler",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "ring_of_strength",
+          "weight": 1,
+          "dropChance": 0.01,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_8_9": {
+      "id": "loot_eldmoor_8_9",
+      "name": "Eldmoor 8-9 (Steadings, keep gate)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.85,
+          "minQuantity": 6,
+          "maxQuantity": 18
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.2,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "mana_potion",
+          "weight": 1,
+          "dropChance": 0.12,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "chainmail",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_boots",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_greaves",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_kite_shield",
+          "weight": 1,
+          "dropChance": 0.02,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_9_10": {
+      "id": "loot_eldmoor_9_10",
+      "name": "Eldmoor 9-10 (Ashvane Keep)",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 0.9,
+          "minQuantity": 8,
+          "maxQuantity": 24
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.22,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "mana_potion",
+          "weight": 1,
+          "dropChance": 0.14,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "chainmail",
+          "weight": 1,
+          "dropChance": 0.05,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_greaves",
+          "weight": 1,
+          "dropChance": 0.04,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_cuirass",
+          "weight": 1,
+          "dropChance": 0.02,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_kite_shield",
+          "weight": 1,
+          "dropChance": 0.03,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_eldmoor_named": {
+      "id": "loot_eldmoor_named",
+      "name": "Eldmoor named",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 1.0,
+          "minQuantity": 15,
+          "maxQuantity": 40
+        },
+        {
+          "itemId": "health_potion",
+          "weight": 1,
+          "dropChance": 0.5,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_cuirass",
+          "weight": 1,
+          "dropChance": 0.08,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "chainmail",
+          "weight": 1,
+          "dropChance": 0.15,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_kite_shield",
+          "weight": 1,
+          "dropChance": 0.1,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "ring_of_strength",
+          "weight": 1,
+          "dropChance": 0.08,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "ring_of_wisdom",
+          "weight": 1,
+          "dropChance": 0.08,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
+    },
+    "loot_ordric_vane": {
+      "id": "loot_ordric_vane",
+      "name": "Castellan Ordric Vane",
+      "entries": [
+        {
+          "itemId": "gold_coin",
+          "weight": 1,
+          "dropChance": 1.0,
+          "minQuantity": 40,
+          "maxQuantity": 80
+        },
+        {
+          "itemId": "ashvane_signet",
+          "weight": 1,
+          "dropChance": 0.35,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "castellans_sword",
+          "weight": 1,
+          "dropChance": 0.3,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "hound_crest_shield",
+          "weight": 1,
+          "dropChance": 0.3,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        },
+        {
+          "itemId": "iron_cuirass",
+          "weight": 1,
+          "dropChance": 0.25,
+          "minQuantity": 1,
+          "maxQuantity": 1
+        }
+      ]
     }
   }
 }

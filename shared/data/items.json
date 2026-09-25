@@ -490,6 +490,74 @@
       },
       "inventoryIcon": "cloak_warden.png",
       "spriteId": "cloak_warden"
+    },
+    "iron_cuirass": {
+      "id": "iron_cuirass",
+      "name": "Iron Cuirass",
+      "description": "Breast- and backplate with pauldrons. The heaviest chest armour there is.",
+      "category": "equipment",
+      "equipSlot": "chest",
+      "rarity": "uncommon",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "stamina": 4,
+        "physicalDefense": 6,
+        "strength": 1
+      },
+      "inventoryIcon": "chest_priests_chain.png",
+      "spriteId": "chest_iron_cuirass"
+    },
+    "ashvane_signet": {
+      "id": "ashvane_signet",
+      "name": "Ashvane Signet",
+      "description": "The castellan's seal ring: a black hound on ash grey.",
+      "category": "equipment",
+      "equipSlot": "ring",
+      "rarity": "rare",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "strength": 3,
+        "stamina": 3
+      },
+      "inventoryIcon": "ring_strength.png"
+    },
+    "castellans_sword": {
+      "id": "castellans_sword",
+      "name": "Castellan's Sword",
+      "description": "Ordric Vane's blade, better steel than anything in the outpost.",
+      "category": "equipment",
+      "equipSlot": "weapon",
+      "rarity": "rare",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "strength": 5
+      },
+      "attackSpeedMs": 1500,
+      "minDamage": 7,
+      "maxDamage": 14,
+      "inventoryIcon": "sword_iron.png",
+      "spriteId": "sword_iron",
+      "weaponStyle": "sword"
+    },
+    "hound_crest_shield": {
+      "id": "hound_crest_shield",
+      "name": "Hound-Crested Shield",
+      "description": "A kite shield bearing the Ashvane hound.",
+      "category": "equipment",
+      "equipSlot": "offhand",
+      "rarity": "rare",
+      "stackable": false,
+      "maxStack": 1,
+      "statBonuses": {
+        "blockRating": 0.07,
+        "stamina": 3,
+        "physicalDefense": 5
+      },
+      "inventoryIcon": "shield_kite_iron.png",
+      "spriteId": "shield_kite_iron"
     }
   }
 }

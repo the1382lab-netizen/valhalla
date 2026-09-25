@@ -146,6 +146,14 @@ void AValhallaNPC::GetAppearanceMeshes(USkeletalMesh*& OutBody, TArray<USkeletal
 	OutBody = BodyMesh ? BodyMesh->GetSkeletalMeshAsset() : nullptr;
 	OutPieces.Reset();
 
+	// B-06 1.9a: a body of its own wears nothing; the mesh is its outfit.
+	if (HasBodyOverride())
+	{
+		OutBody = BodyMeshOverride.LoadSynchronous();
+		OutPieces.SetNumZeroed(5);
+		return;
+	}
+
 	// A mesh can be chosen two ways on a BP_NPC_* type, and both count: the
 	// Look properties in Class Defaults, or the Skeletal Mesh Asset on the
 	// ChestMesh/HelmMesh/... component in the Components panel. The component
@@ -333,11 +341,103 @@ void AValhallaNPC::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
 
+	// B-06 1.9a: a type with a body of its own (the goblin) never wears the
+	// player body. Its clips come from its own folder, set here because the
+	// anim component loads them in its BeginPlay, before this actor's.
+	if (ApplyBodyOverride())
+	{
+		if (AnimComponent)
+		{
+			AnimComponent->SetAnimFolderOverride(AnimFolderOverride);
+		}
+		AttachWeaponToOverrideBody(static_cast<int32>(EValhallaGrip::OneHand));
+		return;
+	}
+
 	if (UValhallaVisuals::ApplyActiveBody(BodyMesh))
 	{
 		UValhallaVisuals::ApplyActiveHead(HeadMesh, BodyMesh);
 		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, EValhallaGrip::OneHand);
 	}
+}
+
+bool AValhallaNPC::ApplyBodyOverride()
+{
+	if (!HasBodyOverride() || !BodyMesh)
+	{
+		return false;
+	}
+
+	USkeletalMesh* OverrideMesh = BodyMeshOverride.LoadSynchronous();
+	if (!OverrideMesh)
+	{
+		UE_LOG(LogValhallaVisual, Warning, TEXT("%s: body override %s is missing; keeping the player body."),
+			*GetName(), *BodyMeshOverride.ToString());
+		return false;
+	}
+
+	if (BodyMesh->GetSkeletalMeshAsset() != OverrideMesh)
+	{
+		BodyMesh->SetSkeletalMeshAsset(OverrideMesh);
+	}
+	BodyMesh->SetRelativeScale3D(FVector(GetBaseBodyScale() * (BodyScale > 0.f ? BodyScale : 1.f)));
+
+	// No head, hair or armour: they are built for the player skeleton and
+	// could not follow this one anyway.
+	if (HeadMesh)
+	{
+		HeadMesh->SetSkeletalMeshAsset(nullptr);
+		HeadMesh->SetLeaderPoseComponent(nullptr);
+	}
+	for (USkeletalMeshComponent* Follower : { ChestMesh.Get(), HelmMesh.Get(), LegsMesh.Get(), BootsMesh.Get(), GlovesMesh.Get() })
+	{
+		if (Follower && Follower->GetSkeletalMeshAsset())
+		{
+			Follower->SetSkeletalMeshAsset(nullptr);
+		}
+	}
+	return true;
+}
+
+float AValhallaNPC::GetBaseBodyScale() const
+{
+	if (HasBodyOverride())
+	{
+		return BodyMeshScale > 0.f ? BodyMeshScale : 1.f;
+	}
+	return UValhallaVisuals::ActiveBodyScale();
+}
+
+void AValhallaNPC::AttachWeaponToOverrideBody(int32 GripIndex)
+{
+	if (!WeaponMesh || !BodyMesh)
+	{
+		return;
+	}
+
+	const EValhallaGrip Grip = static_cast<EValhallaGrip>(GripIndex);
+	const FValhallaNPCGripFrame* Frame = &OneHandGrip;
+	if (Grip == EValhallaGrip::Staff)
+	{
+		Frame = &StaffGrip;
+	}
+	else if (Grip == EValhallaGrip::Bow)
+	{
+		Frame = &BowGrip;
+	}
+
+	if (Frame->Bone.IsNone())
+	{
+		// Not calibrated for this body: the player body's frame is the best guess.
+		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, Grip);
+		return;
+	}
+
+	// Frames are measured on the unscaled mesh, like the player body's; the
+	// prop is drawn at PropScale of its modelled size, whatever the body's scale.
+	WeaponMesh->AttachToComponent(BodyMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, Frame->Bone);
+	WeaponMesh->SetRelativeTransform(FTransform(Frame->Rotation, Frame->Location,
+		FVector(Frame->PropScale / FMath::Max(GetBaseBodyScale(), KINDA_SMALL_NUMBER))));
 }
 
 void AValhallaNPC::BeginPlay()
@@ -392,8 +492,9 @@ void AValhallaNPC::ApplyBodyScale()
 
 	if (BodyMesh)
 	{
-		// ActiveBodyScale normalises the active body to 122 cm (1 for the Valhalla body).
-		BodyMesh->SetRelativeScale3D(FVector(Scale * UValhallaVisuals::ActiveBodyScale()));
+		// ActiveBodyScale normalises the active body to 122 cm (1 for the Valhalla
+		// body); a type with a body of its own brings its own factor (1.9a).
+		BodyMesh->SetRelativeScale3D(FVector(Scale * GetBaseBodyScale()));
 		// The body's pivot is at its feet, so the offset that stands it on the
 		// capsule's bottom is the (scaled) capsule half-height, no more.
 		BodyMesh->SetRelativeLocation(FVector(0.f, 0.f, UValhallaVisuals::MeshZOffset * Scale));
@@ -529,7 +630,13 @@ void AValhallaNPC::ApplyWeaponVisual()
 
 	// A bow is held pitched up in the right hand, the same correction a player gets.
 	FRotator PropRotation = FRotator::ZeroRotator;
-	if (UValhallaVisuals::UseExternalBody())
+	if (HasBodyOverride())
+	{
+		// B-06 1.9a: this type's own grip frames (the goblin's hands).
+		AttachWeaponToOverrideBody(static_cast<int32>(UValhallaVisuals::GripForWeapon(this, WeaponId)));
+		PropRotation = WeaponMesh->GetRelativeRotation();
+	}
+	else if (UValhallaVisuals::UseExternalBody())
 	{
 		UValhallaVisuals::AttachHeldProp(WeaponMesh, BodyMesh, UValhallaVisuals::GripForWeapon(this, WeaponId));
 		PropRotation = WeaponMesh->GetRelativeRotation();
@@ -753,6 +860,8 @@ void AValhallaNPC::Respawn()
 	bHasFightStart = false;
 	bHoldingPosition = false;
 	GaveUpOn = nullptr;
+	// B-10 part 2: back at stop 0 (home), so the route starts over from there.
+	ResetIdleState();
 	OnRep_Alive();
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s respawned at %s with %.0f hp."),
@@ -1244,6 +1353,305 @@ FVector AValhallaNPC::PlanAndSteer(const FVector& Goal, double Now)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  B-10 part 2 — idle movement: patrol routes, pairs, roaming
+// ─────────────────────────────────────────────────────────────────────────────
+
+void AValhallaNPC::ConfigureIdleMovement(const FValhallaNPCPatrolSetup& Setup, AValhallaNPCSpawner* Leader)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	Patrol = Setup;
+	FollowLeader = Leader;
+
+	// One of the three, in the spawn point's order of precedence: a leader,
+	// then a route, then roaming. A spawn point cannot lead its own NPC.
+	if (Leader && Leader != Spawner.Get())
+	{
+		IdleMode = EValhallaNPCIdleMode::Follow;
+	}
+	else if (FValhallaNPCPatrolRules::HasRoute(Setup.Mode, Setup.Stops.Num()))
+	{
+		IdleMode = EValhallaNPCIdleMode::Route;
+	}
+	else if (Setup.WanderRadius > 0.f)
+	{
+		IdleMode = EValhallaNPCIdleMode::Wander;
+	}
+	else
+	{
+		IdleMode = EValhallaNPCIdleMode::None;
+	}
+
+	ResetIdleState();
+
+	if (IdleMode != EValhallaNPCIdleMode::None)
+	{
+		FString What;
+		if (IdleMode == EValhallaNPCIdleMode::Follow)
+		{
+			What = FString::Printf(TEXT("follows %s"), *GetNameSafe(Leader));
+		}
+		else if (IdleMode == EValhallaNPCIdleMode::Route)
+		{
+			What = FString::Printf(TEXT("%s route of %d stops"),
+				Setup.Mode == EValhallaPatrolMode::Loop ? TEXT("loop") : TEXT("ping-pong"), Setup.Stops.Num());
+		}
+		else
+		{
+			What = FString::Printf(TEXT("roams %.0f cm"), Setup.WanderRadius);
+		}
+		UE_LOG(LogValhallaGame, Log, TEXT("%s (%s) idle: %s at %.0f cm/s, pauses %.1f-%.1f s."),
+			*DisplayName, *GetName(), *What, GetIdleWalkSpeed(), Setup.PauseMinSeconds, Setup.PauseMaxSeconds);
+	}
+}
+
+void AValhallaNPC::ResetIdleState()
+{
+	PatrolTargetIndex = 0;
+	PatrolDirection = 1;
+	IdlePauseUntil = 0.0;
+	WanderGoal = FVector::ZeroVector;
+	bHasWanderGoal = false;
+	bFollowWalking = false;
+}
+
+float AValhallaNPC::GetIdleWalkSpeed() const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float MaxSpeed = Movement ? Movement->MaxWalkSpeed : 60.f;
+	return MaxSpeed * FMath::Clamp(Patrol.SpeedFraction, 0.1f, 1.f);
+}
+
+bool AValhallaNPC::TickIdleMovement(float FixedDeltaSeconds, double Now)
+{
+	switch (IdleMode)
+	{
+	case EValhallaNPCIdleMode::Route:
+		TickPatrolRoute(Now);
+		return true;
+	case EValhallaNPCIdleMode::Follow:
+		// With no living leader it waits at its own home: the caller's walk home.
+		{
+			AValhallaNPCSpawner* LeaderSpawner = FollowLeader.Get();
+			const AValhallaNPC* Leader = LeaderSpawner ? LeaderSpawner->GetSpawnedNPC() : nullptr;
+			if (!Leader || Leader == this || !Leader->IsAlive())
+			{
+				bFollowWalking = false;
+				return false;
+			}
+		}
+		TickFollow(FixedDeltaSeconds, Now);
+		return true;
+	case EValhallaNPCIdleMode::Wander:
+		TickWander(Now);
+		return true;
+	default:
+		return false;
+	}
+}
+
+void AValhallaNPC::IdleStand()
+{
+	if (MovePath.Mode != FValhallaNPCPath::EMode::None || MovePath.StuckSince >= 0.0)
+	{
+		MovePath.Reset();
+	}
+}
+
+bool AValhallaNPC::IdleWalkToward(const FVector& Goal, float InputScale, double Now)
+{
+	FVector ToGoal = Goal - GetActorLocation();
+	ToGoal.Z = 0.0;
+	const double Distance = ToGoal.Size2D();
+
+	// The last half metre a little slower, so it settles on the stop rather
+	// than stepping over it, as the walk back does. Never so slow that the
+	// stuck clock (25 cm in 3 s) mistakes a stroll for being stuck.
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float MaxSpeed = Movement ? Movement->MaxWalkSpeed : 60.f;
+	const float MinScale = MaxSpeed > 0.f ? FMath::Min(1.f, 15.f / MaxSpeed) : 0.1f;
+	const float Scale = FMath::Max(MinScale, InputScale * FMath::Clamp(static_cast<float>(Distance / 50.0), 0.4f, 1.f));
+
+	const FVector Direction = PlanAndSteer(Goal, Now);
+	AddMovementInput(Direction.IsNearlyZero() ? ToGoal.GetSafeNormal() : Direction, Scale);
+
+	return FValhallaNPCPath::UpdateStuck(MovePath, GetActorLocation(), Now);
+}
+
+void AValhallaNPC::TickPatrolRoute(double Now)
+{
+	const int32 StopCount = Patrol.Stops.Num();
+	if (!Patrol.Stops.IsValidIndex(PatrolTargetIndex))
+	{
+		PatrolTargetIndex = 0;
+		PatrolDirection = 1;
+	}
+
+	if (Now < IdlePauseUntil)
+	{
+		IdleStand();
+		return;
+	}
+
+	const FVector Stop = Patrol.Stops[PatrolTargetIndex];
+	if (FValhallaNPCPatrolRules::HasArrived(GetActorLocation(), Stop))
+	{
+		// At a stop: stand a while, then on to the next. Stop 0 counts, so a
+		// freshly spawned NPC stands its first pause on its spawn point too.
+		const double Pause = FValhallaNPCPatrolRules::RollPause(Patrol.PauseMinSeconds, Patrol.PauseMaxSeconds, FMath::FRand());
+		const int32 Reached = PatrolTargetIndex;
+		IdlePauseUntil = Now + Pause;
+		PatrolTargetIndex = FValhallaNPCPatrolRules::NextStop(Patrol.Mode, StopCount, PatrolTargetIndex, PatrolDirection);
+		IdleStand();
+		UE_LOG(LogValhallaGame, Verbose, TEXT("%s (%s) patrol: at stop %d, pausing %.1f s, then stop %d."),
+			*DisplayName, *GetName(), Reached, Pause, PatrolTargetIndex);
+		return;
+	}
+
+	if (IdleWalkToward(Stop, Patrol.SpeedFraction, Now))
+	{
+		// Walled in, off the nav mesh or blocked by another body: skip to the
+		// next stop rather than warp (a patrol is not a leash), and stand a
+		// second so a stop it can never reach does not become a grind.
+		const int32 Skipped = PatrolTargetIndex;
+		PatrolTargetIndex = FValhallaNPCPatrolRules::NextStop(Patrol.Mode, StopCount, PatrolTargetIndex, PatrolDirection);
+		IdlePauseUntil = Now + 1.0;
+		MovePath.Reset();
+		UE_LOG(LogValhallaGame, Log, TEXT("%s (%s) is stuck on its patrol %.0f cm from stop %d; skipping to stop %d."),
+			*DisplayName, *GetName(), FVector::Dist2D(GetActorLocation(), Stop), Skipped, PatrolTargetIndex);
+	}
+}
+
+void AValhallaNPC::TickFollow(float FixedDeltaSeconds, double Now)
+{
+	AValhallaNPCSpawner* LeaderSpawner = FollowLeader.Get();
+	const AValhallaNPC* Leader = LeaderSpawner ? LeaderSpawner->GetSpawnedNPC() : nullptr;
+	if (!Leader)
+	{
+		IdleStand();
+		return;
+	}
+
+	// The leader is fighting and this one is not (it would not be idle): hold
+	// here. Social aggro, on the template, is what brings a pair in together;
+	// walking after a leader into a fight it has not joined would be a pull
+	// by proxy.
+	if (Leader->IsEngaged())
+	{
+		bFollowWalking = false;
+		IdleStand();
+		return;
+	}
+
+	const FVector Spot = FValhallaNPCPatrolRules::FollowSpot(Leader->GetActorLocation(), Leader->GetActorRotation().Yaw);
+	const double Distance = FVector::Dist2D(GetActorLocation(), Spot);
+	bFollowWalking = FValhallaNPCPatrolRules::FollowerShouldMove(Distance, bFollowWalking);
+
+	if (!bFollowWalking)
+	{
+		// Standing behind it: face the way it faces, as a pair standing
+		// together would, and pause when it pauses.
+		IdleStand();
+		TurnToward(GetActorLocation() + Leader->GetActorForwardVector() * 100.0, FixedDeltaSeconds);
+		return;
+	}
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float MySpeed = Movement ? Movement->MaxWalkSpeed : 60.f;
+	const double LeaderFraction = MySpeed > 0.f ? Leader->GetIdleWalkSpeed() / MySpeed : 1.0;
+	const float Scale = static_cast<float>(FValhallaNPCPatrolRules::FollowSpeedScale(Distance, LeaderFraction));
+
+	if (IdleWalkToward(Spot, Scale, Now))
+	{
+		// It cannot get behind its leader right now (a body in the way, a
+		// corner): plan again and keep trying. No skip, no warp; the leader
+		// walking on moves the spot anyway.
+		MovePath.Reset();
+	}
+}
+
+void AValhallaNPC::TickWander(double Now)
+{
+	if (Now < IdlePauseUntil)
+	{
+		IdleStand();
+		return;
+	}
+
+	if (!bHasWanderGoal)
+	{
+		if (!PickWanderGoal(WanderGoal))
+		{
+			// No reachable point this time (a tiny nav island): try again after a pause.
+			IdlePauseUntil = Now + FValhallaNPCPatrolRules::RollPause(Patrol.PauseMinSeconds, Patrol.PauseMaxSeconds, FMath::FRand());
+			IdleStand();
+			return;
+		}
+		bHasWanderGoal = true;
+		MovePath.Reset();
+	}
+
+	if (FValhallaNPCPatrolRules::HasArrived(GetActorLocation(), WanderGoal))
+	{
+		bHasWanderGoal = false;
+		IdlePauseUntil = Now + FValhallaNPCPatrolRules::RollPause(Patrol.PauseMinSeconds, Patrol.PauseMaxSeconds, FMath::FRand());
+		IdleStand();
+		return;
+	}
+
+	if (IdleWalkToward(WanderGoal, Patrol.SpeedFraction, Now))
+	{
+		// Pick somewhere else after a short stand.
+		UE_LOG(LogValhallaGame, Verbose, TEXT("%s (%s) is stuck roaming toward %s; picking another spot."),
+			*DisplayName, *GetName(), *WanderGoal.ToCompactString());
+		bHasWanderGoal = false;
+		IdlePauseUntil = Now + 1.0;
+		MovePath.Reset();
+	}
+}
+
+bool AValhallaNPC::PickWanderGoal(FVector& OutGoal) const
+{
+	const double Radius = Patrol.WanderRadius;
+	if (Radius <= 0.0)
+	{
+		return false;
+	}
+
+	UWorld* World = GetWorld();
+	UNavigationSystemV1* Nav = World ? FNavigationSystem::GetCurrent<UNavigationSystemV1>(World) : nullptr;
+	const ANavigationData* NavData = Nav ? Nav->GetNavDataForProps(GetNavAgentPropertiesRef(), HomeLocation) : nullptr;
+
+	if (!Nav || !NavData)
+	{
+		// No nav mesh (L_GreyBox, tests): anywhere on the disc, straight there.
+		OutGoal = FValhallaNPCPatrolRules::WanderPoint(HomeLocation, Radius, FMath::FRand(), FMath::FRand());
+		return true;
+	}
+
+	// Home is the capsule centre; the nav query wants a point on the mesh.
+	FVector Origin = HomeLocation;
+	FNavLocation HomeOnNav;
+	if (Nav->ProjectPointToNavigation(HomeLocation, HomeOnNav, FVector(100.0, 100.0, 250.0)))
+	{
+		Origin = HomeOnNav.Location;
+	}
+
+	// Reachable, not merely inside the radius: a point across a river or
+	// behind a palisade is inside the circle and a long way round.
+	FNavLocation Found;
+	if (Nav->GetRandomReachablePointInRadius(Origin, static_cast<float>(Radius), Found))
+	{
+		OutGoal = Found.Location;
+		return true;
+	}
+	return false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  The state machine — NPCSystem.ts:111
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1476,11 +1884,25 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 	}
 	else
 	{
+		bHoldingPosition = false;
+
+		// ── Idle movement (B-10 part 2) ──────────────────────────────────
+		// A patrol route, a leader to follow or a roam: only once any fight is
+		// over *and* walked back from, so the leash, the heal on arrival and
+		// the re-pull rules below are exactly what they were. A pulled patrol
+		// walks back to where it was pulled (FightStart) and then picks the
+		// route up at the stop it was heading for. False: no idle movement (or
+		// a follower whose leader is dead), so it stands at home as before.
+		if (!bHasFightStart && !bReturning && TickIdleMovement(FixedDeltaSeconds, Now))
+		{
+			TickBuffs(Now);
+			return;
+		}
+
 		// ── Walk back (NPCSystem.ts:239) ─────────────────────────────────
-		// To where the fight started (home, until patrols move), or home when
+		// To where the fight started (on its route, for a patrol), or home when
 		// there was no fight. A leashed NPC goes at full speed and heals when it
 		// gets there; one whose fight simply ended strolls back at 2/3.
-		bHoldingPosition = false;
 		const FVector Spot = bHasFightStart ? FightStart : HomeLocation;
 		FVector ToSpot = Spot - GetActorLocation();
 		ToSpot.Z = 0.0;

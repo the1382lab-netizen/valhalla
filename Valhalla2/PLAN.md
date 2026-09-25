@@ -2513,6 +2513,18 @@ right width; make the thickness an in-game option. Screenshots `Saved/ClaudeOps/
 - PIE (L_World, 2 clients): `12 framed panel(s) at a 4 px border`, 13 once the options menu exists; 10 px
   and back to the default through the console; the slider shows the value in force.
 
+## Class icon kit and the front-end design (2026-09-25)
+
+- Kevin chose the "Gilded Hall" look for login and character select (design canvas "Valhalla login &
+  character select", Option A) and the "Icons 1c" class icons: a gold-rimmed coin per class with a class
+  colour and a gold symbol (Warrior sword, Cleric templar cross, Ranger bow, Rogue dagger, Shaman
+  dreamcatcher, Wizard spellbook).
+- Kit saved: `Tools/ui/make_class_icons.py` writes `Docs/branding/class-icons/<class>.svg` and
+  `Import/UI/ClassIcons/T_ClassIcon_<Class>.png` (256 px); colours, sizes and the Gilded Hall palette in
+  `Docs/branding/class-icons/README.md`. Not imported into Unreal yet.
+- Build plan: backlog B-08a (login, character select with a rotating preview, party pane with class icons),
+  waiting for Kevin's review.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

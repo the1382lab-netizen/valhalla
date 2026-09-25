@@ -9,6 +9,10 @@ The game logo is the **coin monogram**: a gold "V" on a royal-blue coin with a g
 | `valhalla_logo.ico` | Windows icon (16–256 px) for the packaged client |
 | `valhalla_logo.svg` | Vector source. It uses the Cinzel font (free, SIL Open Font License); Cinzel must be installed for the SVG to render correctly |
 
+## Class icons
+
+The class icon kit (a coin per class in the logo's style) and the "Gilded Hall" colours and fonts for the login and character select screens are in `class-icons/README.md`.
+
 ## To do when the client is packaged
 
 Use this logo as the packaged game's icon:

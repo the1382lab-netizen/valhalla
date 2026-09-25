@@ -116,6 +116,13 @@ namespace Valhalla
 		return false;
 	}
 
+	bool ParseNPCAttackType(const FString& In, EValhallaNPCAttackType& Out)
+	{
+		if (Is(In, TEXT("melee")))  { Out = EValhallaNPCAttackType::Melee;  return true; }
+		if (Is(In, TEXT("ranged"))) { Out = EValhallaNPCAttackType::Ranged; return true; }
+		return false;
+	}
+
 	bool ParseDamageOutcome(const FString& In, EValhallaDamageOutcome& Out)
 	{
 		if (Is(In, TEXT("miss")))   { Out = EValhallaDamageOutcome::Miss;  return true; }

@@ -320,8 +320,26 @@ protected:
 	/** Push ActiveBuffs into the replicated SyncedBuffs view. */
 	void SyncBuffsToReplicatedView();
 
-	/** Teleport home, full heal, drop all threat. The port of the leash reset. */
-	void ResetToHome();
+	/**
+	 * The leash (and the chase give-up): drop the target and all threat and
+	 * start walking back to where the fight started. No teleport and no heal
+	 * yet; FinishReturn heals it when it gets there. Kevin, 2026-09-24: a
+	 * leashed NPC walks back, and can be pulled again on the way.
+	 * @param GaveUpOn The target it could not reach, or null for a leash.
+	 *                 Walking near it again does not re-pull the NPC on this
+	 *                 return (a hit still does), or a stuck NPC would give up,
+	 *                 re-aggro and give up again every few seconds.
+	 */
+	void StartReturn(const TCHAR* Why, AActor* GaveUpOn);
+
+	/** Back where the fight started: full heal, the return and the fight are over. */
+	void FinishReturn();
+
+	/** Turn in place toward Point at the movement component's turn rate. Server only. */
+	void TurnToward(const FVector& Point, float DeltaSeconds);
+
+	/** No sight blocker (VisionBlocker channel, eye height) between this NPC and Target. */
+	bool HasLineOfSightTo(const AActor* Target) const;
 
 	/**
 	 * Read `spriteSize` and `spriteColor` onto the body, and put the fixed kit
@@ -416,14 +434,17 @@ protected:
 	 */
 	static constexpr float StopChaseDistance = 30.f;
 
-	/** NPCSystem.ts:241 — the walk home is 2/3 of the chase speed. */
+	/**
+	 * NPCSystem.ts:241 — the walk home after a fight ends (target dead or gone)
+	 * is 2/3 of the chase speed. A leashed NPC walks back at full speed.
+	 */
 	static constexpr float ReturnSpeedFraction = 0.66f;
 
 private:
 	/** The template this NPC was built from. Copied, not referenced. */
 	FValhallaNPCTemplate Template;
 
-	/** NPCSystem `spawnX/spawnY` — the leash anchor and the respawn point. */
+	/** NPCSystem `spawnX/spawnY` — the respawn point, and where an idle NPC stands (a fight's leash measures from FightStart). */
 	FVector HomeLocation = FVector::ZeroVector;
 
 	/** The spawner that made it. Weak: deleting a spawner must not delete its NPCs mid-frame. */
@@ -468,6 +489,26 @@ private:
 	static constexpr double StuckIgnoreNearCm = 150.0;
 
 	/**
+	 * Where the current fight started: the NPC's own position the step it first
+	 * took a target. The leash is measured from here and a leashed NPC walks
+	 * back here. It stays set through a re-pull on the way back (so a fight
+	 * cannot be dragged further out one leash at a time) and is cleared when
+	 * the NPC gets back, dies or respawns. Until patrols move (B-10) this is
+	 * always its home spot.
+	 */
+	FVector FightStart = FVector::ZeroVector;
+	bool bHasFightStart = false;
+
+	/** Leashed or gave up, and walking back to FightStart. Server only. */
+	bool bReturning = false;
+
+	/** The target a stuck chase gave up on; see StartReturn. */
+	TWeakObjectPtr<AActor> GaveUpOn;
+
+	/** A ranged NPC standing its ground (in range and in sight); see FValhallaNPCCombatRules::ShouldChase. */
+	bool bHoldingPosition = false;
+
+	/**
 	 * B-10 social aggro: true once this NPC has called for help in the current
 	 * fight. Cleared when it has no target any more, leashes, dies or respawns.
 	 * One call per fight is what makes chains finite.
@@ -491,4 +532,7 @@ public:
 
 	/** B-10: whether this NPC has a target or anyone on its threat table. */
 	bool IsEngaged() const { return AggroTarget.IsValid() || ThreatTable.Num() > 0; }
+
+	/** Leashed and walking back to where its fight started. */
+	bool IsReturning() const { return bReturning; }
 };

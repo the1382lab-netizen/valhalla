@@ -161,6 +161,7 @@ export const SKILL_CATEGORIES = ['offensive', 'defensive', 'healing', 'buff', 'd
 export const RESOURCE_TYPES = ['mana', 'energy', 'none'] as const;
 export const NPC_TYPES = ['enemy', 'npc'] as const;
 export const NPC_BEHAVIORS = ['passive', 'aggressive', 'patrol', 'stationary', 'fleeing'] as const;
+export const NPC_ATTACK_TYPES = ['melee', 'ranged'] as const;
 export const ARMOR_TYPES = ['cloth', 'leather', 'mail', 'plate'] as const;
 
 /** Skills with a hand-written handler in Unreal (ValhallaSkillHandler.cpp); the data-only rules don't apply. */
@@ -405,6 +406,20 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
       if (!items[npc.weaponId]) add('error', 'npcs', id, `weapon "${npc.weaponId}" does not exist`);
       else if (items[npc.weaponId].equipSlot !== 'weapon') add('error', 'npcs', id, `weapon ${itemName(npc.weaponId)} is not a weapon-slot item`);
     }
+    // Melee or ranged auto-attack. The weapon picks the animation, so a mismatch
+    // plays a swing from 6 m or a bow shot at arm's length.
+    if (npc.attackType !== undefined && !has(NPC_ATTACK_TYPES, npc.attackType)) {
+      add('error', 'npcs', id, `auto attack "${npc.attackType}" is not melee or ranged`);
+    } else {
+      const ranged = npc.attackType === 'ranged';
+      const weapon = npc.weaponId ? items[npc.weaponId] : undefined;
+      if (ranged && !weapon?.isRangedWeapon) {
+        add('warning', 'npcs', id, `has a Ranged auto attack but ${weapon ? itemName(npc.weaponId) + ' is not a ranged weapon' : 'no weapon'}, so it plays a melee swing for each shot`);
+      } else if (!ranged && weapon?.isRangedWeapon) {
+        add('warning', 'npcs', id, `carries ${itemName(npc.weaponId)} (a ranged weapon) but its auto attack is Melee`);
+      }
+    }
+    if (npc.attackRange !== undefined && !(isNum(npc.attackRange) && npc.attackRange >= 0)) add('error', 'npcs', id, 'attack range must be 0 or more');
     if (Array.isArray(npc.skills)) {
       for (const s of npc.skills) {
         if (!skills[s]) add('error', 'npcs', id, `skill "${s}" does not exist`);

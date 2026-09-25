@@ -54,9 +54,16 @@ export interface NPCTemplate {
    * [minDamage, maxDamage] roll on top of the NPC's damage roll.
    */
   weaponId?: string;
+  /**
+   * How the auto-attack reaches its target (default: melee). A ranged NPC stops
+   * chasing once the target is in attackRange and in sight, and shoots from
+   * there; walls and sight blockers stop the shot. Give it a ranged weapon so it
+   * plays the shot animation.
+   */
+  attackType?: 'melee' | 'ranged';
   /** Milliseconds between attacks (default: 1500). */
   attackSpeed?: number;
-  /** Distance in px the NPC must be within to attack (default: 40). */
+  /** Distance in px the NPC must be within to attack (default: 40 melee, 600 ranged). */
   attackRange?: number;
   /** Movement speed in px/sec when chasing (default: 60). */
   moveSpeed?: number;

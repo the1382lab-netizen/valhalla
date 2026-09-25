@@ -2122,6 +2122,58 @@ calls for help, and similar NPCs nearby join the fight.
   - wall: a Bandit 135 cm from the pulled one but on the far side of a wall did not answer.
 - No template has social aggro switched on yet; that is for 1.9 population.
 
+## NPC leash walk-back, facing, ranged auto-attack (2026-09-24)
+
+Kevin, before B-06 1.9: a leashed NPC should walk back, not teleport; an NPC should not hit a
+player behind it (the player rule); NPCs get a melee or ranged auto-attack.
+
+- **Leash walks back** (`AValhallaNPC::StartReturn` / `FinishReturn`, replaces `ResetToHome`):
+  - the NPC remembers where the fight started (`FightStart`, its own position the step it first
+    took a target; its home spot until patrols move). The leash measures from there;
+  - past the leash it drops its target and threat and walks back along a nav path at full speed.
+    The B-16 stuck-chase give-up does the same (settles B-25's open question: walk, don't warp);
+  - Kevin's choices: it can be **pulled again on the way** (a hit, its aggro range, a call for
+    help), and it **heals on arrival**, so one re-pulled halfway is still hurt. A re-pull keeps the
+    original FightStart, so a fight cannot be dragged further out one leash at a time;
+  - it can only be re-pulled once back within 75% of its leash range; beyond that it would leash
+    again on its next step. A stuck give-up also ignores proximity from the player it gave up on
+    until it is back (a hit still re-pulls), so it doesn't give up, re-aggro and give up again;
+  - the one teleport left: a walk back that makes no progress for 3 s warps to the spot;
+  - a fight that simply ends (target dead) still strolls back at 2/3 speed, no heal.
+- **Facing**: an NPC's attack needs `UValhallaCombatLibrary::IsFacing` (the players' 60° cone). An
+  NPC standing its ground turns in place toward its target at its turn rate (540°/s); the attack
+  timer waits, so the hit lands the moment it faces. Stationary NPCs with a target now turn and
+  fight from where they stand (they still never chase or leash).
+- **Melee or ranged** (`attackType` in npc-templates.json, `melee` by default):
+  - ranged: a blank or 0 `attackRange` means 600 (the player's Ranged Attack); the NPC walks in
+    until the target is within 90% of its range *and* in sight (VisionBlocker trace at eye
+    height, as social aggro), then holds and shoots until the target leaves its range or sight;
+    point-blank it keeps shooting. Same damage roll and pipeline as a melee hit, landing
+    instantly like the player's Ranged Attack (no visible arrow yet; B-09);
+  - web editor: an Auto Attack dropdown (Melee / Ranged) next to Attack Speed; the Attack Range
+    hint shows the default for the type. `npm run validate` errors on an unknown type and warns
+    on a ranged NPC without a ranged weapon or a melee NPC with a bow (it warns today for Wood's
+    Edge Bandit 3, which carries a short bow).
+- **Rules and tests**: the decisions live in `FValhallaNPCCombatRules` (chase or hold, attack
+  gate, leash, re-pull); `Valhalla.Game.NPC.CombatRules` pins them. Suite: all pass except the
+  known `MeshIdFallback`.
+- **PIE checks** (standalone, Grasslands Test Enemy bandits; for the ranged runs the template was
+  temporarily set to ranged + short bow + aggro 300, npc-templates.json restored byte-identical):
+  - leash: HP set to 20, player pulled it then jumped 16 m away; it chased 12 m, leashed, walked
+    back (largest move in one frame 10 cm, i.e. no teleport), healed to 200 on arrival, stopped
+    0.2 cm from its spot;
+  - re-pull: the player stepped in front of it 6.7 m from its spot on the way back; it took the
+    player again at 20/200 HP and attacked;
+  - facing: an NPC turned away with the player 80 cm behind it turned at 540°/s and its first hit
+    landed as the player entered its 60° cone (about 0.15 s), not before;
+  - ranged: shot at 66 cm (point blank), then with the player 4.5 m away it turned and held its
+    spot, shooting every 4 s; with the player 1.7 m away behind a building wall it never shot and
+    walked the nav path round instead.
+- **Seen in the wall run (for B-25):** a player standing behind a wall whose way round is longer
+  than the leash gets a loop: chase, leash, walk back, re-pulled by proximity, chase again. That is
+  the re-pull-by-proximity rule working as chosen; B-25's "give up when not getting closer" is the
+  place to decide whether a leash should also stop proximity re-pulls by the same player.
+
 ## Web editor — template IDs (2026-09-24)
 
 - NPC, Item, Skill and Loot Table editors show the id at the top of the details panel (monospace, Copy button) and as a list column; search matches ids.

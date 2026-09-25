@@ -29,6 +29,7 @@
 #include "ValhallaGameMode.h"
 #include "ValhallaNPCSpawner.h"
 #include "ValhallaSocialAggro.h"
+#include "ValhallaNPCCombatRules.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaVisibilitySubsystem.h"
 #include "ValhallaVisuals.h"
@@ -693,6 +694,10 @@ void AValhallaNPC::Die(AActor* Killer, double Now)
 	RespawnAt = Spawner.IsValid() ? 0.0 : Now + Template.RespawnMs / 1000.0;
 	AggroTarget = nullptr;
 	ThreatTable.Reset();
+	bReturning = false;
+	bHasFightStart = false;
+	bHoldingPosition = false;
+	GaveUpOn = nullptr;
 	ActiveBuffs.Reset();
 	SyncedBuffs.Reset();
 
@@ -744,6 +749,10 @@ void AValhallaNPC::Respawn()
 	SetActorLocation(HomeLocation, false, nullptr, ETeleportType::TeleportPhysics);
 	MovePath.Reset();
 	bCalledForHelp = false;
+	bReturning = false;
+	bHasFightStart = false;
+	bHoldingPosition = false;
+	GaveUpOn = nullptr;
 	OnRep_Alive();
 
 	UE_LOG(LogValhallaCombat, Log, TEXT("%s respawned at %s with %.0f hp."),
@@ -979,6 +988,12 @@ void AValhallaNPC::UpdateAggro(double Now)
 			{
 				continue;
 			}
+			// A chase that gave up (stuck) does not restart by proximity on the
+			// way back; a hit on it still does, through the threat table above.
+			if (bReturning && GaveUpOn.Get() == Player)
+			{
+				continue;
+			}
 
 			FVector ToPlayer = Player->GetActorLocation() - MyLocation;
 			ToPlayer.Z = 0.0;
@@ -1003,27 +1018,94 @@ void AValhallaNPC::UpdateAggro(double Now)
 	AggroTarget = Nearest;
 }
 
-void AValhallaNPC::ResetToHome()
+void AValhallaNPC::StartReturn(const TCHAR* Why, AActor* InGaveUpOn)
 {
 	AggroTarget = nullptr;
 	ThreatTable.Reset();
-
-	SetActorLocation(HomeLocation, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
 	MovePath.Reset();
 	bCalledForHelp = false;
+	bHoldingPosition = false;
+	bReturning = true;
+	GaveUpOn = InGaveUpOn;
 
+	if (!bHasFightStart)
+	{
+		FightStart = HomeLocation;
+		bHasFightStart = true;
+	}
+
+	UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) %s: walking back to %s (%.0f cm) at %.0f/%.0f hp."),
+		*DisplayName, *GetName(), Why, *FightStart.ToCompactString(),
+		FVector::Dist2D(GetActorLocation(), FightStart), Hp, MaxHp);
+}
+
+void AValhallaNPC::FinishReturn()
+{
 	// NPCSystem.ts:172 — a leashed NPC heals to full. Without it, a player could
 	// pull an enemy, run out of leash range, and repeat until it died of
-	// attrition without ever being able to fight back.
-	Hp = MaxHp;
+	// attrition without ever being able to fight back. 2.0 heals on arrival
+	// rather than at the leash (Kevin, 2026-09-24), so one pulled again on
+	// the way back is still hurt.
+	const bool bWasReturning = bReturning;
+	if (bWasReturning)
+	{
+		Hp = MaxHp;
+	}
+
+	bReturning = false;
+	bHasFightStart = false;
+	GaveUpOn = nullptr;
+	MovePath.Reset();
 
 	if (UCharacterMovementComponent* Movement = GetCharacterMovement())
 	{
 		Movement->StopMovementImmediately();
 	}
 
-	UE_LOG(LogValhallaCombat, Log, TEXT("%s leashed: reset to %s and healed to %.0f."),
-		*DisplayName, *HomeLocation.ToCompactString(), MaxHp);
+	if (bWasReturning)
+	{
+		UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) is back at %s and healed to %.0f."),
+			*DisplayName, *GetName(), *GetActorLocation().ToCompactString(), MaxHp);
+	}
+}
+
+void AValhallaNPC::TurnToward(const FVector& Point, float DeltaSeconds)
+{
+	const FVector To = Point - GetActorLocation();
+	if (To.SizeSquared2D() < 1.0)
+	{
+		return;
+	}
+
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	const float RatePerSecond = Movement ? Movement->RotationRate.Yaw : 540.f;
+
+	FRotator Rotation = GetActorRotation();
+	const float Desired = static_cast<float>(FMath::RadiansToDegrees(FMath::Atan2(To.Y, To.X)));
+	const float NewYaw = FMath::FixedTurn(Rotation.Yaw, Desired, RatePerSecond * DeltaSeconds);
+	if (!FMath::IsNearlyEqual(FRotator::NormalizeAxis(NewYaw - Rotation.Yaw), 0.f, 0.01f))
+	{
+		Rotation.Yaw = NewYaw;
+		SetActorRotation(Rotation);
+	}
+}
+
+bool AValhallaNPC::HasLineOfSightTo(const AActor* Target) const
+{
+	const UWorld* World = GetWorld();
+	if (!World || !Target)
+	{
+		return false;
+	}
+
+	// The same channel and eye height social aggro and the players' fog use,
+	// so a wall or a TH thicket that hides you also stops the arrow.
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(ValhallaNPCSight), /*bTraceComplex*/ false);
+	Params.AddIgnoredActor(this);
+	Params.AddIgnoredActor(Target);
+	const FVector Eye(0.f, 0.f, ValhallaEyeHeight);
+	return !World->LineTraceTestByChannel(
+		GetActorLocation() + Eye, Target->GetActorLocation() + Eye, ValhallaVisionBlockerChannel, Params);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1186,12 +1268,40 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 	// Only aggressive and patrol NPCs look for targets at all. A stationary or
 	// passive one still keeps the threat table it was given by being hit, which
 	// is how a passive NPC that is attacked fights back without wandering off.
-	if (Template.BehaviorType == EValhallaNPCBehavior::Aggressive || Template.BehaviorType == EValhallaNPCBehavior::Patrol)
+	//
+	// A leashed NPC walking back can be pulled again (Kevin, 2026-09-24), but
+	// only once it is back within RepullLeashFraction of its leash range:
+	// further out it would leash again on its very next step, so anything it
+	// picks up out there (a hit's threat) is dropped.
+	const bool bCanTakeTarget = !bReturning
+		|| FValhallaNPCCombatRules::CanRepull(FVector::Dist2D(GetActorLocation(), FightStart), LeashRange);
+	if (!bCanTakeTarget)
+	{
+		AggroTarget = nullptr;
+		ThreatTable.Reset();
+	}
+	else if (Template.BehaviorType == EValhallaNPCBehavior::Aggressive || Template.BehaviorType == EValhallaNPCBehavior::Patrol)
 	{
 		UpdateAggro(Now);
 	}
 
 	AActor* Target = AggroTarget.Get();
+
+	if (Target && bReturning)
+	{
+		// Pulled again on the way back. FightStart stays where the first fight
+		// started, so the leash still measures from there, and it is not healed.
+		bReturning = false;
+		GaveUpOn = nullptr;
+		MovePath.Reset();
+		UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) pulled again by %s on its way back (%.0f/%.0f hp)."),
+			*DisplayName, *GetName(), *UValhallaCombatLibrary::GetDisplayName(Target), Hp, MaxHp);
+	}
+	if (Target && !bHasFightStart)
+	{
+		FightStart = GetActorLocation();
+		bHasFightStart = true;
+	}
 
 	// ── Social aggro (B-10) ─────────────────────────────────────────────
 	// The first step of a fight: call same-group neighbours. Once per fight;
@@ -1210,25 +1320,29 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 		}
 	}
 
-	if (Target && Template.BehaviorType != EValhallaNPCBehavior::Stationary)
+	if (Target)
 	{
 		if (!UValhallaCombatLibrary::IsAliveTarget(Target))
 		{
 			AggroTarget = nullptr;
+			bHoldingPosition = false;
 			TickBuffs(Now);
 			return;
 		}
 
+		// A stationary NPC fights from where it stands: it turns to face its
+		// target and attacks what is in range, but never chases or leashes.
+		const bool bMobile = Template.BehaviorType != EValhallaNPCBehavior::Stationary;
+		const bool bRanged = Template.AttackType == EValhallaNPCAttackType::Ranged;
 		const FVector MyLocation = GetActorLocation();
 
 		// ── Leash (NPCSystem.ts:164) ─────────────────────────────────────
-		// Checked against *its own* distance from home, not the target's: an NPC
-		// leashes because it has been led too far, not because you are far away.
-		FVector FromHome = MyLocation - HomeLocation;
-		FromHome.Z = 0.0;
-		if (FromHome.SizeSquared2D() > static_cast<double>(LeashRange) * LeashRange)
+		// Checked against *its own* distance from where the fight started, not
+		// the target's: an NPC leashes because it has been led too far, not
+		// because you are far away. 2.0 walks it back instead of teleporting.
+		if (bMobile && FValhallaNPCCombatRules::IsBeyondLeash(FVector::Dist2D(MyLocation, FightStart), LeashRange))
 		{
-			ResetToHome();
+			StartReturn(TEXT("leashed"), nullptr);
 			TickBuffs(Now);
 			return;
 		}
@@ -1255,10 +1369,21 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 			return 0.0;
 		}();
 
-		const double AttackRange = (Template.AttackRange > 0.f ? Template.AttackRange : 40.f) + CapsuleGap;
+		const double AttackRange = (Template.AttackRange > 0.f ? Template.AttackRange : (bRanged ? 600.f : 40.f)) + CapsuleGap;
+
+		// A shot needs a clear line to the target (the same sight blockers that
+		// stop social aggro); a swing at arm's length does not. Traced only
+		// when a shot is possible at all.
+		const bool bInSight = !bRanged || (Distance <= AttackRange && HasLineOfSightTo(Target));
 
 		// ── Chase (NPCSystem.ts:177) ─────────────────────────────────────
-		if (Distance > StopChaseDistance + CapsuleGap)
+		// Melee closes to StopChaseDistance; ranged stops once the target is in
+		// range and in sight and holds there, shooting at any distance.
+		const bool bChase = bMobile && FValhallaNPCCombatRules::ShouldChase(Template.AttackType, Distance,
+			StopChaseDistance + CapsuleGap, AttackRange, bInSight, bHoldingPosition);
+		bHoldingPosition = bRanged && !bChase;
+
+		if (bChase)
 		{
 			// 1.0 wrote the position directly. Going through AddMovementInput
 			// means the NPC collides with the world and with the player instead
@@ -1281,7 +1406,7 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 				{
 					UE_LOG(LogValhallaCombat, Log, TEXT("%s is stuck chasing %s (%.0f cm away); giving up."),
 						*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance);
-					ResetToHome();
+					StartReturn(TEXT("gave up (stuck)"), Target);
 					TickBuffs(Now);
 					return;
 				}
@@ -1293,13 +1418,20 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 		}
 		else
 		{
+			// Standing its ground: orient-to-movement only turns a moving body,
+			// so turn to face the target here, as a player has to.
 			FValhallaNPCPath::ClearStuck(MovePath);
+			TurnToward(Target->GetActorLocation(), FixedDeltaSeconds);
 		}
 
 		// ── Attack (NPCSystem.ts:200) ────────────────────────────────────
+		// The same rule a player's auto-attack has: no hitting what is behind
+		// you. A step that is only short on facing does not spend the attack,
+		// so it lands the moment the turn above brings the target into the cone.
 		const double AttackIntervalSeconds = (Template.AttackSpeedMs > 0.f ? Template.AttackSpeedMs : 1500.f) / 1000.0;
+		const bool bFacing = UValhallaCombatLibrary::IsFacing(this, Target);
 
-		if (Distance <= AttackRange && Now >= LastAttackTime + AttackIntervalSeconds)
+		if (FValhallaNPCCombatRules::CanAttack(Distance, AttackRange, bInSight, bFacing, Now, LastAttackTime + AttackIntervalSeconds))
 		{
 			LastAttackTime = Now;
 
@@ -1326,8 +1458,9 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 			const double BaseDamage = Valhalla::Stats::RollNPCMeleeDamage(
 				MinDamage, MaxDamage, FMath::FRand(), bArmed, WeaponMin, WeaponMax, FMath::FRand());
 
-			UE_LOG(LogValhallaCombat, Log, TEXT("%s attacks %s (dist %.0f <= %.0f, every %.0f ms) weapon=%s roll=%.1f"),
-				*DisplayName, *UValhallaCombatLibrary::GetDisplayName(Target), Distance, AttackRange, Template.AttackSpeedMs,
+			UE_LOG(LogValhallaCombat, Log, TEXT("%s %s %s (dist %.0f <= %.0f, every %.0f ms) weapon=%s roll=%.1f"),
+				*DisplayName, bRanged ? TEXT("shoots") : TEXT("attacks"),
+				*UValhallaCombatLibrary::GetDisplayName(Target), Distance, AttackRange, Template.AttackSpeedMs,
 				bArmed ? *Template.WeaponId.ToString() : TEXT("none"), BaseDamage);
 
 			// The same pipeline a player's swing goes through, so an NPC's hit
@@ -1341,30 +1474,40 @@ void AValhallaNPC::ServerFixedTick(float FixedDeltaSeconds, double Now)
 			}
 		}
 	}
-	else if (!Target)
+	else
 	{
-		// ── Walk home (NPCSystem.ts:239) ─────────────────────────────────
-		FVector ToHome = HomeLocation - GetActorLocation();
-		ToHome.Z = 0.0;
-		const double DistanceHome = ToHome.Size2D();
+		// ── Walk back (NPCSystem.ts:239) ─────────────────────────────────
+		// To where the fight started (home, until patrols move), or home when
+		// there was no fight. A leashed NPC goes at full speed and heals when it
+		// gets there; one whose fight simply ended strolls back at 2/3.
+		bHoldingPosition = false;
+		const FVector Spot = bHasFightStart ? FightStart : HomeLocation;
+		FVector ToSpot = Spot - GetActorLocation();
+		ToSpot.Z = 0.0;
+		const double DistanceBack = ToSpot.Size2D();
 
-		if (DistanceHome > 2.0)
+		if (DistanceBack > FValhallaNPCCombatRules::ReturnArrivedCm)
 		{
-			// B-16: home by a path too, round whatever it chased you past.
-			const FVector Direction = PlanAndSteer(HomeLocation, Now);
-			AddMovementInput(Direction.IsNearlyZero() ? ToHome.GetSafeNormal() : Direction, ReturnSpeedFraction);
+			// B-16: back by a path too, round whatever it chased you past. The
+			// last half metre is taken slower so a full-speed return settles on
+			// the spot instead of stepping over it.
+			const FVector Direction = PlanAndSteer(Spot, Now);
+			const float Speed = (bReturning ? 1.f : ReturnSpeedFraction) * FMath::Clamp(static_cast<float>(DistanceBack / 50.0), 0.2f, 1.f);
+			AddMovementInput(Direction.IsNearlyZero() ? ToSpot.GetSafeNormal() : Direction, Speed);
 
+			// The one teleport left: a return that makes no progress for 3 s
+			// (walled in, off the nav mesh) would otherwise stand there forever.
 			if (FValhallaNPCPath::UpdateStuck(MovePath, GetActorLocation(), Now))
 			{
-				UE_LOG(LogValhallaCombat, Log, TEXT("%s is stuck walking home (%.0f cm away); warping home."),
-					*DisplayName, DistanceHome);
-				SetActorLocation(HomeLocation, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
-				if (UCharacterMovementComponent* Movement = GetCharacterMovement())
-				{
-					Movement->StopMovementImmediately();
-				}
-				MovePath.Reset();
+				UE_LOG(LogValhallaCombat, Log, TEXT("%s (%s) is stuck walking back (%.0f cm away); warping there."),
+					*DisplayName, *GetName(), DistanceBack);
+				SetActorLocation(Spot, /*bSweep=*/false, nullptr, ETeleportType::TeleportPhysics);
+				FinishReturn();
 			}
+		}
+		else if (bHasFightStart || bReturning)
+		{
+			FinishReturn();
 		}
 		else if (MovePath.Mode != FValhallaNPCPath::EMode::None)
 		{

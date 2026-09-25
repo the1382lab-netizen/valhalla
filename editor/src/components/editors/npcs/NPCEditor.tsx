@@ -26,6 +26,8 @@ interface NPCTemplate {
   minDamage?: number;
   maxDamage?: number;
   weaponId?: string;
+  /** Melee (default) or ranged auto-attack. */
+  attackType?: 'melee' | 'ranged';
   attackSpeed?: number;
   attackRange?: number;
   moveSpeed?: number;
@@ -555,6 +557,23 @@ export const NPCEditor: React.FC = () => {
                     0 = default (1500ms)
                   </div>
                 </div>
+
+                <div className="form-group">
+                  <label className="form-label" title="Melee walks up and swings. Ranged stops once the target is in range and in sight, and shoots from there. Give a ranged NPC a ranged weapon (a bow) so it plays the shot.">
+                    Auto Attack
+                  </label>
+                  <select
+                    className="form-select"
+                    value={selectedNpc.attackType ?? 'melee'}
+                    onChange={(e) => handleUpdateNpc({ attackType: e.target.value === 'ranged' ? 'ranged' : undefined })}
+                  >
+                    <option value="melee">Melee</option>
+                    <option value="ranged">Ranged</option>
+                  </select>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {selectedNpc.attackType === 'ranged' ? 'Shoots from range; walls block the shot' : 'Walks up and swings'}
+                  </div>
+                </div>
               </div>
 
               <div className="form-row">
@@ -568,7 +587,7 @@ export const NPCEditor: React.FC = () => {
                     onChange={(e) => handleUpdateNpc({ attackRange: parseInt(e.target.value, 10) || 0 })}
                   />
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                    0 = default (40px)
+                    {selectedNpc.attackType === 'ranged' ? '0 = default (600px)' : '0 = default (40px)'}
                   </div>
                 </div>
 

@@ -523,8 +523,15 @@ namespace
 		OptFloat(Obj, TEXT("maxDamage"), Out.MaxDamage);
 		Out.AttackSpeedMs = 1500.f;
 		OptFloat(Obj, TEXT("attackSpeed"), Out.AttackSpeedMs);
-		Out.AttackRange = 40.f;
+		// A blank or zero range means the default for the attack type: 40 to
+		// swing, 600 to shoot (the player's Ranged Attack reach).
+		OptEnum(Obj, TEXT("attackType"), Out.AttackType, &Valhalla::ParseNPCAttackType, Context);
+		Out.AttackRange = 0.f;
 		OptFloat(Obj, TEXT("attackRange"), Out.AttackRange);
+		if (Out.AttackRange <= 0.f)
+		{
+			Out.AttackRange = Out.AttackType == EValhallaNPCAttackType::Ranged ? 600.f : 40.f;
+		}
 		Out.MoveSpeed = 60.f;
 		OptFloat(Obj, TEXT("moveSpeed"), Out.MoveSpeed);
 

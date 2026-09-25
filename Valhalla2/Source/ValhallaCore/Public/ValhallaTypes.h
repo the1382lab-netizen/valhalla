@@ -134,6 +134,16 @@ enum class EValhallaNPCBehavior : uint8
 	Fleeing		UMETA(DisplayName = "Fleeing"),
 };
 
+/** npcs.ts — `NPCTemplate.attackType`: how the NPC's auto-attack reaches its target. */
+UENUM(BlueprintType)
+enum class EValhallaNPCAttackType : uint8
+{
+	/** Walks up and swings (attackRange default 40). */
+	Melee		UMETA(DisplayName = "Melee"),
+	/** Stops at range with a clear line of sight and shoots (attackRange default 600). */
+	Ranged		UMETA(DisplayName = "Ranged"),
+};
+
 /** Outcome of one pass through the damage pipeline (CombatSystem.ts:343). */
 UENUM(BlueprintType)
 enum class EValhallaDamageOutcome : uint8
@@ -755,7 +765,14 @@ struct VALHALLACORE_API FValhallaNPCTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float AttackSpeedMs = 1500.f;
 
-	/** JSON `attackRange` — 1.0 pixels; 1.0 default is 40. */
+	/**
+	 * JSON `attackType` — melee (default) or ranged. A ranged NPC stops chasing
+	 * once its target is in range and in sight, and shoots from there.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
+	EValhallaNPCAttackType AttackType = EValhallaNPCAttackType::Melee;
+
+	/** JSON `attackRange` — 1.0 pixels; default 40 for melee, 600 for ranged (the player's Ranged Attack). */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|NPCs")
 	float AttackRange = 40.f;
 
@@ -1134,6 +1151,9 @@ namespace Valhalla
 
 	/** Parses `passive` / `aggressive` / `patrol` / `stationary` / `fleeing`. */
 	VALHALLACORE_API bool ParseNPCBehavior(const FString& In, EValhallaNPCBehavior& Out);
+
+	/** Parses `melee` / `ranged`. */
+	VALHALLACORE_API bool ParseNPCAttackType(const FString& In, EValhallaNPCAttackType& Out);
 
 	/** Parses `miss` / `dodge` / `hit` — used by the fixture-driven tests. */
 	VALHALLACORE_API bool ParseDamageOutcome(const FString& In, EValhallaDamageOutcome& Out);

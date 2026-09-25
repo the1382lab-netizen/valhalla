@@ -46,6 +46,7 @@ namespace ValhallaUISettingsTests
 		S.bLocked = false;
 		S.UiScale = 1.25f;
 		S.PanelOpacity = 0.6f;
+		S.PanelBorder = 6.f;
 
 		FValhallaPanelLayout Chat;
 		Chat.AnchorMin = FVector2D(0.0, 1.0);
@@ -107,6 +108,7 @@ bool FValhallaUISettingsRoundTripTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("no warnings on its own output"), Warnings.Num(), 0);
 	TestTrue(TEXT("every field survives the round trip"), Loaded.EquivalentTo(Original));
 	TestEqual(TEXT("UpdatedAt survives"), Loaded.UpdatedAt, Original.UpdatedAt);
+	TestEqual(TEXT("PanelBorder survives"), Loaded.PanelBorder, 6.f);
 	TestEqual(TEXT("Version"), Loaded.Version, FValhallaUserUISettings::CurrentVersion);
 	TestEqual(TEXT("three panel entries"), Loaded.Panels.Num(), 3);
 	TestNotNull(TEXT("Chat is set"), Loaded.FindSetPanel(TEXT("Chat")));
@@ -179,6 +181,7 @@ bool FValhallaUISettingsDefaultsTest::RunTest(const FString& /*Parameters*/)
 	TestTrue(TEXT("locked by default"), Defaults.bLocked);
 	TestEqual(TEXT("scale 1"), Defaults.UiScale, 1.f);
 	TestEqual(TEXT("opacity 1"), Defaults.PanelOpacity, 1.f);
+	TestEqual(TEXT("border 0 (the HUD's default)"), Defaults.PanelBorder, 0.f);
 	TestTrue(TEXT("nameplates and floaters on"), Defaults.bShowNpcNameplates && Defaults.bShowPlayerNameplates && Defaults.bFloatingCombatText);
 	TestTrue(TEXT("no overrides"), Defaults.Panels.Num() == 0 && Defaults.Colours.Num() == 0 && Defaults.LogFilters.Num() == 0);
 	TestTrue(TEXT("never changed"), Defaults.UpdatedAt.IsEmpty() && Defaults.GetUpdatedAtTime() == FDateTime::MinValue());
@@ -204,6 +207,7 @@ bool FValhallaUISettingsDefaultsTest::RunTest(const FString& /*Parameters*/)
 		"bLocked": "no",
 		"UiScale": 9,
 		"PanelOpacity": 0.05,
+		"PanelBorder": 40,
 		"ChatFontSize": "big",
 		"ChatVisibleLines": 5000,
 		"NameplateFontSize": -3,
@@ -223,6 +227,7 @@ bool FValhallaUISettingsDefaultsTest::RunTest(const FString& /*Parameters*/)
 	TestTrue(TEXT("bLocked kept its default"), Out.bLocked);
 	TestEqual(TEXT("UiScale clamped to 2"), Out.UiScale, FValhallaUserUISettings::MaxUiScale);
 	TestEqual(TEXT("PanelOpacity clamped to 0.2"), Out.PanelOpacity, FValhallaUserUISettings::MinPanelOpacity);
+	TestEqual(TEXT("PanelBorder clamped to 12"), Out.PanelBorder, FValhallaUserUISettings::MaxPanelBorder);
 	TestEqual(TEXT("ChatFontSize kept its default"), Out.ChatFontSize, 0);
 	TestEqual(TEXT("ChatVisibleLines clamped"), Out.ChatVisibleLines, 100);
 	TestEqual(TEXT("NameplateFontSize clamped to 0"), Out.NameplateFontSize, 0);
@@ -252,12 +257,21 @@ bool FValhallaUISettingsDefaultsTest::RunTest(const FString& /*Parameters*/)
 	// NaN never survives Sanitize.
 	FValhallaUserUISettings Nan;
 	Nan.UiScale = std::numeric_limits<float>::quiet_NaN();
+	Nan.PanelBorder = std::numeric_limits<float>::quiet_NaN();
 	FValhallaPanelLayout NanPanel;
 	NanPanel.Scale = std::numeric_limits<float>::quiet_NaN();
 	NanPanel.Position = FVector2D(std::numeric_limits<double>::infinity(), 3.0);
 	Nan.Panels.Add(TEXT("Chat"), NanPanel);
 	Nan.Sanitize();
 	TestEqual(TEXT("NaN UiScale -> 1"), Nan.UiScale, 1.f);
+	TestEqual(TEXT("NaN PanelBorder -> 0 (the default)"), Nan.PanelBorder, 0.f);
+	FValhallaUserUISettings Thin;
+	Thin.PanelBorder = 0.3f;
+	Thin.Sanitize();
+	TestEqual(TEXT("a sliver of a border clamps up to 1 px"), Thin.PanelBorder, FValhallaUserUISettings::MinPanelBorder);
+	Thin.PanelBorder = -5.f;
+	Thin.Sanitize();
+	TestEqual(TEXT("a negative border is the default"), Thin.PanelBorder, 0.f);
 	TestEqual(TEXT("NaN panel scale -> 1"), Nan.Panels[TEXT("Chat")].Scale, 1.f);
 	TestTrue(TEXT("infinite position -> 0"), Nan.Panels[TEXT("Chat")].Position.Equals(FVector2D(0.0, 3.0)));
 
@@ -267,7 +281,8 @@ bool FValhallaUISettingsDefaultsTest::RunTest(const FString& /*Parameters*/)
 	TestEqual(TEXT("Layout clears the panels"), Reset.Panels.Num(), 0);
 	TestEqual(TEXT("and leaves the colours"), Reset.Colours.Num(), 2);
 	Reset.ResetSection(EValhallaUISettingsSection::Style);
-	TestTrue(TEXT("Style clears scale, opacity, colours"), Reset.UiScale == 1.f && Reset.PanelOpacity == 1.f && Reset.Colours.Num() == 0);
+	TestTrue(TEXT("Style clears scale, opacity, border, colours"),
+		Reset.UiScale == 1.f && Reset.PanelOpacity == 1.f && Reset.PanelBorder == 0.f && Reset.Colours.Num() == 0);
 	TestFalse(TEXT("and leaves the lock"), Reset.bLocked);
 	Reset.ResetSection(EValhallaUISettingsSection::Chat);
 	TestTrue(TEXT("Chat clears the chat fields and filters"), Reset.ChatFontSize == 0 && !Reset.bChatTimestamps && Reset.LogFilters.Num() == 0);

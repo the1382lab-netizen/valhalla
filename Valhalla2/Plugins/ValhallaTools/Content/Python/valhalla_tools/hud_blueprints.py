@@ -28,7 +28,18 @@ The B-15 Wave 4 frame art the code build draws (``T_UI_Panel``,
 ``/Game/Valhalla/UI/Frames``, ``ValhallaHudArt::BoxBrush``) is baked into the
 designer brushes with the same margins and paddings when those textures are
 imported; without them the trees use the flat ui-config colours. C++ applies
-no frame art to a designer tree, so the art has to be in the Blueprint.
+no frame art to a designer tree, so the art has to be in the Blueprint -- with
+one exception: every Border whose brush is panel frame art (``T_UI_Panel`` or
+``T_UI_PanelFrame_NN``) is re-bordered at runtime for the panel border
+thickness (``UValhallaGameHUDWidget::PanelBorderThickness``, 4 px, or the
+player's Options -> Layout "Border thickness"). Slate draws a box brush's
+margin at one texel per Slate unit (margin x the texture's pixel size; the
+brush's Image Size does not enter into it), so each thickness N has its own
+art, ``T_UI_PanelFrame_NN`` (``Tools/ui/make_panel_frames.py``: T_UI_Panel
+scaled so its 24 px trim is N texels), drawn with a margin of N / size.
+``PANEL_BORDER_PX`` bakes the default here so the designer preview matches;
+``fix_panel_borders`` repairs trees saved with other margins (a box margin
+past 0.5 squeezes the trim into thick, doubled sides).
 
 B-07 step 4: WBP_GameHUD's ``SlotWidgetClass`` / ``BarWidgetClass`` are
 WBP_HUDSlot / WBP_HUDBar (``wire_cell_classes(True, True)``; ``create_blueprints``
@@ -125,6 +136,7 @@ OPTIONS_MENU_PARTS = (
     "Tabs", "CloseButton",
     "LayoutTabButton", "ColoursTabButton", "ChatLogTabButton", "NameplatesTabButton", "ControlsTabButton",
     "LockCheck", "UiScaleSlider", "UiScaleText", "OpacitySlider", "OpacityText",
+    "BorderSlider", "BorderText",
     "ShowVitalsCheck", "ShowActionBarCheck", "ShowCastBarCheck", "ShowTargetFrameCheck",
     "ShowPartyCheck", "ShowCombatLogCheck", "ShowChatCheck", "ResetLayoutButton",
     "ColourList", "ColourEditor", "EditTitle", "PresetGrid",
@@ -490,6 +502,14 @@ def _panel(border, colour, padding):
 
 FRAMES_FOLDER = "/Game/Valhalla/UI/Frames"
 
+#: The panel border's drawn width, Slate px (UValhallaGameHUDWidget::PanelBorderThickness).
+PANEL_BORDER_PX = 4
+
+
+def _panel_frame_art(px=PANEL_BORDER_PX):
+    """UValhallaGameHUDWidget::PanelFrameTextureName: T_UI_PanelFrame_NN, or None when not imported."""
+    return _ui_texture("T_UI_PanelFrame_{:02d}".format(max(1, min(12, int(round(px))))))
+
 
 def _ui_texture(name):
     """A HUD frame texture (T_UI_Panel, T_UI_Slot, ...) when it is imported, else None (flat colours)."""
@@ -499,7 +519,28 @@ def _ui_texture(name):
     return unreal.load_asset(path)
 
 
+def _png_size(path):
+    """(width, height) from a PNG's IHDR, or None."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+        if head[:8] == b"\x89PNG\r\n\x1a\n" and head[12:16] == b"IHDR":
+            return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+    except OSError:
+        pass
+    return None
+
+
 def _texture_size(texture):
+    """The texture's own pixels: the imported PNG's size when it is on disk (the built size is a
+    32 x 32 placeholder while the editor is still compiling textures after startup), else the built size."""
+    try:
+        source = texture.get_editor_property("asset_import_data").get_first_filename()
+        size = _png_size(source) if source else None
+        if size and size[0] > 0 and size[1] > 0:
+            return size
+    except Exception:  # noqa: BLE001 - no import data (a generated texture)
+        pass
     try:
         return max(1, texture.blueprint_get_size_x()), max(1, texture.blueprint_get_size_y())
     except Exception:  # noqa: BLE001
@@ -542,9 +583,10 @@ def _image_brush(texture):
 
 
 def _framed_panel(border, colour, padding, art):
-    """MakePanel: T_UI_Panel (24 px of 256 is trim, drawn 10 px) when there is art and the panel shows, else flat."""
+    """MakePanel: the panel frame art for PANEL_BORDER_PX (T_UI_PanelFrame_NN, else `art`) when there is art
+    and the panel shows, else flat."""
     if art is not None and colour.a > 0.0:
-        border.set_brush(_box_brush(art, (24, 24), 10))
+        border.set_brush(_panel_frame_brush(_box_brush(_panel_frame_art() or art, (1, 1), 1)))
         border.set_brush_color(unreal.LinearColor(1.0, 1.0, 1.0, max(float(colour.a), 0.94)))
         pad = float(padding) + 10.0
         border.set_padding(unreal.Margin(pad, pad, pad, pad))
@@ -962,7 +1004,7 @@ def _layout_game_hud(asset_path=GAME_HUD_BP, replace=False):
     log_fill, _ = b.add(W.Border.static_class(), "CombatLogFill", log)
     if panel_art is not None:
         # The code log is a cell with the panel art as its frame (9 px padding) over a clear well.
-        log.set_brush(_box_brush(panel_art, (24, 24), 10))
+        log.set_brush(_panel_frame_brush(_box_brush(_panel_frame_art() or panel_art, (1, 1), 1)))
         _panel(log, W.LinearColor(1.0, 1.0, 1.0, 1.0), 9)
         _panel(log_fill, W.LinearColor(0.0, 0.0, 0.0, 0.0), 0)
     else:
@@ -1260,7 +1302,8 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     and a dark well holding the ``Tabs`` widget switcher with five pages:
 
     0 Layout      LockCheck, UiScaleSlider / UiScaleText, OpacitySlider /
-                  OpacityText, Show<Panel>Check x 7, ResetLayoutButton
+                  OpacityText, BorderSlider / BorderText, Show<Panel>Check x 7,
+                  ResetLayoutButton
     1 Colours     ColourEditor (EditTitle, PresetGrid, Hue / Saturation /
                   ValueSlider, EditSwatch, ColourOkButton, ColourCancelButton),
                   ColourList (in a scroll box), ResetColoursButton
@@ -1373,6 +1416,7 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     check_row(col, "LockCheck", "Lock the HUD (untick, then close this menu, to drag panels and their corner grips)")
     slider_row(col, "UiScaleSlider", "UI scale", "UiScaleText")
     slider_row(col, "OpacitySlider", "Panel opacity", "OpacityText")
+    slider_row(col, "BorderSlider", "Border thickness", "BorderText")
     header(col, "ShowHeader", "Show")
     for key, label in (("Vitals", "Vitals (HP, mana)"), ("ActionBar", "Action bar"), ("CastBar", "Cast bar"),
                        ("TargetFrame", "Target frame"), ("Party", "Party"), ("CombatLog", "Combat log"), ("Chat", "Chat")):
@@ -1448,3 +1492,92 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     if wire and asset_path == OPTIONS_MENU_BP and result.get("compiled"):
         result["wired"] = wire_options_menu()
     return result
+
+
+# ── Panel border thickness (in place; nothing else in the trees changes) ──
+
+def _panel_frame_brush(brush, thickness=PANEL_BORDER_PX):
+    """UValhallaGameHUDWidget::SetPanelFrameThickness on a designer brush: the frame art for `thickness`
+    (when imported) and a margin of exactly `thickness` of its texels."""
+    art = _panel_frame_art(thickness)
+    if art is not None:
+        brush.set_editor_property("resource_object", art)
+    texture = brush.get_editor_property("resource_object")
+    sx, sy = _texture_size(texture)
+    px = min(float(thickness), min(sx, sy) * 0.45)
+    mx, my = px / sx, px / sy
+    brush.set_editor_property("draw_as", unreal.SlateBrushDrawType.BOX)
+    brush.set_editor_property("margin", unreal.Margin(mx, my, mx, my))
+    _set_image_size(brush, sx, sy)
+    return brush
+
+
+def _is_panel_frame(widget):
+    if not isinstance(widget, unreal.Border):
+        return False
+    resource = widget.get_editor_property("background").get_editor_property("resource_object")
+    name = resource.get_name() if resource is not None else ""
+    return name == "T_UI_Panel" or name.startswith("T_UI_PanelFrame_")
+
+
+def _add_border_slider(blueprint):
+    """WBP_OptionsMenu made before the border setting: BorderSlider / BorderText under the opacity row."""
+    widgets = {str(_field(e, "widget_name", "") or _field(e, "widget").get_name()): _field(e, "widget")
+               for e in _widget_infos(blueprint)}
+    if "BorderSlider" in widgets:
+        return []
+    opacity_row = widgets.get("OpacitySliderRow")
+    column = widgets.get("LayoutColumn")
+    if opacity_row is None or column is None:
+        raise RuntimeError("WBP_OptionsMenu has no OpacitySliderRow in LayoutColumn; re-run layout_options_menu(replace=True)")
+    W = unreal
+    b = _TreeBuilder(blueprint)
+    index = column.get_child_index(opacity_row) + 1
+    info = _umg_call("AddWidget", blueprint, W.HorizontalBox.static_class(), "BorderSliderRow", column, index)
+    row = _field(info, "widget")
+    if row is None or row.get_name() != "BorderSliderRow":
+        raise RuntimeError("could not add BorderSliderRow")
+    _pad(_field(info, "slot"), 0, 3)
+    box, s = b.add(W.SizeBox.static_class(), "BorderSliderLabelSize", row)
+    box.set_width_override(120.0)
+    _valign(s, "CENTER")
+    label, _ = b.add(W.TextBlock.static_class(), "BorderSliderLabel", box)
+    _text(label, "Border thickness", 8, _colour("#ddd6c4"))
+    slider, s = b.add(W.Slider.static_class(), "BorderSlider", row, True)
+    _not_focusable(slider)
+    _fill(s)
+    _valign(s, "CENTER")
+    box, s = b.add(W.SizeBox.static_class(), "BorderTextSize", row)
+    box.set_width_override(80.0)
+    _valign(s, "CENTER")
+    _pad(s, 8, 0, 0, 0)
+    value, _ = b.add(W.TextBlock.static_class(), "BorderText", box, True)
+    _text(value, "", 8, _colour("#ddd6c4"))
+    return ["BorderSliderRow"] + b.added
+
+
+def fix_panel_borders(asset_paths=(GAME_HUD_BP, OPTIONS_MENU_BP), thickness=PANEL_BORDER_PX):
+    """Give every T_UI_Panel Border in these trees the runtime's brush (margin 24/256, drawn `thickness` px),
+    add the options menu's border slider when it is missing, compile and save. Nothing else changes."""
+    results = []
+    for asset_path in asset_paths:
+        blueprint = unreal.load_asset(asset_path)
+        if blueprint is None:
+            results.append({"asset": asset_path, "missing": True})
+            continue
+        fixed = []
+        for entry in _widget_infos(blueprint):
+            widget = _field(entry, "widget")
+            if not _is_panel_frame(widget):
+                continue
+            brush = widget.get_editor_property("background")
+            before = "{} margin {:.3f}".format(brush.get_editor_property("resource_object").get_name(), float(brush.get_editor_property("margin").left))
+            brush = _panel_frame_brush(brush, thickness)
+            widget.set_brush(brush)
+            after = "{} margin {:.4f}".format(brush.get_editor_property("resource_object").get_name(), float(brush.get_editor_property("margin").left))
+            fixed.append("{}: {} -> {}".format(widget.get_name(), before, after))
+        added = _add_border_slider(blueprint) if asset_path == OPTIONS_MENU_BP else []
+        builder = _TreeBuilder(blueprint)
+        builder.added = added
+        results.append(_finish(blueprint, asset_path, builder, {"framesFixed": fixed}))
+    return results

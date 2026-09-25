@@ -104,6 +104,7 @@ const TArray<FName>& UValhallaOptionsMenuWidget::GetOptionalWidgetNames()
 		TEXT("Tabs"), TEXT("CloseButton"),
 		TEXT("LayoutTabButton"), TEXT("ColoursTabButton"), TEXT("ChatLogTabButton"), TEXT("NameplatesTabButton"), TEXT("ControlsTabButton"),
 		TEXT("LockCheck"), TEXT("UiScaleSlider"), TEXT("UiScaleText"), TEXT("OpacitySlider"), TEXT("OpacityText"),
+		TEXT("BorderSlider"), TEXT("BorderText"),
 		TEXT("ShowVitalsCheck"), TEXT("ShowActionBarCheck"), TEXT("ShowCastBarCheck"), TEXT("ShowTargetFrameCheck"),
 		TEXT("ShowPartyCheck"), TEXT("ShowCombatLogCheck"), TEXT("ShowChatCheck"), TEXT("ResetLayoutButton"),
 		TEXT("ColourList"), TEXT("ColourEditor"), TEXT("EditTitle"), TEXT("PresetGrid"),
@@ -260,6 +261,7 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	};
 	Range(UiScaleSlider, FValhallaUserUISettings::MinUiScale, FValhallaUserUISettings::MaxUiScale, 0.05f);
 	Range(OpacitySlider, FValhallaUserUISettings::MinPanelOpacity, FValhallaUserUISettings::MaxPanelOpacity, 0.05f);
+	Range(BorderSlider, FValhallaUserUISettings::MinPanelBorder, FValhallaUserUISettings::MaxPanelBorder, 1.f);
 	Range(ChatFontSizeSlider, ChatFontMin, ChatFontMax, 1.f);
 	Range(ChatLinesSlider, ChatLinesMin, ChatLinesMax, 1.f);
 	Range(NameplateFontSlider, NameplateFontMin, NameplateFontMax, 1.f);
@@ -270,6 +272,7 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	if (LockCheck)            { LockCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnLockChanged); }
 	if (UiScaleSlider)        { UiScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnUiScaleChanged); }
 	if (OpacitySlider)        { OpacitySlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnOpacityChanged); }
+	if (BorderSlider)         { BorderSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnBorderChanged); }
 	if (ShowVitalsCheck)      { ShowVitalsCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnShowVitalsChanged); }
 	if (ShowActionBarCheck)   { ShowActionBarCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnShowActionBarChanged); }
 	if (ShowCastBarCheck)     { ShowCastBarCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnShowCastBarChanged); }
@@ -491,6 +494,14 @@ void UValhallaOptionsMenuWidget::SyncFromSettings(const FValhallaUserUISettings&
 	if (UiScaleText)   { UiScaleText->SetText(FText::FromString(FString::Printf(TEXT("%.2fx"), Settings.UiScale))); }
 	if (OpacitySlider) { OpacitySlider->SetValue(Settings.PanelOpacity); }
 	if (OpacityText)   { OpacityText->SetText(FText::FromString(FString::Printf(TEXT("%.0f%%"), Settings.PanelOpacity * 100.f))); }
+	{
+		// 0 in the settings = the HUD's default thickness, which is what the slider shows.
+		const UValhallaGameHUDWidget* Owner = Hud.Get();
+		const float Border = UValhallaGameHUDWidget::ResolvePanelBorder(Settings.PanelBorder,
+			Owner ? Owner->GetPanelBorderThickness() : GetDefault<UValhallaGameHUDWidget>()->GetPanelBorderThickness());
+		if (BorderSlider) { BorderSlider->SetValue(Border); }
+		if (BorderText)   { BorderText->SetText(FText::FromString(FString::Printf(TEXT("%.0f px"), Border))); }
+	}
 
 	UCheckBox* const ShowChecks[] = { ShowVitalsCheck, ShowActionBarCheck, ShowCastBarCheck, ShowTargetFrameCheck, ShowPartyCheck, ShowCombatLogCheck, ShowChatCheck };
 	const TArray<FName>& ShowKeys = GetShowPanelKeys();
@@ -608,6 +619,14 @@ void UValhallaOptionsMenuWidget::OnOpacityChanged(float Value)
 	Edit([Value](FValhallaUserUISettings& S) { S.PanelOpacity = FMath::RoundToFloat(Value * 20.f) / 20.f; });
 }
 
+void UValhallaOptionsMenuWidget::OnBorderChanged(float Value)
+{
+	Edit([Value](FValhallaUserUISettings& S)
+	{
+		S.PanelBorder = FMath::Clamp(FMath::RoundToFloat(Value), FValhallaUserUISettings::MinPanelBorder, FValhallaUserUISettings::MaxPanelBorder);
+	});
+}
+
 void UValhallaOptionsMenuWidget::SetPanelShown(FName Key, bool bShown)
 {
 	const UValhallaGameHUDWidget* Owner = Hud.Get();
@@ -644,6 +663,7 @@ void UValhallaOptionsMenuWidget::OnResetLayout()
 		S.ResetSection(EValhallaUISettingsSection::Layout);
 		S.UiScale = 1.f;
 		S.PanelOpacity = 1.f;
+		S.PanelBorder = 0.f; // the HUD's default
 	});
 	UE_LOG(LogValhallaHUD, Log, TEXT("options: layout reset"));
 }

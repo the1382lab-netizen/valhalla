@@ -22,6 +22,7 @@
 //     "bLocked": true,                          // panels cannot be dragged
 //     "UiScale": 1.0,                           // 0.5 .. 2
 //     "PanelOpacity": 1.0,                      // 0.2 .. 1, panel backgrounds only
+//     "PanelBorder": 0,                         // framed panels' border, Slate px 1 .. 12; 0 = the HUD's PanelBorderThickness
 //     "Panels": {                               // key = a movable panel (UValhallaGameHUDWidget::GetMovablePanels)
 //       "Chat": {
 //         "AnchorMin": [0, 1], "AnchorMax": [0, 1], "Alignment": [0, 1],
@@ -61,7 +62,7 @@ enum class EValhallaUISettingsSection : uint8
 	All,
 	/** Panel positions, sizes, scales and visibility (Panels). */
 	Layout,
-	/** UiScale, PanelOpacity and Colours. */
+	/** UiScale, PanelOpacity, PanelBorder and Colours. */
 	Style,
 	/** ChatFontSize, ChatVisibleLines, bChatTimestamps, LogFilters. */
 	Chat,
@@ -126,6 +127,8 @@ struct VALHALLACORE_API FValhallaUserUISettings
 	static constexpr float MaxUiScale = 2.f;
 	static constexpr float MinPanelOpacity = 0.2f;
 	static constexpr float MaxPanelOpacity = 1.f;
+	static constexpr float MinPanelBorder = 1.f;
+	static constexpr float MaxPanelBorder = 12.f;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|UI Settings")
 	int32 Version = CurrentVersion;
@@ -145,6 +148,10 @@ struct VALHALLACORE_API FValhallaUserUISettings
 	/** Panel backgrounds' opacity, 0.2 .. 1 (text and icons stay opaque). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Valhalla|UI Settings", meta = (ClampMin = "0.2", ClampMax = "1"))
 	float PanelOpacity = 1.f;
+
+	/** Framed panels' border thickness, Slate px 1 .. 12; 0 = the HUD's PanelBorderThickness (the designer's). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Valhalla|UI Settings", meta = (ClampMin = "0", ClampMax = "12"))
+	float PanelBorder = 0.f;
 
 	/** Movable panel key (Vitals, ActionBar, Chat, ...) -> layout. Only bSet entries take effect. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Valhalla|UI Settings")
@@ -203,7 +210,7 @@ struct VALHALLACORE_API FValhallaUserUISettings
 
 	// ── Edits ───────────────────────────────────────────────────────────
 
-	/** Clamp UiScale, PanelOpacity, panel scales and sizes, font sizes; NaN -> default. */
+	/** Clamp UiScale, PanelOpacity, PanelBorder, panel scales and sizes, font sizes; NaN -> default. */
 	void Sanitize();
 
 	/** Back to the defaults for one section (UpdatedAt is the caller's to stamp). */

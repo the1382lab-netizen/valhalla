@@ -646,6 +646,34 @@ public:
 
 	/** The colours the options menu offers, in menu order. */
 	static const TArray<FValhallaStyleColourKey>& GetStyleColourKeys();
+
+	// ── Panel frames ────────────────────────────────────────────────────
+
+	/**
+	 * The panel frame art for a border `Px` wide: T_UI_PanelFrame_01 .. _12,
+	 * T_UI_Panel scaled so its 24 px trim is Px texels
+	 * (Tools/ui/make_panel_frames.py). Slate draws a box brush's margin at one
+	 * texel per Slate unit whatever its Image Size, so the thickness has to be
+	 * in the texture itself.
+	 */
+	static FString PanelFrameTextureName(int32 Px);
+	/** The player's PanelBorder (0 = none) over the HUD's default, clamped to the settings' range, whole px. */
+	static float ResolvePanelBorder(float PlayerSetting, float HudDefault);
+	/**
+	 * Make `Brush` a frame box brush drawing `Thickness` Slate px of trim:
+	 * `FrameTexture` (the PanelFrameTextureName art; null keeps the brush's
+	 * own texture), margin = thickness / texture px, image size = the
+	 * texture's. Tint is kept. False (untouched) when there is no texture.
+	 */
+	static bool SetPanelFrameThickness(FSlateBrush& Brush, float Thickness, UTexture2D* FrameTexture = nullptr);
+	/** Whether a brush resource is panel frame art (T_UI_Panel or a T_UI_PanelFrame_NN). */
+	static bool IsPanelFrameArtName(FName Name);
+	/** The HUD Style default (this class's, or WBP_GameHUD's Class Defaults). */
+	float GetPanelBorderThickness() const { return PanelBorderThickness; }
+	/** The framed panels' border thickness in force (the player's, else PanelBorderThickness). */
+	float EffectivePanelBorder() const;
+	/** Re-thickness every framed panel in this HUD and the user widgets inside it (the options menu). Returns how many. */
+	int32 ApplyPanelBorders();
 	static const FValhallaStyleColourKey* FindStyleColourKey(FName Key);
 	/** The HUD Style property `Key` (HpHighColour, ...) as this class's defaults have it; magenta for an unknown key. */
 	FLinearColor GetDefaultColour(FName Key) const;
@@ -1004,6 +1032,14 @@ protected:
 	/** B-21: multiplies the movable panels' background brushes (white = the designer's colours). */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style")
 	FLinearColor PanelTintColour;
+	/**
+	 * Border thickness of every framed panel (a Border whose brush is
+	 * T_UI_Panel), Slate px. The player's Options -> Layout "Border
+	 * thickness" overrides it. The HUD rebuilds those brushes at runtime, so
+	 * the Margin / Image Size stored on them in the designer do not matter.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD Style", meta = (ClampMin = "1", ClampMax = "12"))
+	float PanelBorderThickness = 4.f;
 
 	/** B-21 step 4: the options menu (Escape with nothing open, the cog). WBP_OptionsMenu in WBP_GameHUD's Class Defaults. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Valhalla|HUD")
@@ -1337,6 +1373,10 @@ private:
 	bool bShowPlayerNameplates = true;
 	bool bShowFloatingText = true;
 	int32 UserNameplateFontSize = 0;
+	/** The player's PanelBorder; 0 = PanelBorderThickness. */
+	float UserPanelBorder = 0.f;
+	/** ApplyPanelBorders' last logged thickness (a slider drag applies every step). */
+	float AppliedPanelBorderLogged = -1.f;
 	/** What the chat / nameplates were last drawn with, so a change elsewhere does not redraw them. */
 	FString AppliedChatStyle;
 	/** ApplyUserLayout's last log line (a slider drag applies every frame). */

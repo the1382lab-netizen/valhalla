@@ -293,7 +293,7 @@ namespace
 	 *   B-21 (the player's UI settings, this HUD's game instance):
 	 *   settings  (print the JSON) | resetlayout | panels  (log each movable panel's geometry)
 	 *   movepanel <Key> <x> <y>  (place a panel at canvas offset x, y from its designer anchor: dev, until edit mode)
-	 *   hidepanel <Key> | showpanel <Key> | uiscale <0.5..2> | opacity <0.2..1>
+	 *   hidepanel <Key> | showpanel <Key> | uiscale <0.5..2> | opacity <0.2..1> | border <1..12, 0 = default>
 	 *   B-21 steps 3-4: lock <0|1>  (0 = edit mode) | options  (toggle the options menu)
 	 *   dragtest <Key> <dx> <dy> [resize]  (press, move, release through the edit-mode drag code)
 	 */
@@ -349,7 +349,7 @@ namespace
 					Hud.DragPanelForTest(FName(*Args[1]), FVector2D(FCString::Atof(*Args[2]), FCString::Atof(*Args[3])), bResize);
 				}
 				else if (Verb == TEXT("settings") || Verb == TEXT("lock") || Verb == TEXT("resetlayout") || Verb == TEXT("panels") || Verb == TEXT("movepanel")
-					|| Verb == TEXT("hidepanel") || Verb == TEXT("showpanel") || Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
+					|| Verb == TEXT("hidepanel") || Verb == TEXT("showpanel") || Verb == TEXT("uiscale") || Verb == TEXT("opacity") || Verb == TEXT("border"))
 				{
 					// B-21: the player's UI settings for this HUD's character.
 					UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(&Hud);
@@ -376,6 +376,12 @@ namespace
 					{
 						const bool bLock = Rest.IsEmpty() ? !UserSettings->Get().bLocked : FCString::Atoi(*Rest) != 0;
 						UserSettings->Mutate([bLock](FValhallaUserUISettings& S) { S.bLocked = bLock; });
+					}
+					else if (Verb == TEXT("border"))
+					{
+						// Framed panels' border, px; 0 = the HUD's default.
+						const float Value = FCString::Atof(*Rest);
+						UserSettings->Mutate([Value](FValhallaUserUISettings& S) { S.PanelBorder = Value; });
 					}
 					else if (Verb == TEXT("uiscale") || Verb == TEXT("opacity"))
 					{
@@ -540,6 +546,22 @@ namespace
 namespace ValhallaHudArt
 {
 	/**
+	 * A frame texture's size in its own pixels: the imported (source) size.
+	 * GetSizeX / Y are the built platform data, which in the editor is a
+	 * 32 x 32 placeholder while the texture is still compiling after startup
+	 * (a 24 px margin then comes out as 0.75 of the texture instead of 24/256).
+	 */
+	static FVector2D TextureSize(const UTexture2D* Texture)
+	{
+		const FIntPoint Imported = Texture->GetImportedSize();
+		if (Imported.X > 0 && Imported.Y > 0)
+		{
+			return FVector2D(Imported.X, Imported.Y);
+		}
+		return FVector2D(FMath::Max(1, Texture->GetSizeX()), FMath::Max(1, Texture->GetSizeY()));
+	}
+
+	/**
 	 * A nine-slice brush from a frame texture. `MarginPx` is the border in the
 	 * texture's own pixels (x, y); `BorderPx` is how wide that border draws on
 	 * screen, which sets the brush's image size.
@@ -551,7 +573,7 @@ namespace ValhallaHudArt
 		{
 			return Brush;
 		}
-		const FVector2D Size(FMath::Max(1, Texture->GetSizeX()), FMath::Max(1, Texture->GetSizeY()));
+		const FVector2D Size = TextureSize(Texture);
 		const float Scale = BorderPx / FMath::Max(1.0, MarginPx.X);
 		Brush.SetResourceObject(Texture);
 		Brush.ImageSize = Size * Scale;
@@ -1269,12 +1291,22 @@ UBorder* UValhallaGameHUDWidget::MakePanel(const FLinearColor& Colour, float Alp
 	UBorder* Panel = WidgetTree->ConstructWidget<UBorder>(UBorder::StaticClass());
 	Panel->SetBrushColor(WithAlpha(Colour, Alpha));
 	Panel->SetPadding(FMargin(PanelPadding));
-	UTexture2D* PanelArt = (bFramed && Alpha > 0.f) ? FindUiTexture(TEXT("T_UI_Panel")) : nullptr;
+	const float Border = EffectivePanelBorder();
+	UTexture2D* PanelArt = nullptr;
+	if (bFramed && Alpha > 0.f)
+	{
+		PanelArt = FindUiTexture(PanelFrameTextureName(FMath::RoundToInt(Border)));
+		PanelArt = PanelArt ? PanelArt : FindUiTexture(TEXT("T_UI_Panel"));
+	}
 	if (PanelArt)
 	{
-		// Leather in bronze trim (24 px of 256 is trim), drawn 10 px wide.
+		// Leather in bronze trim, drawn at the panel border thickness (HUD
+		// Style, or the player's Options -> Layout).
 		// Nearly opaque: the trim should not look washed out over the world.
-		Panel->SetBrush(ValhallaHudArt::BoxBrush(PanelArt, FVector2D(24.f, 24.f), 10.f));
+		FSlateBrush Brush = ValhallaHudArt::ImageBrush(PanelArt);
+		SetPanelFrameThickness(Brush, Border);
+		Brush.TintColor = FSlateColor(FLinearColor::White);
+		Panel->SetBrush(Brush);
 		Panel->SetBrushColor(FLinearColor(1.f, 1.f, 1.f, FMath::Max(Alpha, 0.94f)));
 		Panel->SetPadding(FMargin(PanelPadding + 10.f));
 	}
@@ -2227,6 +2259,114 @@ void UValhallaGameHUDWidget::ApplyPanelBackgrounds()
 			}
 		}
 	}
+}
+
+FString UValhallaGameHUDWidget::PanelFrameTextureName(int32 Px)
+{
+	const int32 Clamped = FMath::Clamp(Px, FMath::RoundToInt(FValhallaUserUISettings::MinPanelBorder), FMath::RoundToInt(FValhallaUserUISettings::MaxPanelBorder));
+	return FString::Printf(TEXT("T_UI_PanelFrame_%02d"), Clamped);
+}
+
+bool UValhallaGameHUDWidget::IsPanelFrameArtName(FName Name)
+{
+	const FString Text = Name.ToString();
+	return Text == TEXT("T_UI_Panel") || Text.StartsWith(TEXT("T_UI_PanelFrame_"));
+}
+
+float UValhallaGameHUDWidget::ResolvePanelBorder(float PlayerSetting, float HudDefault)
+{
+	const float Chosen = (FMath::IsFinite(PlayerSetting) && PlayerSetting > 0.f) ? PlayerSetting
+		: (FMath::IsFinite(HudDefault) && HudDefault > 0.f ? HudDefault : 4.f);
+	// Whole pixels: there is one frame texture per thickness.
+	return FMath::RoundToFloat(FMath::Clamp(Chosen, FValhallaUserUISettings::MinPanelBorder, FValhallaUserUISettings::MaxPanelBorder));
+}
+
+bool UValhallaGameHUDWidget::SetPanelFrameThickness(FSlateBrush& Brush, float Thickness, UTexture2D* FrameTexture)
+{
+	if (FrameTexture)
+	{
+		Brush.SetResourceObject(FrameTexture);
+	}
+	const UTexture2D* Texture = Cast<UTexture2D>(Brush.GetResourceObject());
+	if (!Texture)
+	{
+		return false;
+	}
+	// Slate draws a box brush's margin at (margin x the texture's pixel size)
+	// Slate units, whatever ImageSize says, and a margin past 0.5 (what
+	// WBP_GameHUD stored before) is squeezed into whatever room the widget has:
+	// thick, doubled trim down a tall panel's sides. So: the frame art made
+	// for this thickness, and a margin of exactly `Px` of its texels.
+	const FVector2D Size = ValhallaHudArt::TextureSize(Texture);
+	const float Px = FMath::Min(FMath::Clamp(Thickness, FValhallaUserUISettings::MinPanelBorder, FValhallaUserUISettings::MaxPanelBorder),
+		static_cast<float>(FMath::Min(Size.X, Size.Y)) * 0.45f);
+	Brush.DrawAs = ESlateBrushDrawType::Box;
+	Brush.Margin = FMargin(Px / Size.X, Px / Size.Y);
+	Brush.ImageSize = Size;
+	return true;
+}
+
+float UValhallaGameHUDWidget::EffectivePanelBorder() const
+{
+	return ResolvePanelBorder(UserPanelBorder, PanelBorderThickness);
+}
+
+int32 UValhallaGameHUDWidget::ApplyPanelBorders()
+{
+	const float Thickness = EffectivePanelBorder();
+	// The art made for this thickness; without it (not imported, no PNG) the
+	// panels keep their texture and only the margin changes.
+	UTexture2D* FrameArt = FindUiTexture(PanelFrameTextureName(FMath::RoundToInt(Thickness)));
+	TSet<const UObject*> KnownArt = { FindUiTexture(TEXT("T_UI_Panel")) };
+	for (int32 Px = FMath::RoundToInt(FValhallaUserUISettings::MinPanelBorder); Px <= FMath::RoundToInt(FValhallaUserUISettings::MaxPanelBorder); ++Px)
+	{
+		KnownArt.Add(FindUiTexture(PanelFrameTextureName(Px)));
+	}
+	KnownArt.Remove(nullptr);
+	int32 Count = 0;
+	// The HUD's own tree, then the user widgets in it (the options menu, the
+	// bars), which keep their own trees.
+	TArray<const UWidgetTree*> Trees = { WidgetTree };
+	TSet<const UWidgetTree*> Seen;
+	while (Trees.Num() > 0)
+	{
+		const UWidgetTree* Tree = Trees.Pop(EAllowShrinking::No);
+		if (!Tree || Seen.Contains(Tree))
+		{
+			continue;
+		}
+		Seen.Add(Tree);
+		Tree->ForEachWidget([&](UWidget* Widget)
+		{
+			if (const UUserWidget* Inner = Cast<UUserWidget>(Widget))
+			{
+				Trees.Add(Inner->WidgetTree);
+				return;
+			}
+			UBorder* Border = Cast<UBorder>(Widget);
+			if (!Border)
+			{
+				return;
+			}
+			const UObject* Resource = Border->Background.GetResourceObject();
+			if (!Resource || (!KnownArt.Contains(Resource) && !IsPanelFrameArtName(Resource->GetFName())))
+			{
+				return;
+			}
+			FSlateBrush Brush = Border->Background;
+			if (SetPanelFrameThickness(Brush, Thickness, FrameArt))
+			{
+				Border->SetBrush(Brush);
+				++Count;
+			}
+		});
+	}
+	if (Count > 0 && !FMath::IsNearlyEqual(Thickness, AppliedPanelBorderLogged))
+	{
+		AppliedPanelBorderLogged = Thickness;
+		UE_LOG(LogValhallaHUD, Log, TEXT("game HUD: %d framed panel(s) at a %.0f px border."), Count, Thickness);
+	}
+	return Count;
 }
 
 void UValhallaGameHUDWidget::EnforceUserHiddenPanels()
@@ -4716,6 +4856,7 @@ void UValhallaGameHUDWidget::ApplyUserStyle(const FValhallaUserUISettings& Setti
 	bShowPlayerNameplates = Settings.bShowPlayerNameplates;
 	bShowFloatingText = Settings.bFloatingCombatText;
 	UserNameplateFontSize = Settings.NameplateFontSize;
+	UserPanelBorder = Settings.PanelBorder;
 
 	// The combat log's filters: what the player saved (a key not saved is shown).
 	for (const FName Key : GetLogFilterKeys())
@@ -4760,6 +4901,7 @@ void UValhallaGameHUDWidget::ApplyUserStyle(const FValhallaUserUISettings& Setti
 		Name->SetColorAndOpacity(FSlateColor(EffectiveValueColour()));
 	}
 	ApplyPanelBackgrounds();
+	ApplyPanelBorders();
 	for (const TPair<FName, TObjectPtr<UValhallaPanelEditOverlay>>& Entry : EditOverlays)
 	{
 		if (Entry.Value)
@@ -5577,6 +5719,7 @@ void UValhallaGameHUDWidget::OpenOptions()
 		MenuSlot->SetAutoSize(true);
 		MenuSlot->SetZOrder(60);
 		OptionsMenu->Setup(this);
+		ApplyPanelBorders(); // its frame too
 		UE_LOG(LogValhallaHUD, Log, TEXT("options menu made (%s)."), *MenuClass->GetName());
 	}
 	if (const UValhallaUserSettingsSubsystem* UserSettings = UValhallaUserSettingsSubsystem::Get(this))

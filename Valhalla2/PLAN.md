@@ -2474,6 +2474,45 @@ re-laid out, both compiled and saved. PIE: L_World, PIE_Client, 2 clients (cleri
   client's `ServerSetTargetByName` in the client world (refused there, target unchanged), so the party
   click was checked with real clicks only; those reach the server.
 
+## Panel border thickness — thin by default, an Options setting (2026-09-25)
+
+Kevin: the combat log's and action bar's borders were too thick; the action bar's top and bottom were the
+right width; make the thickness an in-game option. Screenshots `Saved/ClaudeOps/border/` (`00_` before,
+`01_` after at 4 px, `02_` at 10 px with the options menu).
+
+- [x] **Why it was thick.** Every T_UI_Panel border in WBP_GameHUD / WBP_OptionsMenu had a box margin of
+      0.75: `hud_blueprints._box_brush` computes 24 px / the texture's size, and it ran while the editor was
+      still compiling textures after startup, when `GetSizeX` is a 32 x 32 placeholder. Past 0.5 Slate
+      squeezes each side into half the widget, so a short panel (the action bar's top and bottom) looked
+      about right and everything else got a thick, doubled trim. Also: Slate draws a box margin at
+      margin x the texture's own pixel size, one texel per Slate unit; the brush's Image Size never
+      changes the thickness. So a thinner border needs smaller art.
+- [x] **Frame art per thickness.** `Tools/ui/make_panel_frames.py` writes `T_UI_PanelFrame_01 .. _12`
+      (T_UI_Panel scaled to round(256 x N / 24) px, premultiplied Lanczos, so its trim is N texels) into
+      `Import/UI/Frames`; imported by `import_ui_icons.py` (frame art: bilinear, no mips) to
+      `/Game/Valhalla/UI/Frames`.
+- [x] **HUD.** HUD Style `PanelBorderThickness` (4 px, WBP_GameHUD's Class Defaults). `ApplyPanelBorders`
+      (from `ApplyUserStyle`, and when the options menu is made) walks the HUD's tree and the user
+      widgets in it and gives every panel-frame Border (T_UI_Panel or T_UI_PanelFrame_NN) the art for the
+      thickness in force with a margin of N / its texel size (`SetPanelFrameThickness`); tint, colour and
+      padding are left alone. `MakePanel` (code-built HUD) does the same. `ValhallaHudArt::TextureSize`
+      uses the imported size, so the placeholder size can no longer leak into margins. Content padding is
+      unchanged.
+- [x] **Setting.** `FValhallaUserUISettings::PanelBorder` (JSON `PanelBorder`, 1-12 px, 0 = the HUD's
+      default; Style reset and Options "Reset layout" clear it), per character like the rest of B-21.
+      Options -> Layout "Border thickness" slider (`BorderSlider` / `BorderText`, whole px), live.
+      `valhalla.UI border <1..12, 0 = default>` for tests.
+- [x] **Blueprints.** `hud_blueprints.fix_panel_borders()` re-borders the stored panel brushes in place
+      (T_UI_PanelFrame_04, margin 4/43) and adds the options menu's border row under Panel opacity,
+      nothing else touched; both compiled and saved. The layout functions bake `PANEL_BORDER_PX` (4) the
+      same way; `_texture_size` reads the source PNG's size.
+- [x] **Tests.** `Valhalla.Game.UI.PanelBorders` (resolve / clamp / whole px, the brush maths with the
+      frame art, the twelve textures imported at the right size, WBP_GameHUD's stored brushes 1-12 px and
+      under a half); `Valhalla.Core.UISettings.*` cover PanelBorder (round trip, clamp, NaN, reset). Full
+      `Valhalla.` run: 47 tests, 46 pass, the known `Valhalla.Core.Data.MeshIdFallback` fails.
+- PIE (L_World, 2 clients): `12 framed panel(s) at a 4 px border`, 13 once the options menu exists; 10 px
+  and back to the default through the console; the slider shows the value in force.
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

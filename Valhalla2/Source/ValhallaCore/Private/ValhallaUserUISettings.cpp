@@ -18,6 +18,7 @@ namespace
 		const TCHAR* const bLocked = TEXT("bLocked");
 		const TCHAR* const UiScale = TEXT("UiScale");
 		const TCHAR* const PanelOpacity = TEXT("PanelOpacity");
+		const TCHAR* const PanelBorder = TEXT("PanelBorder");
 		const TCHAR* const Panels = TEXT("Panels");
 		const TCHAR* const Colours = TEXT("Colours");
 		const TCHAR* const ChatFontSize = TEXT("ChatFontSize");
@@ -41,7 +42,7 @@ namespace
 		bool IsKnownTopLevel(const FString& Name)
 		{
 			static const TSet<FString> Known = {
-				Version, UpdatedAt, bLocked, UiScale, PanelOpacity, Panels, Colours, ChatFontSize, ChatVisibleLines,
+				Version, UpdatedAt, bLocked, UiScale, PanelOpacity, PanelBorder, Panels, Colours, ChatFontSize, ChatVisibleLines,
 				bChatTimestamps, LogFilters, bShowNpcNameplates, bShowPlayerNameplates, bFloatingCombatText, NameplateFontSize,
 			};
 			return Known.Contains(Name);
@@ -245,6 +246,7 @@ TSharedRef<FJsonObject> FValhallaUserUISettings::ToJson() const
 	Json->SetBoolField(Key::bLocked, bLocked);
 	Json->SetNumberField(Key::UiScale, UiScale);
 	Json->SetNumberField(Key::PanelOpacity, PanelOpacity);
+	Json->SetNumberField(Key::PanelBorder, PanelBorder);
 
 	// Sorted keys: the same settings always write the same bytes (diffable cache files).
 	TArray<FName> PanelKeys;
@@ -338,6 +340,7 @@ bool FValhallaUserUISettings::FromJson(const TSharedPtr<FJsonObject>& Json, FVal
 	Root.Bool(Key::bLocked, Out.bLocked);
 	Root.Number(Key::UiScale, Out.UiScale);
 	Root.Number(Key::PanelOpacity, Out.PanelOpacity);
+	Root.Number(Key::PanelBorder, Out.PanelBorder);
 
 	if (const FJsonObject* PanelsJson = Root.Object(Key::Panels))
 	{
@@ -439,6 +442,8 @@ void FValhallaUserUISettings::Sanitize()
 {
 	UiScale = SaneFloat(UiScale, MinUiScale, MaxUiScale, 1.f);
 	PanelOpacity = SaneFloat(PanelOpacity, MinPanelOpacity, MaxPanelOpacity, 1.f);
+	// 0 (or less, or NaN) = the HUD's default; anything else is a thickness in range.
+	PanelBorder = (FMath::IsFinite(PanelBorder) && PanelBorder > 0.f) ? FMath::Clamp(PanelBorder, MinPanelBorder, MaxPanelBorder) : 0.f;
 	for (TPair<FName, FValhallaPanelLayout>& Entry : Panels)
 	{
 		FValhallaPanelLayout& Layout = Entry.Value;
@@ -475,6 +480,7 @@ void FValhallaUserUISettings::ResetSection(EValhallaUISettingsSection Section)
 	case EValhallaUISettingsSection::Style:
 		UiScale = Defaults.UiScale;
 		PanelOpacity = Defaults.PanelOpacity;
+		PanelBorder = Defaults.PanelBorder;
 		Colours.Reset();
 		break;
 	case EValhallaUISettingsSection::Chat:
@@ -514,6 +520,7 @@ bool FValhallaUserUISettings::EquivalentTo(const FValhallaUserUISettings& Other)
 	constexpr float Tolerance = 1.e-3f;
 	if (bLocked != Other.bLocked || !FMath::IsNearlyEqual(UiScale, Other.UiScale, Tolerance)
 		|| !FMath::IsNearlyEqual(PanelOpacity, Other.PanelOpacity, Tolerance)
+		|| !FMath::IsNearlyEqual(PanelBorder, Other.PanelBorder, Tolerance)
 		|| ChatFontSize != Other.ChatFontSize || ChatVisibleLines != Other.ChatVisibleLines || bChatTimestamps != Other.bChatTimestamps
 		|| bShowNpcNameplates != Other.bShowNpcNameplates || bShowPlayerNameplates != Other.bShowPlayerNameplates
 		|| bFloatingCombatText != Other.bFloatingCombatText || NameplateFontSize != Other.NameplateFontSize

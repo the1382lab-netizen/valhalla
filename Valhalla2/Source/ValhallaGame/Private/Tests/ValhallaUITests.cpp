@@ -27,6 +27,11 @@
 //     name hideable panels, the controls text from a mapping context, and
 //     WBP_OptionsMenu (when present) a child of the C++ menu that WBP_GameHUD
 //     names.
+//   Valhalla.Game.UI.PanelBorders — the framed panels' border setting: the
+//     player's PanelBorder over the HUD's PanelBorderThickness (whole px), the
+//     frame box-brush maths (the T_UI_PanelFrame_NN art, margin = px / texture
+//     px), the twelve frame textures imported, and WBP_GameHUD's stored panel
+//     brushes (no margin past a half, 1 .. 12 px) and default.
 //   Valhalla.Game.UI.StyleColours — B-21 step 5: every colour key is a
 //     "Valhalla|HUD Style" FLinearColor; the effective colour is the override
 //     after ApplyUserStyle and the class default without one (and after the
@@ -56,6 +61,7 @@
 #include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
 #include "Components/SizeBox.h"
+#include "Engine/Texture2D.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/PackageName.h"
 #include "Serialization/JsonReader.h"
@@ -654,6 +660,111 @@ bool FValhallaUIOptionsMenuTest::RunTest(const FString& /*Parameters*/)
 	const UWidgetTree* HudTree = HudGenerated ? HudGenerated->GetWidgetTreeArchetype() : nullptr;
 	const UValhallaHUDButton* CogButton = HudTree ? Cast<UValhallaHUDButton>(HudTree->FindWidget(TEXT("OptionsButton"))) : nullptr;
 	TestTrue(TEXT("WBP_GameHUD has the OptionsButton cog, Action = Options"), CogButton && CogButton->Action == EValhallaHUDButton::Options);
+	return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.PanelBorders
+// ─────────────────────────────────────────────────────────────────────────────
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIPanelBordersTest,
+	"Valhalla.Game.UI.PanelBorders",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIPanelBordersTest::RunTest(const FString& /*Parameters*/)
+{
+	// ── Which thickness is in force ─────────────────────────────────────
+	TestEqual(TEXT("the C++ default is 4 px"), GetDefault<UValhallaGameHUDWidget>()->GetPanelBorderThickness(), 4.f);
+	TestEqual(TEXT("no player setting: the HUD's"), UValhallaGameHUDWidget::ResolvePanelBorder(0.f, 4.f), 4.f);
+	TestEqual(TEXT("the player's wins"), UValhallaGameHUDWidget::ResolvePanelBorder(7.f, 4.f), 7.f);
+	TestEqual(TEXT("clamped up to 1"), UValhallaGameHUDWidget::ResolvePanelBorder(0.25f, 4.f), 1.f);
+	TestEqual(TEXT("clamped down to 12"), UValhallaGameHUDWidget::ResolvePanelBorder(30.f, 4.f), 12.f);
+	TestEqual(TEXT("NaN is no setting"), UValhallaGameHUDWidget::ResolvePanelBorder(std::numeric_limits<float>::quiet_NaN(), 5.f), 5.f);
+	TestEqual(TEXT("a broken HUD default falls back to 4"), UValhallaGameHUDWidget::ResolvePanelBorder(0.f, -1.f), 4.f);
+
+	TestEqual(TEXT("whole pixels (one frame texture each)"), UValhallaGameHUDWidget::ResolvePanelBorder(6.4f, 4.f), 6.f);
+	TestEqual(TEXT("frame art name"), UValhallaGameHUDWidget::PanelFrameTextureName(4), FString(TEXT("T_UI_PanelFrame_04")));
+	TestEqual(TEXT("frame art name clamps"), UValhallaGameHUDWidget::PanelFrameTextureName(40), FString(TEXT("T_UI_PanelFrame_12")));
+	TestTrue(TEXT("T_UI_Panel is frame art"), UValhallaGameHUDWidget::IsPanelFrameArtName(TEXT("T_UI_Panel")));
+	TestTrue(TEXT("T_UI_PanelFrame_07 is frame art"), UValhallaGameHUDWidget::IsPanelFrameArtName(TEXT("T_UI_PanelFrame_07")));
+	TestFalse(TEXT("T_UI_Slot is not"), UValhallaGameHUDWidget::IsPanelFrameArtName(TEXT("T_UI_Slot")));
+
+	// ── The brush maths: Slate draws margin x texture px, so margin = px / texture px ──
+	UTexture2D* Old = UTexture2D::CreateTransient(256, 256);
+	for (const int32 Px : { 1, 4, 10, 12 })
+	{
+		const int32 Size = FMath::RoundToInt(256.f * Px / 24.f); // make_panel_frames.py
+		UTexture2D* Frame = UTexture2D::CreateTransient(Size, Size);
+		if (!TestNotNull(TEXT("a transient frame texture"), Frame) || !Old)
+		{
+			return false;
+		}
+		FSlateBrush Brush;
+		Brush.SetResourceObject(Old);
+		Brush.DrawAs = ESlateBrushDrawType::Box;
+		Brush.Margin = FMargin(0.75f); // what WBP_GameHUD stored before
+		Brush.TintColor = FSlateColor(FLinearColor(0.5f, 0.4f, 0.3f, 0.9f));
+		TestTrue(*FString::Printf(TEXT("%d px: rebuilt"), Px), UValhallaGameHUDWidget::SetPanelFrameThickness(Brush, Px, Frame));
+		TestTrue(*FString::Printf(TEXT("%d px: the frame art for it"), Px), Brush.GetResourceObject() == Frame);
+		TestTrue(*FString::Printf(TEXT("%d px: margin under a half"), Px), Brush.Margin.Left < 0.5f && Brush.Margin.Bottom < 0.5f);
+		TestTrue(*FString::Printf(TEXT("%d px: drawn width = margin x texture px"), Px),
+			FMath::IsNearlyEqual(Brush.Margin.Left * Size, static_cast<float>(Px), 1.e-3f) && FMath::IsNearlyEqual(Brush.Margin.Top * Size, static_cast<float>(Px), 1.e-3f));
+		TestTrue(*FString::Printf(TEXT("%d px: tint kept"), Px), Brush.TintColor.GetSpecifiedColor().Equals(FLinearColor(0.5f, 0.4f, 0.3f, 0.9f)));
+	}
+	FSlateBrush Bare;
+	TestFalse(TEXT("a brush with no texture is left alone"), UValhallaGameHUDWidget::SetPanelFrameThickness(Bare, 4.f));
+
+	// ── The frame art is imported, one per thickness ────────────────────
+	for (int32 Px = 1; Px <= 12; ++Px)
+	{
+		const FString Name = UValhallaGameHUDWidget::PanelFrameTextureName(Px);
+		const FString Path = FString::Printf(TEXT("/Game/Valhalla/UI/Frames/%s.%s"), *Name, *Name);
+		const UTexture2D* Art = LoadObject<UTexture2D>(nullptr, *Path, nullptr, LOAD_NoWarn | LOAD_Quiet);
+		if (TestNotNull(*FString::Printf(TEXT("%s is imported"), *Name), Art))
+		{
+			const FIntPoint Imported = Art->GetImportedSize();
+			TestTrue(*FString::Printf(TEXT("%s: its 24/256 trim is %d texels"), *Name, Px),
+				FMath::Abs(Imported.X * 24.f / 256.f - Px) < 0.1f);
+		}
+	}
+
+	// ── WBP_GameHUD ─────────────────────────────────────────────────────
+	if (!FPackageName::DoesPackageExist(TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD")))
+	{
+		AddWarning(TEXT("WBP_GameHUD is not in this build; its panel brushes were not checked."));
+		return true;
+	}
+	const UClass* HudClass = StaticLoadClass(UValhallaGameHUDWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C"));
+	const UValhallaGameHUDWidget* HudDefaults = HudClass ? Cast<UValhallaGameHUDWidget>(HudClass->GetDefaultObject()) : nullptr;
+	if (TestNotNull(TEXT("WBP_GameHUD loads"), HudDefaults))
+	{
+		TestTrue(TEXT("WBP_GameHUD's border thickness is in the settings' range"),
+			HudDefaults->GetPanelBorderThickness() >= FValhallaUserUISettings::MinPanelBorder && HudDefaults->GetPanelBorderThickness() <= FValhallaUserUISettings::MaxPanelBorder);
+	}
+	const UWidgetBlueprintGeneratedClass* HudGenerated = Cast<UWidgetBlueprintGeneratedClass>(HudClass);
+	const UWidgetTree* HudTree = HudGenerated ? HudGenerated->GetWidgetTreeArchetype() : nullptr;
+	int32 Framed = 0;
+	if (HudTree)
+	{
+		HudTree->ForEachWidget([&](UWidget* Widget)
+		{
+			const UBorder* Border = Cast<UBorder>(Widget);
+			const UObject* Resource = Border ? Border->Background.GetResourceObject() : nullptr;
+			if (!Resource || !UValhallaGameHUDWidget::IsPanelFrameArtName(Resource->GetFName()))
+			{
+				return;
+			}
+			++Framed;
+			const FMargin& M = Border->Background.Margin;
+			TestTrue(*FString::Printf(TEXT("%s: stored margin is under a half (a box brush past it squeezes)"), *Border->GetName()),
+				M.Left < 0.5f && M.Right < 0.5f && M.Top < 0.5f && M.Bottom < 0.5f);
+			const UTexture2D* Art = Cast<UTexture2D>(Resource);
+			const float Drawn = Art ? M.Left * Art->GetImportedSize().X : 0.f;
+			TestTrue(*FString::Printf(TEXT("%s: designer border is 1 .. 12 px (%.1f)"), *Border->GetName(), Drawn), Drawn >= 0.9f && Drawn <= 12.1f);
+		});
+	}
+	TestTrue(TEXT("WBP_GameHUD has framed panels (action bar, combat log, ...)"), Framed >= 4);
 	return true;
 }
 

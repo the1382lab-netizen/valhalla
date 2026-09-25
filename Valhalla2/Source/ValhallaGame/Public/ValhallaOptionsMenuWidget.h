@@ -17,6 +17,7 @@
 //
 // Tabs (the Tabs widget switcher's children, in order):
 //   0 Layout      LockCheck, UiScaleSlider (0.5-2), OpacitySlider (0.2-1),
+//                 BorderSlider (1-12 px, the framed panels' trim),
 //                 Show<Panel>Check for the hideable panels, ResetLayoutButton
 //   1 Colours     ColourList (C++ adds a row per colour: name, swatch, Edit),
 //                 ColourEditor (PresetGrid: 12 swatches, H / S / V sliders,
@@ -152,6 +153,8 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> UiScaleText;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<USlider> OpacitySlider;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> OpacityText;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<USlider> BorderSlider;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> BorderText;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> ShowVitalsCheck;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> ShowActionBarCheck;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> ShowCastBarCheck;
@@ -226,6 +229,7 @@ private:
 	UFUNCTION() void OnLockChanged(bool bChecked);
 	UFUNCTION() void OnUiScaleChanged(float Value);
 	UFUNCTION() void OnOpacityChanged(float Value);
+	UFUNCTION() void OnBorderChanged(float Value);
 	UFUNCTION() void OnShowVitalsChanged(bool bChecked);
 	UFUNCTION() void OnShowActionBarChanged(bool bChecked);
 	UFUNCTION() void OnShowCastBarChanged(bool bChecked);

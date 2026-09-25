@@ -2744,6 +2744,10 @@ void UValhallaGameHUDWidget::NativeTick(const FGeometry& MyGeometry, float InDel
 	{
 		RefreshCombatLog();
 	}
+	else if (CombatLogPendingNew > 0)
+	{
+		AppendCombatLog();
+	}
 	if (bSkillsOpen)
 	{
 		RefreshSkillsPane();
@@ -3066,8 +3070,17 @@ void UValhallaGameHUDWidget::TickChat(float /*DeltaTime*/)
 		{
 			ChatArrivalClock.RemoveAt(0);
 		}
+		// B-27: new lines are added at the bottom; the first sight of the log builds it.
+		const bool bFirst = ChatSeenCount < 0;
 		ChatSeenCount = Received;
-		RefreshChatLines();
+		if (bFirst)
+		{
+			RefreshChatLines();
+		}
+		else
+		{
+			AppendChatLines(New);
+		}
 	}
 
 	if (bChatOpen)
@@ -3101,20 +3114,72 @@ void UValhallaGameHUDWidget::RefreshChatLines()
 	// (B-21: the player's idle line count and font size win when set).
 	const int32 Show = FMath::Min(Log.Num(), FMath::Max(0, bChatOpen ? Config.Chat.MaxMessages : EffectiveChatVisibleLines()));
 	const int32 FontSize = EffectiveChatFontSize();
-	const int32 ClockOffset = Log.Num() - ChatArrivalClock.Num();
 
 	ChatScroll->ClearChildren();
 	ChatLineWidgets.Reset();
 	for (int32 Index = Log.Num() - Show; Index < Log.Num(); ++Index)
 	{
-		FString Text = FormatChatLine(Log[Index]);
-		const int32 ClockIndex = Index - ClockOffset;
-		if (bChatTimestamps && ChatArrivalClock.IsValidIndex(ClockIndex) && ChatArrivalClock[ClockIndex] > FDateTime::MinValue())
-		{
-			Text = FString::Printf(TEXT("[%02d:%02d] %s"), ChatArrivalClock[ClockIndex].GetHour(), ChatArrivalClock[ClockIndex].GetMinute(), *Text);
-		}
-		UTextBlock* Line = MakeText(Text, FontSize, ChatColour(Log[Index].Channel), false, 1.f);
+		UTextBlock* Line = MakeText(ChatLineText(Index), FontSize, ChatColour(Log[Index].Channel), false, 1.f);
 		Line->SetAutoWrapText(true);
+		ChatScroll->AddChild(Line);
+		ChatLineWidgets.Add(Line);
+	}
+	ChatScroll->ScrollToEnd();
+}
+
+FString UValhallaGameHUDWidget::ChatLineText(int32 Index) const
+{
+	const AValhallaPlayerController* PC = GetValhallaController();
+	if (!PC || !PC->GetChatLog().IsValidIndex(Index))
+	{
+		return FString();
+	}
+	const TArray<FValhallaChatMessage>& Log = PC->GetChatLog();
+	FString Text = FormatChatLine(Log[Index]);
+	const int32 ClockIndex = Index - (Log.Num() - ChatArrivalClock.Num());
+	if (bChatTimestamps && ChatArrivalClock.IsValidIndex(ClockIndex) && ChatArrivalClock[ClockIndex] > FDateTime::MinValue())
+	{
+		Text = FString::Printf(TEXT("[%02d:%02d] %s"), ChatArrivalClock[ClockIndex].GetHour(), ChatArrivalClock[ClockIndex].GetMinute(), *Text);
+	}
+	return Text;
+}
+
+void UValhallaGameHUDWidget::AppendChatLines(int32 NewLines)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_AppendChatLines);
+	const AValhallaPlayerController* PC = GetValhallaController();
+	if (!PC || !ChatScroll || NewLines <= 0)
+	{
+		return;
+	}
+	const TArray<FValhallaChatMessage>& Log = PC->GetChatLog();
+	const int32 Show = FMath::Min(Log.Num(), FMath::Max(0, bChatOpen ? Config.Chat.MaxMessages : EffectiveChatVisibleLines()));
+	const int32 New = FMath::Min(NewLines, Log.Num());
+	const FValhallaLogAppendPlan Plan = FValhallaLogAppendPlan::Make(ChatLineWidgets.Num(), New, Show);
+	if (Plan.bRebuild || New <= 0 || Show <= 0)
+	{
+		RefreshChatLines();
+		return;
+	}
+	const int32 FontSize = EffectiveChatFontSize();
+	for (int32 Step = 0; Step < New; ++Step)
+	{
+		const int32 Index = Log.Num() - New + Step;
+		UTextBlock* Line = nullptr;
+		if (Step < Plan.Recycle && ChatLineWidgets.Num() > 0)
+		{
+			Line = ChatLineWidgets[0];
+			ChatLineWidgets.RemoveAt(0);
+			ChatScroll->RemoveChild(Line);
+			Line->SetText(AsText(ChatLineText(Index)));
+			Line->SetColorAndOpacity(FSlateColor(ChatColour(Log[Index].Channel)));
+			Line->SetRenderOpacity(1.f);
+		}
+		else
+		{
+			Line = MakeText(ChatLineText(Index), FontSize, ChatColour(Log[Index].Channel), false, 1.f);
+			Line->SetAutoWrapText(true);
+		}
 		ChatScroll->AddChild(Line);
 		ChatLineWidgets.Add(Line);
 	}
@@ -3695,20 +3760,23 @@ void UValhallaGameHUDWidget::PushCombatLog(const FString& Text, const FLinearCol
 	{
 		CombatLogLines.RemoveAt(0);
 	}
-	bCombatLogDirty = true;
-	UE_LOG(LogValhallaHUD, Log, TEXT("combatLog [%s] %s"), *Filter.ToString(), *Text);
+	// B-27: drawn by AppendCombatLog on the next tick, not a full rebuild.
+	CombatLogPendingNew = FMath::Min(CombatLogPendingNew + 1, CombatLogMaxLines);
+	UE_LOG(LogValhallaHUD, Verbose, TEXT("combatLog [%s] %s"), *Filter.ToString(), *Text);
 }
 
 void UValhallaGameHUDWidget::RefreshCombatLog()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_RefreshCombatLog);
 	bCombatLogDirty = false;
+	CombatLogPendingNew = 0;
 	if (!CombatLogScroll)
 	{
 		return;
 	}
 
 	CombatLogScroll->ClearChildren();
+	CombatLogWidgets.Reset();
 	int32 Shown = 0;
 	for (const FValhallaCombatLogLine& Line : CombatLogLines)
 	{
@@ -3720,6 +3788,7 @@ void UValhallaGameHUDWidget::RefreshCombatLog()
 		UTextBlock* Text = MakeText(Line.Text, 7, Line.Colour, false, 1.f);
 		Text->SetAutoWrapText(true);
 		CombatLogScroll->AddChild(Text);
+		CombatLogWidgets.Add(Text);
 		++Shown;
 	}
 	CombatLogScroll->ScrollToEnd();
@@ -3739,6 +3808,56 @@ void UValhallaGameHUDWidget::RefreshCombatLog()
 		const bool bOn = LogFilters.FindRef(FName(Infos[Index].Key));
 		FilterLabels[Index]->SetText(AsText(FString::Printf(TEXT("%s  %s"), bOn ? TEXT("[x]") : TEXT("[  ]"), Infos[Index].Label)));
 	}
+}
+
+void UValhallaGameHUDWidget::AppendCombatLog()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_AppendCombatLog);
+	const int32 Pending = FMath::Min(CombatLogPendingNew, CombatLogLines.Num());
+	CombatLogPendingNew = 0;
+	if (!CombatLogScroll || Pending <= 0)
+	{
+		return;
+	}
+
+	// The new lines the filters let through, oldest first.
+	TArray<int32> Shown;
+	for (int32 Index = CombatLogLines.Num() - Pending; Index < CombatLogLines.Num(); ++Index)
+	{
+		const bool* bOn = LogFilters.Find(CombatLogLines[Index].Filter);
+		if (!bOn || *bOn)
+		{
+			Shown.Add(Index);
+		}
+	}
+	const FValhallaLogAppendPlan Plan = FValhallaLogAppendPlan::Make(CombatLogWidgets.Num(), Shown.Num(), CombatLogMaxLines);
+	if (Plan.bRebuild)
+	{
+		RefreshCombatLog();
+		return;
+	}
+	for (int32 Step = 0; Step < Shown.Num(); ++Step)
+	{
+		const FValhallaCombatLogLine& Line = CombatLogLines[Shown[Step]];
+		UTextBlock* Text = nullptr;
+		if (Step < Plan.Recycle && CombatLogWidgets.Num() > 0)
+		{
+			// The oldest line leaves the top and comes back at the bottom as this one.
+			Text = CombatLogWidgets[0];
+			CombatLogWidgets.RemoveAt(0);
+			CombatLogScroll->RemoveChild(Text);
+			Text->SetText(AsText(Line.Text));
+			Text->SetColorAndOpacity(FSlateColor(Line.Colour));
+		}
+		else
+		{
+			Text = MakeText(Line.Text, 7, Line.Colour, false, 1.f);
+			Text->SetAutoWrapText(true);
+		}
+		CombatLogScroll->AddChild(Text);
+		CombatLogWidgets.Add(Text);
+	}
+	CombatLogScroll->ScrollToEnd();
 }
 
 bool UValhallaGameHUDWidget::ToggleLogFilter(FName Key)

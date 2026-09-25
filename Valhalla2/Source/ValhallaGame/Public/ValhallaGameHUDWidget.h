@@ -487,6 +487,38 @@ private:
 };
 
 /** One combat-log line, already worded and coloured, with its 1.0 filter key. */
+/**
+ * B-27: what a scrolling list of lines (the combat log, the chat) does when
+ * `NewLines` arrive while it shows `Shown` of at most `Max`: reuse the oldest
+ * `Recycle` line widgets for new lines (they drop off the top) and `Create`
+ * the rest. `bRebuild` when the new lines alone fill it: build it from scratch.
+ * Before B-27 every new line rebuilt the whole list (2-5 ms and up to 50 new
+ * widgets a line).
+ */
+struct FValhallaLogAppendPlan
+{
+	int32 Recycle = 0;
+	int32 Create = 0;
+	bool bRebuild = false;
+
+	static FValhallaLogAppendPlan Make(int32 Shown, int32 NewLines, int32 Max)
+	{
+		FValhallaLogAppendPlan Plan;
+		if (NewLines <= 0 || Max <= 0)
+		{
+			return Plan;
+		}
+		if (NewLines >= Max || Shown > Max)
+		{
+			Plan.bRebuild = true;
+			return Plan;
+		}
+		Plan.Recycle = FMath::Min(FMath::Max(0, Shown + NewLines - Max), Shown);
+		Plan.Create = NewLines - Plan.Recycle;
+		return Plan;
+	}
+};
+
 struct FValhallaCombatLogLine
 {
 	FString Text;
@@ -921,9 +953,15 @@ private:
 	void HandleCombatEvent(const FValhallaCombatEvent& Event);
 	void PushCombatLog(const FString& Text, const FLinearColor& Colour, FName Filter);
 	void RefreshCombatLog();
+	/** B-27: the lines pushed since the last refresh, added at the bottom (the oldest drop off the top). */
+	void AppendCombatLog();
 	void SpawnFloater(const FValhallaCombatEvent& Event);
 	void RefreshSkillsPane();
 	void RefreshChatLines();
+	/** B-27: the newest `NewLines` chat lines added at the bottom, the oldest shown ones reused. */
+	void AppendChatLines(int32 NewLines);
+	/** Chat line `Index` of the controller's log as shown (channel prefix, optional [hh:mm]). */
+	FString ChatLineText(int32 Index) const;
 
 	UFUNCTION()
 	void HandleChatCommitted(const FText& Text, ETextCommit::Type CommitMethod);
@@ -1221,7 +1259,12 @@ private:
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> FilterLabels;
 	TArray<FValhallaCombatLogLine> CombatLogLines;
 	TMap<FName, bool> LogFilters;
+	/** A full rebuild is due (filters, the title, a new HUD). */
 	bool bCombatLogDirty = true;
+	/** Lines pushed since the log was last drawn (B-27: appended, not rebuilt). */
+	int32 CombatLogPendingNew = 0;
+	/** The log's line widgets, oldest first. */
+	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> CombatLogWidgets;
 
 	// chat
 	/** ChatPanel's Size Box: TickLayout narrows it, OpenChat sets its height. */

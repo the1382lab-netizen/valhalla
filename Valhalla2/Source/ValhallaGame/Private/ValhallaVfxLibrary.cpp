@@ -10,6 +10,8 @@
 #include "Engine/World.h"
 #include "Misc/CoreMisc.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Kismet/GameplayStatics.h"
 #include "NiagaraComponent.h"
 #include "NiagaraFunctionLibrary.h"
@@ -19,6 +21,7 @@
 #include "ValhallaDataSubsystem.h"
 #include "ValhallaPlayerState.h"
 #include "ValhallaTypes.h"
+#include "ValhallaVisibilitySubsystem.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaVfx);
 
@@ -463,7 +466,8 @@ UNiagaraComponent* UValhallaVfxSubsystem::Spawn(
 	// by hand once its user parameters are set. A system that activates first
 	// spawns its opening frame of particles against the *default* colour, which
 	// on a 0.25 s effect is a visible fraction of the whole thing.
-	const bool bAutoDestroy = !Plan.bLooping;
+	// A pooled one-shot is released to the pool, not destroyed.
+	const bool bAutoDestroy = false;
 
 	// A body with no weapon socket — an NPC rig that failed to import — falls
 	// back to the root rather than dropping the effect on the floor.
@@ -471,12 +475,25 @@ UNiagaraComponent* UValhallaVfxSubsystem::Spawn(
 		? FindBodyMesh(Anchor) : nullptr;
 	const bool bHandSocket = Mesh && Mesh->DoesSocketExist(UValhallaVisuals::WeaponSocket());
 
+	// B-27: a one-shot far from the local player, or past this frame's budget,
+	// is skipped. One-shots come from the pool and go back when they finish;
+	// looping ones (auras, held bolts) are owned by the caller and are not pooled.
+	if (!Plan.bLooping)
+	{
+		const FVector Where = (Plan.Attach != EValhallaVfxAttach::WorldLocation && Anchor) ? Anchor->GetActorLocation() : Location;
+		if (!AdmitOneShot(Where))
+		{
+			return nullptr;
+		}
+	}
+	const ENCPoolMethod Pool = Plan.bLooping ? ENCPoolMethod::None : ENCPoolMethod::AutoRelease;
+
 	if (bHandSocket)
 	{
 		Component = UNiagaraFunctionLibrary::SpawnSystemAttached(
 			System, Mesh, UValhallaVisuals::WeaponSocket(),
 			FVector::ZeroVector, FRotator::ZeroRotator,
-			EAttachLocation::SnapToTarget, bAutoDestroy, /*bAutoActivate=*/false);
+			EAttachLocation::SnapToTarget, bAutoDestroy, /*bAutoActivate=*/false, Pool);
 	}
 	else if (Plan.Attach != EValhallaVfxAttach::WorldLocation)
 	{
@@ -501,13 +518,13 @@ UNiagaraComponent* UValhallaVfxSubsystem::Spawn(
 
 		Component = UNiagaraFunctionLibrary::SpawnSystemAttached(
 			System, Root, NAME_None, Offset, Relative,
-			EAttachLocation::KeepRelativeOffset, bAutoDestroy, /*bAutoActivate=*/false);
+			EAttachLocation::KeepRelativeOffset, bAutoDestroy, /*bAutoActivate=*/false, Pool);
 	}
 	else
 	{
 		Component = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
 			this, System, Location, FRotator::ZeroRotator, FVector::OneVector,
-			bAutoDestroy, /*bAutoActivate=*/false);
+			bAutoDestroy, /*bAutoActivate=*/false, Pool);
 	}
 
 	if (!Component)
@@ -519,13 +536,38 @@ UNiagaraComponent* UValhallaVfxSubsystem::Spawn(
 	Component->SetVariableFloat(RadiusParameter, Plan.Radius);
 	Component->Activate(/*bReset=*/true);
 
-	UE_LOG(LogValhallaVfx, Log,
+	UE_LOG(LogValhallaVfx, Verbose,
 		TEXT("%s -> %s color=(%.2f,%.2f,%.2f) radius=%.0f attach=%d"),
 		*SkillId.ToString(), UValhallaVfxLibrary::SystemName(Plan.System),
 		Plan.Color.R, Plan.Color.G, Plan.Color.B, Plan.Radius,
 		static_cast<int32>(Plan.Attach));
 
 	return Component;
+}
+
+bool UValhallaVfxSubsystem::AdmitOneShot(const FVector& Where)
+{
+	const UWorld* World = GetWorld();
+	const APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	const APawn* Viewer = PC ? PC->GetPawn() : nullptr;
+	if (Viewer && !UValhallaVfxLibrary::IsWithinEffectRange(Where, Viewer->GetActorLocation(),
+			UValhallaVisibilitySubsystem::GetVisionRangeFor(Viewer)))
+	{
+		UE_LOG(LogValhallaVfx, VeryVerbose, TEXT("effect at %s skipped: out of range"), *Where.ToCompactString());
+		return false;
+	}
+	if (BudgetFrame != GFrameCounter)
+	{
+		BudgetFrame = GFrameCounter;
+		OneShotsThisFrame = 0;
+	}
+	if (OneShotsThisFrame >= UValhallaVfxLibrary::MaxOneShotsPerFrame)
+	{
+		UE_LOG(LogValhallaVfx, Verbose, TEXT("effect at %s skipped: %d one-shots this frame already"), *Where.ToCompactString(), OneShotsThisFrame);
+		return false;
+	}
+	++OneShotsThisFrame;
+	return true;
 }
 
 void UValhallaVfxSubsystem::SpawnTimed(
@@ -558,7 +600,10 @@ void UValhallaVfxSubsystem::StartAura(const FValhallaVfxPlan& Plan, FName SkillI
 	// second buffRemoved would have nothing to stop.
 	StopAura(SkillId, Target);
 
-	UNiagaraComponent* Component = Spawn(Plan, SkillId, Target, Target->GetActorLocation());
+	// Kept and stopped by hand (StopAura), so never a pooled one-shot (B-27).
+	FValhallaVfxPlan Held = Plan;
+	Held.bLooping = true;
+	UNiagaraComponent* Component = Spawn(Held, SkillId, Target, Target->GetActorLocation());
 	if (!Component)
 	{
 		return;

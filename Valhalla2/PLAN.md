@@ -2581,6 +2581,22 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   to run noise; the remaining flushes are the replicated NPC spawns), inside the 100 ms target. Entering the
   world is still 415 / 274 / 283 ms frames, now all the blocking map load and join (no PSOs): B-24's loading
   screen is where that belongs. `Valhalla.` suite: 49 tests, 48 pass (known MeshIdFallback).
+- [x] **Phase 2: combat log, chat and effects.** The combat log and the chat add each new line at the bottom and
+      drop the oldest (`FValhallaLogAppendPlan`: reuse the oldest line widgets once the list is full, rebuild
+      only when the new lines alone fill it; `AppendCombatLog`, `AppendChatLines`, `ChatLineText`); a full
+      rebuild is left for filter changes, opening / closing the chat and style changes. The per-line
+      `combatLog` log entry is Verbose. Spell effects: one-shots come from the Niagara pool
+      (`ENCPoolMethod::AutoRelease`) and go back to it when they finish; auras and held bolts stay unpooled
+      (owned and stopped by hand; `StartAura` now always holds its effect); a one-shot further than 1.25× the
+      local player's vision range is not spawned (`UValhallaVfxLibrary::IsWithinEffectRange`), and at most 12
+      one-shots spawn in a frame (`AdmitOneShot`); the per-spawn log entry is Verbose. Tests
+      `Valhalla.Game.CombatPerf.LogAppend` / `.EffectRange`. `combat_bench.cmd` now also has world chat every
+      1.5 s and deletes the old trace first (Unreal will not overwrite one: the Phase 1 hitch breakdown above
+      was read from the Phase 0 packaged trace).
+- **Phase 2 results** (editor client, combat test): a combat log line 2.1 ms average / 5.2 ms worst → 0.16 ms
+  / 0.59 ms; a chat line 0.15 ms / 0.19 ms. The combat log and chat on screen (screenshot) read as before.
+  The first-fight frame's biggest piece in the editor is now `UNiagaraSystem::RequestCompile` (editor only).
+  `Valhalla.` suite: 51 tests, 50 pass (known MeshIdFallback).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

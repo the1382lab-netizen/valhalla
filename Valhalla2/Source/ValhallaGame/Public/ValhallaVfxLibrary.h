@@ -225,6 +225,23 @@ public:
 	 * ground rather than hovering over it.
 	 */
 	static constexpr float GroundLift = 6.f;
+
+	/**
+	 * B-27: a one-shot effect further than this many times the local player's
+	 * vision range is not spawned (the fog hides it anyway). Every client used
+	 * to spawn every effect of every fight it heard about.
+	 */
+	static constexpr float EffectRangeScale = 1.25f;
+
+	/** B-27: one-shot effects spawned per frame at most; the rest of a burst is skipped (cosmetic only). */
+	static constexpr int32 MaxOneShotsPerFrame = 12;
+
+	/** Whether a one-shot effect at `Where` is worth spawning for a viewer at `Viewer` who sees `VisionRangeCm` (<= 0: no limit). */
+	static bool IsWithinEffectRange(const FVector& Where, const FVector& Viewer, float VisionRangeCm)
+	{
+		return VisionRangeCm <= 0.f
+			|| FVector::DistSquared2D(Where, Viewer) <= FMath::Square(static_cast<double>(VisionRangeCm) * EffectRangeScale);
+	}
 };
 
 /**
@@ -287,7 +304,9 @@ public:
 
 	/**
 	 * Spawn one plan. Returns the component, which the caller owns only if the
-	 * plan was looping — everything else auto-destroys.
+	 * plan was looping; a one-shot comes from the Niagara pool and goes back to it
+	 * when it finishes (B-27), and is null when it was skipped (out of range, or
+	 * past this frame's budget).
 	 *
 	 * @param Anchor   The actor a WeaponHand / ActorFeet plan attaches to.
 	 * @param Location Where a WorldLocation plan goes.
@@ -309,6 +328,9 @@ protected:
 
 	/** The swing an auto-attack outcome draws on the attacker and its target. */
 	void HandleSwingOutcome(const FValhallaCombatEvent& Event);
+
+	/** B-27: in range of the local player, and inside this frame's budget (one-shots only). */
+	bool AdmitOneShot(const FVector& Where);
 
 	/** Spawn a system that loops forever, and stop it again after Seconds. */
 	void SpawnTimed(const FValhallaVfxPlan& Plan, FName SkillId, AActor* Anchor, const FVector& Location, float Seconds);
@@ -334,6 +356,10 @@ private:
 
 	/** Muzzle flashes and anything else a looping system is borrowed for. */
 	TArray<FTimedEffect> Timed;
+
+	/** B-27: the frame the one-shot budget was last counted in, and how much of it is used. */
+	uint64 BudgetFrame = 0;
+	int32 OneShotsThisFrame = 0;
 
 	/** Index is (uint8)EValhallaVfx. Null until first use, then cached. */
 	UPROPERTY(Transient)

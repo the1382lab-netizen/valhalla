@@ -2214,7 +2214,7 @@ redesign may come later.
 
 Kevin: the cycle a body plays is chosen by its absolute ground speed, not by which clip's play
 rate is nearer 1. Every class (baseSpeed 200) jogs; the rogue (250) jogs like everyone else, no
-special case. A third "run" gait is parked as backlog B-22.
+special case. A third "run" gait is parked as backlog B-26 (run clip + a slow-jog clip).
 
 - **Rule** (`UValhallaAnimComponent::ChooseGait`, pure): idle below `MovingSpeed`; from idle or a
   walk, jog at `Speed >= JogSpeed`, else walk; from a jog, back to a walk only once

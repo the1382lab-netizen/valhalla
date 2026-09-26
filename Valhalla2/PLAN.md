@@ -2671,6 +2671,12 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   for the process that finds the running game instance's subsystem. The options menu's button captions are
   warm white with a black outline instead of black on the gold plates (`OPTIONS_BUTTON_TEXT`,
   `hud_blueprints.fix_options_button_text()`).
+- **Camera start zoom (Kevin, 2026-09-25).** The camera starts fully zoomed out when a player logs in (any new
+  pawn, so a respawn too) and whenever the pawn changes zone: `AValhallaZoneAtmosphere::ZoomOutOnArrival` sets
+  the boom to the zone's camera limit, or the character's 2600 cm maximum when the zone sets none
+  (`StartArmLengthFor`; Grasslands 2600, Eldmoor 2400). The per-frame zoom clamp now uses the zone being
+  blended to, so the zoom-out on entering a zone with a higher limit is not pulled back to the old one.
+  Test `Valhalla.Game.Camera.StartZoom`; checked in PIE both ways (Grasslands → Eldmoor → Grasslands).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

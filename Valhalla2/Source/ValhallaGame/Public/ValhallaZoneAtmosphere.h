@@ -147,7 +147,9 @@ struct FValhallaAtmosphereState
  *     directional lights (the cool fill) and the sky light;
  *   - the player camera's colour gain (the grade tint);
  *   - PP_Fog's vision fog parameters, through AValhallaFogRenderer;
- *   - the camera boom's length, clamped to the zone's maximum;
+ *   - the camera boom's length, clamped to the zone's maximum, and set to that
+ *     maximum (fully zoomed out) when a new pawn arrives (login, respawn) and
+ *     whenever the pawn changes zone (Kevin, 2026-09-25);
  *   - NPCs, other players and loot bags beyond the fully fogged distance are
  *     hidden. The server stops sending them too (relevancy, see
  *     UValhallaVisibilitySubsystem::GetVisionRangeFor); hiding here is what
@@ -185,6 +187,13 @@ public:
 
 	/** The zone the profile currently comes from (the pawn's, by position). */
 	FName GetCurrentZoneId() const { return CurrentZoneId; }
+
+	/**
+	 * The boom length a player starts at on login and on entering a zone: all
+	 * the way out, i.e. the zone's camera limit, or the character's own maximum
+	 * when the zone sets none (<= 0). Pure; tested.
+	 */
+	static float StartArmLengthFor(float ZoneMaxArmCm);
 
 private:
 	/** A light and the intensity the level gave it. */
@@ -244,4 +253,11 @@ private:
 
 	/** Actors this pass hid, so it only ever un-hides its own. */
 	TSet<TWeakObjectPtr<AActor>> HiddenByFog;
+
+	/** The pawn and zone the camera was last zoomed out for (see StartArmLengthFor). */
+	TWeakObjectPtr<AValhallaCharacter> ZoomedOutPawn;
+	FName ZoomedOutZoneId;
+
+	/** Zoom Pawn's camera all the way out, for ZoneMaxArmCm, once per new pawn or zone. */
+	void ZoomOutOnArrival(AValhallaCharacter* Pawn, float ZoneMaxArmCm);
 };

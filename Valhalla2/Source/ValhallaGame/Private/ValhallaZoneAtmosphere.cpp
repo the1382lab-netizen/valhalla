@@ -456,7 +456,9 @@ void AValhallaZoneAtmosphere::Tick(float DeltaSeconds)
 	if (CurrentZoneId.IsNone())
 	{
 		// No zone yet (no pawn, or a zoneless test level): the world is
-		// already showing its own look, so there is nothing to do.
+		// already showing its own look, so there is nothing to do but the
+		// login zoom.
+		ZoomOutOnArrival(Pawn, 0.f);
 		return;
 	}
 
@@ -473,6 +475,10 @@ void AValhallaZoneAtmosphere::Tick(float DeltaSeconds)
 	const FValhallaVision Vision = ValhallaAtmosphere::ResolveVision(LocalState, CurrentZoneId);
 	const FValhallaAtmosphereState NewTarget = BuildTarget(Profile, Vision, LocalState);
 	HideLimitCm = Vision.bHasVisionFog ? Vision.EffectiveRangeCm : 0.f;
+
+	// Login and every zone change start fully zoomed out, at the new zone's
+	// limit (its target, not the blend on its way there).
+	ZoomOutOnArrival(Pawn, NewTarget.CameraMaxArmCm);
 
 	if (!bHaveState)
 	{
@@ -605,15 +611,45 @@ void AValhallaZoneAtmosphere::ApplyState(const FValhallaAtmosphereState& State, 
 	// Only when the zone asks for one: at the character's own limit this does
 	// nothing, so `valhalla.DebugCameraDistance` still pulls the camera out for
 	// screenshots in a zone without a profile.
-	if (Pawn && State.CameraMaxArmCm < AValhallaCharacter::CameraArmMax - 0.5f)
+	//
+	// Against the zone being blended *to* (Target), not the blend itself: a
+	// camera zoomed out on entering a zone with a higher limit would otherwise
+	// be clamped back to the old zone's limit on the first frame of the blend
+	// and stay there.
+	const float CapCm = Target.CameraMaxArmCm;
+	if (Pawn && CapCm < AValhallaCharacter::CameraArmMax - 0.5f)
 	{
 		if (USpringArmComponent* Boom = Pawn->GetCameraBoom())
 		{
-			if (Boom->TargetArmLength > State.CameraMaxArmCm)
+			if (Boom->TargetArmLength > CapCm)
 			{
-				Boom->TargetArmLength = State.CameraMaxArmCm;
+				Boom->TargetArmLength = CapCm;
 			}
 		}
+	}
+}
+
+float AValhallaZoneAtmosphere::StartArmLengthFor(float ZoneMaxArmCm)
+{
+	return ZoneMaxArmCm > 0.f
+		? FMath::Clamp(ZoneMaxArmCm, AValhallaCharacter::CameraArmMin, AValhallaCharacter::CameraArmMax)
+		: AValhallaCharacter::CameraArmMax;
+}
+
+void AValhallaZoneAtmosphere::ZoomOutOnArrival(AValhallaCharacter* Pawn, float ZoneMaxArmCm)
+{
+	if (!Pawn || (Pawn == ZoomedOutPawn.Get() && CurrentZoneId == ZoomedOutZoneId))
+	{
+		return;
+	}
+	const bool bNewPawn = Pawn != ZoomedOutPawn.Get();
+	ZoomedOutPawn = Pawn;
+	ZoomedOutZoneId = CurrentZoneId;
+	if (USpringArmComponent* Boom = Pawn->GetCameraBoom())
+	{
+		Boom->TargetArmLength = StartArmLengthFor(ZoneMaxArmCm);
+		UE_LOG(LogValhallaVision, Log, TEXT("camera: zoomed out to %.0f cm (%s, zone '%s')."), Boom->TargetArmLength,
+			bNewPawn ? TEXT("new pawn") : TEXT("zone change"), CurrentZoneId.IsNone() ? TEXT("-") : *CurrentZoneId.ToString());
 	}
 }
 

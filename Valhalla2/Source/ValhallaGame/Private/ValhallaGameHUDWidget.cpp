@@ -3923,6 +3923,20 @@ FString UValhallaGameHUDWidget::GetLogFilterLabel(FName Key)
 	return Key.ToString();
 }
 
+FString UValhallaGameHUDWidget::FailureMergeKey(const FString& Text)
+{
+	FString Key;
+	Key.Reserve(Text.Len());
+	for (const TCHAR Char : Text)
+	{
+		if (!FChar::IsDigit(Char))
+		{
+			Key.AppendChar(Char);
+		}
+	}
+	return Key;
+}
+
 void UValhallaGameHUDWidget::SpawnFloater(const FValhallaCombatEvent& Event)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_HUD_SpawnFloater);
@@ -3956,13 +3970,31 @@ void UValhallaGameHUDWidget::SpawnFloater(const FValhallaCombatEvent& Event)
 	case EValhallaCombatEventKind::Missed: Text = TEXT("miss");  Colour = Srgb(0xb3, 0xb3, 0xc7); break;
 	case EValhallaCombatEventKind::Dodged: Text = TEXT("dodge"); Colour = Srgb(0xb3, 0xb3, 0xc7); break;
 	case EValhallaCombatEventKind::SkillFailed:
-		// Only the facing failure floats, over the player, like miss / dodge.
-		// Every other failure is a log line alone.
-		if (Event.Reason != UValhallaCombatLibrary::NotFacingReason()) { return; }
-		Text = TEXT("Not facing");
+	{
+		// First public test, bug 3: every refusal floats over the player (it
+		// used to be the facing one alone, every other a log line the tester
+		// never saw). A repeat within a second restarts the floater already up.
+		Text = Event.Reason == UValhallaCombatLibrary::NotFacingReason() ? FString(TEXT("Not facing")) : Event.Text;
+		if (Text.IsEmpty()) { return; }
 		Colour = Srgb(0xff, 0x88, 0x44);
 		Anchor = GetValhallaPawn();
+
+		const double Now = GetWorld() ? GetWorld()->GetRealTimeSeconds() : 0.0;
+		const FString Key = FailureMergeKey(Text);
+		if (ShouldMergeFailure(Key, Now, LastFailureKey, LastFailureAt) && Floaters.IsValidIndex(LastFailureFloater)
+			&& Floaters[LastFailureFloater].StartedAt == LastFailureAt)
+		{
+			FFloater& Shown = Floaters[LastFailureFloater];
+			Shown.Text->SetText(AsText(Text));
+			Shown.StartedAt = Now;
+			LastFailureAt = Now;
+			return;
+		}
+		LastFailureKey = Key;
+		LastFailureFloater = Floaters.Num() > 0 ? NextFloater : INDEX_NONE;
+		LastFailureAt = Now;
 		break;
+	}
 	case EValhallaCombatEventKind::XpGained:
 		Text = FString::Printf(TEXT("+%.0f xp"), Event.Amount);
 		Colour = Srgb(0xd9, 0xc7, 0x73);

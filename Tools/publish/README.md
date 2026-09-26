@@ -18,10 +18,15 @@ Tools\publish\publish.cmd --notes "Eldmoor patrol fixes"
 | `--out-dir D:\Valhalla-Builds` | Where the local copies go (see below). Must be outside the repository. |
 | `--where` | Print the builds folder (moving old copies into it) and stop. |
 | `--check` | Only test the R2 setup (list, write, public link, delete). Publishes nothing. |
+| `--skip-check` | Publish even if the packaged client's content check fails (below). |
 
 ## What it does
 
-1. Packages a Development client with `Tools\perf\package_client.cmd` (game data staged).
+1. Packages a Development client with `Tools\perf\package_client.cmd` (game data staged),
+   then runs the packaged client's content check (`Tools\perf\check_packaged.py`: the client
+   loads everything the game loads by name and quits) and stops if anything is missing. The
+   first public test's build (0.1.1) shipped without animations, fog, weapons, hair and spell
+   effects this way. `--skip-check` publishes anyway (emergencies only).
 2. Picks the version: one more than the highest published, `0.1.1`, `0.1.2`, and so on.
 3. Runs `Tools\audit_client_secrets.py` on the build and stops on any finding.
 4. Writes `version.json` next to `Valhalla2.exe` (version, commit, build time) and a

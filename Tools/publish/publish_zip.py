@@ -9,7 +9,9 @@ files are never overwritten. Only the small pointer files latest.json and
 latest.txt move.
 
 Steps:
-  1. Package the client with Tools/perf/package_client.cmd (skip with --skip-package).
+  1. Package the client with Tools/perf/package_client.cmd (skip with --skip-package),
+     then run the packaged client's content check (Tools/perf/check_packaged.py) and
+     stop if anything the game loads by name is missing (--skip-check to override).
   2. Pick the version: --version, or one more than the highest published so far.
   3. Run Tools/audit_client_secrets.py on the build; stop on any finding.
   4. Write version.json next to Valhalla2.exe and manifest.json beside the zip.
@@ -63,6 +65,7 @@ LEGACY_PUBLISH_DIR = PROJECT / "Saved" / "Publish"   # where they were kept befo
 PUBLISH_DIR = DEFAULT_PUBLISH_DIR
 SECRETS_FILE = REPO / "secrets.local.env"
 PACKAGE_CMD = REPO / "Tools" / "perf" / "package_client.cmd"
+CHECK_PY = REPO / "Tools" / "perf" / "check_packaged.py"
 AUDIT_PY = REPO / "Tools" / "audit_client_secrets.py"
 
 PREFIX = "downloads/"
@@ -218,14 +221,35 @@ class R2:
 
 # ---------------------------------------------------------------- steps
 
-def package() -> None:
+def package(skip_check: bool) -> None:
     say("Packaging the client (Tools/perf/package_client.cmd, a few minutes)...")
-    proc = subprocess.run(["cmd.exe", "/c", str(PACKAGE_CMD)], cwd=REPO, capture_output=True, text=True, errors="replace")
+    cmd = ["cmd.exe", "/c", str(PACKAGE_CMD)] + (["nocheck"] if skip_check else [])
+    proc = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, errors="replace")
     tail = "\n".join(proc.stdout.strip().splitlines()[-15:])
     if "PACKAGE-RC=0" not in proc.stdout or "BUILD SUCCESSFUL" not in proc.stdout:
         print(tail)
         fail("packaging did not succeed (see the lines above; the full output is in Valhalla2/Saved/Logs).")
     say("Packaged.")
+    if not skip_check:
+        report_content_check(proc.stdout)
+
+
+def report_content_check(output: str) -> None:
+    """Stop unless the packaged client's content check passed (first public test: the cook left art out)."""
+    lines = [l for l in output.splitlines() if l.strip()]
+    start = next((i for i, l in enumerate(lines) if "content check" in l.lower()), max(0, len(lines) - 20))
+    if "CONTENT-CHECK=OK" not in output:
+        print("\n".join(lines[start:][-40:]))
+        fail("the packaged client is missing content (see above). Nothing was published. "
+             "Fix DefaultGame.ini's DirectoriesToAlwaysCook, or pass --skip-check to publish anyway.")
+    say("Content check: nothing missing.")
+
+
+def content_check(build: Path) -> None:
+    say("Running the packaged client's content check (Tools/perf/check_packaged.py, about a minute)...")
+    proc = subprocess.run([sys.executable, str(CHECK_PY), "--build-dir", str(build)], cwd=REPO,
+                          capture_output=True, text=True, errors="replace")
+    report_content_check(proc.stdout)
 
 
 def published_versions(r2: R2 | None, public_url: str) -> set[tuple[int, int, int]]:
@@ -382,6 +406,7 @@ def main() -> None:
     ap.add_argument("--notes", default="", help="what changed, shown to testers")
     ap.add_argument("--keep", type=int, default=3, help="how many versions to keep in R2 (default 3)")
     ap.add_argument("--dry-run", action="store_true", help="do everything except upload and delete")
+    ap.add_argument("--skip-check", action="store_true", help="publish even if the packaged client's content check fails (emergencies only)")
     ap.add_argument("--check", action="store_true", help="only test the R2 setup: credentials, bucket, upload, public link; publishes nothing")
     ap.add_argument("--out-dir", type=Path, help=f"where local copies go (default: VALHALLA_BUILDS_DIR, else {DEFAULT_PUBLISH_DIR}); must be outside the repository")
     ap.add_argument("--where", action="store_true", help="print the builds folder (moving old copies into it) and stop")
@@ -432,10 +457,14 @@ def main() -> None:
         fail(f"{zip_key} is already in the bucket. Published versions are never overwritten; pick another --version.")
 
     if not args.skip_package:
-        package()
+        package(args.skip_check)
     build = args.build_dir.resolve()
     if not (build / LAUNCH_EXE).is_file():
         fail(f"no {LAUNCH_EXE} in {build}. Package first, or point --build-dir at a packaged Windows folder.")
+    if args.skip_check:
+        say("WARNING: --skip-check: the packaged client's content was not checked.")
+    elif args.skip_package:
+        content_check(build)
 
     audit(build)
 

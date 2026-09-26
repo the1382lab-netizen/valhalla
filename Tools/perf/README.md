@@ -10,7 +10,8 @@ script runs the editor binaries (no packaged build needed), vsync off, no frame 
 | `standalone_bench.cmd eldmoor` | The same at Harrow's Rest in Eldmoor (walls, fires, fog). Add a second argument to change a setting at frame 900, e.g. `standalone_bench.cmd eldmoor "scalability 2"`. |
 | `fog_bench.cmd [old]` | Standalone, Harrow's Rest: standing, then walking about. Prints the fog's cost a frame (CSV `Valhalla/GameThread/FogTick`); `old` runs the pre-Phase 5 path (`valhalla.FogAlwaysRecompute 1`). |
 | `combat_bench.cmd` | A dedicated server, one profiled client and three windowless bot clients fighting at three Eldmoor camps. Writes a CSV and an Insights trace of the profiled client. Needs about 15 GB of free memory. |
-| `package_client.cmd` | Stages the game data and packages a Development client into `Saved/Perf/pkg` (the editor can stay open). |
+| `package_client.cmd [nocheck]` | Stages the game data and packages a Development client into `Saved/Perf/pkg` (the editor can stay open), then runs `check_packaged.py`. |
+| `check_packaged.py` | Runs the packaged client with `valhalla.CheckContent quit` (loads everything the game loads by name) and reads its log; prints `CONTENT-CHECK=OK` or `FAIL` with the missing paths. Fix a failure in `DefaultGame.ini`'s `DirectoriesToAlwaysCook`. |
 | `record_pso.cmd` / `build_pso_cache.cmd` | Record the shader pipelines a packaged client uses and build the bundled PSO cache from them (below). |
 | `csv_summary.py` | Summarises a CSV capture: fps, p99, hitches, game / render thread and GPU time, combat events per second (`--combat` splits the fight into 10 s windows, `--stats` prints any columns). |
 

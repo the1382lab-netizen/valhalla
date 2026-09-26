@@ -482,8 +482,11 @@ protected:
 	 */
 	static constexpr float CameraOrbitDegreesPerUnit = 3.5f;
 
-	/** The Sobel silhouette material. See build_toon.py for how it is authored. */
+public:
+	/** The Sobel silhouette material. See build_toon.py for how it is authored. Public for ValhallaContent's list. */
 	static constexpr const TCHAR* OutlineMaterialPath = TEXT("/Game/Valhalla/Materials/PP_Outline");
+
+protected:
 
 	/** Priority of the mapping context. Phase 8's UI pushes its own above this. */
 	static constexpr int32 MappingContextPriority = 0;

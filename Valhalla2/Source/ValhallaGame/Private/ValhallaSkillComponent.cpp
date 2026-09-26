@@ -261,6 +261,14 @@ void UValhallaSkillComponent::CastFromActionBar(int32 Slot, AActor* Target, cons
 		else
 		{
 			AActor* AttackTarget = Target ? Target : AutoAttackTargetActor.Get();
+			if (!AttackTarget)
+			{
+				// First public test, bug 3: nothing selected is known here, so
+				// say so without a round trip (SendSkillFailed's client RPC runs
+				// locally on the owning client).
+				SendSkillFailed(UValhallaCombatLibrary::WhyNotAttackable(GetOwner(), nullptr), NAME_None, SkillId);
+				return;
+			}
 			ServerStartAutoAttackWith(AttackTarget, SkillId);
 		}
 		return;
@@ -415,30 +423,20 @@ FString UValhallaSkillComponent::ValidateCast(const FValhallaSkillTemplate& Skil
 	// ── Single-target rules ──────────────────────────────────────────────
 	if (Skill.TargetType == EValhallaSkillTargetType::SingleEnemy || Skill.TargetType == EValhallaSkillTargetType::SingleAlly)
 	{
-		if (!Target)
-		{
-			return TEXT("No target selected");
-		}
-		if (!UValhallaCombatLibrary::IsAliveTarget(Target))
-		{
-			return TEXT("Target is dead");
-		}
-
 		// devlog_changes.txt 2026-02-20 — the target *class* is enforced, not just
 		// its existence. Minor Heal cast at an enemy used to silently heal the
 		// caster; now it is refused here, on the server, where it cannot be
 		// bypassed by a client that skips the matching check in GameScene.
-		const bool bTargetIsNpc = UValhallaCombatLibrary::IsNpcTarget(Target);
-		if (Skill.TargetType == EValhallaSkillTargetType::SingleAlly && bTargetIsNpc)
-		{
-			return TEXT("Invalid target");
-		}
 		// B-06: "an NPC" is not enough for an enemy skill — a friendly NPC (a
-		// vendor, a guard) is an NPC nobody may attack. AreHostile is the same
-		// test the auto-attack and every AoE already use.
-		if (Skill.TargetType == EValhallaSkillTargetType::SingleEnemy && !UValhallaCombatLibrary::AreHostile(Character, Target))
+		// vendor, a guard) is an NPC nobody may attack (AreHostile, the test the
+		// auto-attack and every AoE use). First public test, bug 3: each refusal
+		// says which rule it was, not "Invalid target".
+		const FString Why = Skill.TargetType == EValhallaSkillTargetType::SingleEnemy
+			? UValhallaCombatLibrary::WhyNotAttackable(Character, Target)
+			: UValhallaCombatLibrary::WhyNotHelpable(Target);
+		if (!Why.IsEmpty())
 		{
-			return TEXT("Invalid target");
+			return Why;
 		}
 	}
 
@@ -810,9 +808,12 @@ void UValhallaSkillComponent::ServerStartAutoAttackWith_Implementation(AActor* T
 		return;
 	}
 
-	if (!UValhallaCombatLibrary::IsAliveTarget(Target) || !UValhallaCombatLibrary::AreHostile(GetOwner(), Target))
+	// First public test, bug 3: pressing auto-attack with nothing selected was
+	// "Invalid target"; each refusal now names its rule.
+	const FString Why = UValhallaCombatLibrary::WhyNotAttackable(GetOwner(), Target);
+	if (!Why.IsEmpty())
 	{
-		SendSkillFailed(TEXT("Invalid target"));
+		SendSkillFailed(Why);
 		return;
 	}
 
@@ -1214,11 +1215,12 @@ void UValhallaSkillComponent::ServerFixedTick(float FixedDeltaSeconds, double No
 						return;
 					}
 
-					const bool bTargetIsNpc = UValhallaCombatLibrary::IsNpcTarget(Target);
-					if ((Skill->TargetType == EValhallaSkillTargetType::SingleAlly && bTargetIsNpc)
-						|| (Skill->TargetType == EValhallaSkillTargetType::SingleEnemy && !UValhallaCombatLibrary::AreHostile(GetOwner(), Target)))
+					const FString Why = Skill->TargetType == EValhallaSkillTargetType::SingleEnemy
+						? UValhallaCombatLibrary::WhyNotAttackable(GetOwner(), Target)
+						: UValhallaCombatLibrary::WhyNotHelpable(Target);
+					if (!Why.IsEmpty())
 					{
-						SendSkillFailed(TEXT("Invalid target"));
+						SendSkillFailed(Why, NAME_None, FinishedId);
 						return;
 					}
 				}

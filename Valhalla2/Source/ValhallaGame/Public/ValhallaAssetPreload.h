@@ -112,6 +112,9 @@ public:
 	/** Every spell effect, the body, head and hair, the player body's animations, every item's equipment mesh. */
 	static void GatherCommonAssets(const class UValhallaDataSubsystem* Data, TArray<FString>& OutPaths);
 
+	/** Every item's equipment or held mesh, as the active body wears it (part of the common set). */
+	static void GatherItemAssets(const TMap<FName, struct FValhallaItemTemplate>& Items, TArray<FString>& OutPaths);
+
 	/** One NPC Type's art: its own body and animations, or its armour pieces (swapped for the active body) and the placeholder kit. */
 	static void GatherNPCTypeAssets(const AValhallaNPC* TypeDefaults, TArray<FString>& OutPaths);
 

@@ -2699,6 +2699,43 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in
   use), hence `-IgnoreCookErrors`. A packaged Development client joins an editor-binary dedicated server.
 
+## First public test fixes (2026-09-25)
+
+Bug list: Drive, "Valhalla 2.0 — First public test (bugs)". The first tester build (0.1.1) connected
+and played cleanly, but:
+
+- **Bugs 1 and 2: no animations, no vision fog (and no NPC weapons, hair, hats, spell effects, outline,
+  class-proxy tint).** Everything the game loads by name (`ValhallaAssets::Load`, `LoadObject`) had no
+  reference for the cook to follow, so the package left it out; the editor never shows this. Fixed in the
+  cook: `DefaultGame.ini` `DirectoriesToAlwaysCook` now holds `/Game/Valhalla/UI` (was `UI/HUD`),
+  `Characters/MetaHuman/Animations`, `/Equipment`, `/Hair`, the MetaHuman body and face folders
+  (`Build/Medium/MHC_ValhallaBase/Body`, `/Face`), `Characters/Goblin`, `Characters/Weapons`,
+  `/Game/Fab/Stylized_Goblin_Minion_-_Free`, `Materials`, `VFX` and `Props/SM_PortalMarker`
+  (`MetaHuman/Build/Common` and `/Export` stay out). `ValhallaContentCheck.h` is the one list of what the
+  game loads by name (the preloader's common set, every item's mesh, every NPC Type's art, the placeholder
+  kit, `PP_Fog`, `PP_Outline`, `M_ClassProxy`, the portal marker): test `Valhalla.Content.CookCoverage`
+  fails when one of them does not exist or lies outside those folders (99 assets, 16 NPC Types), and
+  `valhalla.CheckContent [quit]` loads them all in any build ("content check: N checked, M missing").
+- **Packaging check.** `Tools/perf/package_client.cmd` now runs `check_packaged.py` after packaging: the
+  packaged client runs `valhalla.CheckContent quit` on L_World, and any MISSING / "Failed to find object"
+  / "missing animation" line, or no report at all, prints `CONTENT-CHECK=FAIL`. `Tools/publish` refuses
+  to publish a failed build (`--skip-check` overrides). The new package: 99 checked, 0 missing. Played
+  packaged in Harrow's Rest and Eldmoor: NPCs animate and hold their weapons, the vision mist draws.
+- **Bug 3: 105 "Invalid target" refusals.** The tester mostly pressed auto-attack with nothing selected,
+  which the server answered "Invalid target" (the skill path already said "No target selected"); dead
+  targets, other players and friendly NPCs got the same text, and every refusal but "not facing" was only a
+  combat-log line. `UValhallaCombatLibrary::WhyNotAttackable` / `WhyNotHelpable` (rule in
+  `WhyNotAttackableFrom`, tested) name the rule: "No target selected", "Target is dead", "You can't attack
+  yourself", "You can't attack other players", "You can't attack <name>" (a friendly NPC), "You can't
+  attack that", "You can only use that on players"; used by the cast validation, the auto-attack start and
+  the fire-time re-check. Auto-attack with nothing selected is answered on the client without a round trip.
+  Every refusal now floats over the player (orange, like "Not facing"); the same refusal within a second
+  restarts the floater already up instead of stacking (digits ignored, so a cooldown countdown is one
+  refusal). Tests `Valhalla.Game.Combat.AttackRefusals`, `Valhalla.UI.FailureFloaterMerge`.
+- **PSO cache re-recorded** on the fixed package (`record_pso.cmd`, `build_pso_cache.cmd`): 104 recorded,
+  307 stable pipelines (was 99 / 298), now including the animations', fog's and effects' materials.
+- `Valhalla.` suite: 62 tests, 61 pass (known MeshIdFallback).
+
 ## Backlog
 
 Open features and improvements are tracked in Google Drive, folder

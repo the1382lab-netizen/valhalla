@@ -1339,6 +1339,29 @@ private:
 	TArray<FFloater> Floaters;
 	int32 NextFloater = 0;
 
+	/**
+	 * First public test, bug 3: every refused action floats its reason over the
+	 * player. The same reason again within FailureMergeSeconds restarts the
+	 * floater already up instead of stacking a new one (a held key sends ~7 a
+	 * second). Digits do not count: "On cooldown (5s)" repeats "(6s)".
+	 */
+	static constexpr double FailureMergeSeconds = 1.0;
+	FString LastFailureKey;
+	int32 LastFailureFloater = INDEX_NONE;
+	double LastFailureAt = -1000.0;
+
+public:
+	/** The merge key of a failure text: the text without its digits. Public for the tests. */
+	static FString FailureMergeKey(const FString& Text);
+
+	/** True when a failure with `Key` at `Now` repeats the one shown at `LastAt` with `LastKey`. */
+	static bool ShouldMergeFailure(const FString& Key, double Now, const FString& LastKey, double LastAt)
+	{
+		return !Key.IsEmpty() && Key == LastKey && Now - LastAt < FailureMergeSeconds;
+	}
+
+private:
+
 	/** UPROPERTY holder for the pooled world-layer widgets, so GC sees them. */
 	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> PooledWidgets;
 

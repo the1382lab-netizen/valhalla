@@ -73,6 +73,20 @@ struct VALHALLAGAME_API FValhallaCombatant
  * the three rules most likely to be broken by a later edit, and all three can be
  * checked without standing a map up.
  */
+/** What UValhallaCombatLibrary::WhyNotAttackable reads off the attacker and the target. */
+struct FValhallaAttackFacts
+{
+	bool bHasTarget = false;
+	bool bTargetIsSelf = false;
+	bool bTargetIsCombatant = false;  // an NPC or a player character
+	bool bTargetAlive = false;
+	bool bHostile = false;
+	bool bTargetIsFriendlyNpc = false;
+	bool bTargetIsPlayer = false;
+	bool bAttackerIsPlayer = false;
+	FString TargetName;
+};
+
 UCLASS()
 class VALHALLAGAME_API UValhallaCombatLibrary : public UBlueprintFunctionLibrary
 {
@@ -115,6 +129,21 @@ public:
 	/** True when the two actors are on opposing sides. Players and NPCs are enemies; two players are not (Phase 2c adds PvP). */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Combat")
 	static bool AreHostile(const AActor* A, const AActor* B);
+
+	/**
+	 * Why `Attacker` may not attack `Target`, as the player reads it; empty when
+	 * it may (alive and hostile). First public test, bug 3: every one of these
+	 * used to be "Invalid target" — "No target selected", "Target is dead",
+	 * "You can't attack yourself", "You can't attack other players",
+	 * "You can't attack <name>" (a friendly NPC), "You can't attack that".
+	 */
+	static FString WhyNotAttackable(const AActor* Attacker, const AActor* Target);
+
+	/** The rule behind WhyNotAttackable, from what it reads off the two actors (pure; tested). */
+	static FString WhyNotAttackableFrom(const FValhallaAttackFacts& Facts);
+
+	/** Why a single-ally skill cannot go to `Target`; empty when it can (a living player). */
+	static FString WhyNotHelpable(const AActor* Target);
 
 	/** True for an AValhallaNPC. The port of `isNpcTarget` (handlers/registry.ts:22). */
 	UFUNCTION(BlueprintPure, Category = "Valhalla|Combat")

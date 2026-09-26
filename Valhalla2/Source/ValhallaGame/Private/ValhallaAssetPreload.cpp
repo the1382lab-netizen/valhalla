@@ -339,12 +339,17 @@ void UValhallaAssetPreloadSubsystem::GatherCommonAssets(const UValhallaDataSubsy
 	// Every item's equipment mesh: what any player might be wearing.
 	if (Data)
 	{
-		for (const TPair<FName, FValhallaItemTemplate>& Item : Data->GetItems())
-		{
-			bool bSkeletal = true;
-			const FString Path = UValhallaVisuals::EquipmentAssetPath(Item.Value, bSkeletal);
-			AddUnique(OutPaths, bSkeletal ? UValhallaVisuals::PiecePathForActiveBody(Path) : Path);
-		}
+		GatherItemAssets(Data->GetItems(), OutPaths);
+	}
+}
+
+void UValhallaAssetPreloadSubsystem::GatherItemAssets(const TMap<FName, FValhallaItemTemplate>& Items, TArray<FString>& OutPaths)
+{
+	for (const TPair<FName, FValhallaItemTemplate>& Item : Items)
+	{
+		bool bSkeletal = true;
+		const FString Path = UValhallaVisuals::EquipmentAssetPath(Item.Value, bSkeletal);
+		AddUnique(OutPaths, bSkeletal ? UValhallaVisuals::PiecePathForActiveBody(Path) : Path);
 	}
 }
 

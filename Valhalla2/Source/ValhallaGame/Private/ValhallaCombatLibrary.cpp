@@ -122,6 +122,75 @@ bool UValhallaCombatLibrary::AreHostile(const AActor* A, const AActor* B)
 	return IsNpcTarget(A) != IsNpcTarget(B);
 }
 
+FString UValhallaCombatLibrary::WhyNotAttackable(const AActor* Attacker, const AActor* Target)
+{
+	FValhallaAttackFacts Facts;
+	Facts.bHasTarget = Target != nullptr;
+	if (Target)
+	{
+		const AValhallaNPC* Npc = Cast<AValhallaNPC>(Target);
+		Facts.bTargetIsSelf = Target == Attacker;
+		Facts.bTargetIsPlayer = Target->IsA<AValhallaCharacter>();
+		Facts.bTargetIsCombatant = Npc || Facts.bTargetIsPlayer;
+		Facts.bTargetAlive = IsAliveTarget(Target);
+		Facts.bHostile = AreHostile(Attacker, Target);
+		Facts.bTargetIsFriendlyNpc = Npc && Npc->bFriendly;
+		Facts.TargetName = Facts.bTargetIsFriendlyNpc ? GetDisplayName(Target) : FString();
+	}
+	Facts.bAttackerIsPlayer = Attacker && Attacker->IsA<AValhallaCharacter>();
+	return WhyNotAttackableFrom(Facts);
+}
+
+FString UValhallaCombatLibrary::WhyNotAttackableFrom(const FValhallaAttackFacts& Facts)
+{
+	if (!Facts.bHasTarget)
+	{
+		return TEXT("No target selected");
+	}
+	if (Facts.bTargetIsSelf)
+	{
+		return TEXT("You can't attack yourself");
+	}
+	if (!Facts.bTargetIsCombatant)
+	{
+		return TEXT("You can't attack that");
+	}
+	if (!Facts.bTargetAlive)
+	{
+		return TEXT("Target is dead");
+	}
+	if (Facts.bHostile)
+	{
+		return FString();
+	}
+	if (Facts.bTargetIsFriendlyNpc)
+	{
+		return Facts.TargetName.IsEmpty() ? FString(TEXT("You can't attack that")) : FString::Printf(TEXT("You can't attack %s"), *Facts.TargetName);
+	}
+	if (Facts.bTargetIsPlayer && Facts.bAttackerIsPlayer)
+	{
+		return TEXT("You can't attack other players");
+	}
+	return TEXT("You can't attack that");
+}
+
+FString UValhallaCombatLibrary::WhyNotHelpable(const AActor* Target)
+{
+	if (!Target)
+	{
+		return TEXT("No target selected");
+	}
+	if (!Target->IsA<AValhallaCharacter>())
+	{
+		return TEXT("You can only use that on players");
+	}
+	if (!IsAliveTarget(Target))
+	{
+		return TEXT("Target is dead");
+	}
+	return FString();
+}
+
 FString UValhallaCombatLibrary::GetDisplayName(const AActor* Actor)
 {
 	if (const AValhallaNPC* Npc = Cast<AValhallaNPC>(Actor))

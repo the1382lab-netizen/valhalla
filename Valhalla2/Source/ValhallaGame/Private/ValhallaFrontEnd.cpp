@@ -18,6 +18,7 @@
 #include "Components/ScrollBox.h"
 #include "Components/ScrollBoxSlot.h"
 #include "Components/SizeBox.h"
+#include "Components/Spacer.h"
 #include "Components/TextBlock.h"
 #include "Components/UniformGridPanel.h"
 #include "Components/UniformGridSlot.h"
@@ -728,12 +729,10 @@ void UValhallaCharacterSelectWidget::BuildUi()
 		TitleSlot->SetVerticalAlignment(VAlign_Center);
 		TitleSlot->SetPadding(FMargin(20.f, 0.f, 0.f, 0.f));
 
-		HeaderText = MakeBody(Tree, FString(), 15, ValhallaUIArt::InkDim, TEXT("Italic"));
-		HeaderText->SetClipping(EWidgetClipping::ClipToBounds);
-		HeaderText->SetTextOverflowPolicy(ETextOverflowPolicy::Ellipsis);
-		UHorizontalBoxSlot* HeaderSlot = Header->AddChildToHorizontalBox(HeaderText);
-		HeaderSlot->SetVerticalAlignment(VAlign_Center);
-		HeaderSlot->SetHorizontalAlignment(HAlign_Right);
+		// Nothing between the title and ACCOUNT (Kevin, 2026-09-26): an empty
+		// spacer. HeaderText stays null; SetCharacters skips it.
+		USpacer* HeaderGap = Tree.ConstructWidget<USpacer>(USpacer::StaticClass());
+		UHorizontalBoxSlot* HeaderSlot = Header->AddChildToHorizontalBox(HeaderGap);
 		HeaderSlot->SetSize(FSlateChildSize(ESlateSizeRule::Fill));
 		HeaderSlot->SetPadding(FMargin(20.f, 0.f, 24.f, 0.f));
 

@@ -115,12 +115,20 @@ To turn home-network play off again, set `HOST=127.0.0.1` and restart
 
 ## Building the client for testers
 
-1. In the Unreal editor's Python console:
-   `py "<project>/Plugins/ValhallaTools/Content/Python/valhalla_tools/stage_game_data.py"`
-   (copies `shared/data` into the build).
-2. **Platforms → Windows → Package Project** (Development). Zip the output
-   folder and send it.
-3. The client and the game server must come from the same commit.
+**`Tools\publish\publish.cmd --notes "what changed"`** packages the client (game
+data staged), checks it for secrets, zips it as `Valhalla-<version>.zip`
+(`0.1.1`, `0.1.2`, …), uploads it to the R2 bucket and prints the download link
+to send to testers. The newest 3 versions stay in R2. One-time setup (bucket,
+token, the `R2_*` lines in `secrets.local.env`) and options:
+[Tools/publish/README.md](../Tools/publish/README.md).
+
+The client and the game server must come from the same commit; the script prints
+which commit the build is.
+
+By hand, if you need to: in the Unreal editor's Python console run
+`py "<project>/Plugins/ValhallaTools/Content/Python/valhalla_tools/stage_game_data.py"`
+(copies `shared/data` into the build), then **Platforms → Windows → Package
+Project** (Development) and zip the output folder.
 
 Launch options, for when the defaults don't fit:
 

@@ -2617,6 +2617,53 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   already small; the gain is bandwidth and the server's per-player work as players and camps grow). The
   warrior's client still receives its own camp's events (its own and the cleric's beside it); the other two
   camps' no longer arrive. `Valhalla.` suite: 52 tests, 51 pass (known MeshIdFallback).
+- [x] **Phase 4: graphics settings.**
+      - *Per-account settings* (decision 3). `FValhallaGraphicsSettings` (ValhallaCore, JSON version 1: `Quality`
+        low/medium/high/epic, `GlobalIllumination`, `ResolutionScale` 50–100, `FrameRateCap` 0 = none,
+        `VSync`, `MotionBlur`, `UpdatedAt`, unknown fields kept). `UValhallaGraphicsSettingsSubsystem` applies it
+        through `UGameUserSettings` (`ApplyNonResolutionSettings`, so a `-windowed -resx` launch is left alone;
+        then `SaveSettings`) plus `r.MotionBlurQuality` as a game setting. At start it applies
+        `Saved/Settings/graphics_local.json` (what this PC applied last; the defaults on a first launch: High,
+        GI on, 100 %, no cap, VSync off, motion blur off). At login (`AValhallaFrontEndController::
+        ShowCharacterSelect`, on the front end, before the world loads) it loads the account:
+        `graphics_<userId>.json`, then `GET /api/account/settings`, newer `UpdatedAt` wins, a newer or
+        never-sent local copy is PUT back (the B-21 rules). Changes save 2 s after the last one (both cache
+        files, then `PUT`). Log out forgets the account, the settings stay in force. The editor's own
+        scalability is never touched until the player changes something in PIE; nothing is applied without a
+        renderer. `valhalla.Graphics [preset= gi= scale= cap= vsync= mb=]` applies without saving (benchmarks),
+        bare prints what is in force.
+      - *Backend*: table `account_settings` (user_id, graphics_json, updated_at; created on start like
+        `character_settings`, deleted with the account), `GET/PUT /api/account/settings` (`routes/account.ts`,
+        `SettingsService`: a JSON object ≤ 64 KB, rate limited with the character settings).
+        `server/scripts/smoke-settings.ts` section 7 (54 checks pass). The running auth server needs a restart
+        to serve the new route.
+      - *Graphics tab* (decision 7), tab 5 of the options menu: Low / Medium / High / Epic buttons, the preset
+        label ("Custom (High, global illumination off)" when GI differs from the preset's own choice; Low's is
+        off), Global illumination, Resolution scale (50–100 %, steps of 5), Frame-rate cap (None, 30, 60, 90,
+        120, 144, 165, 240), VSync, Motion blur, Reset graphics, and a note that they follow the account.
+        `hud_blueprints.add_graphics_tab()` added it to WBP_OptionsMenu in place (menu 540 wide for six tabs;
+        `layout_options_menu` builds it too through the shared `_OptionsMenuKit`). `valhalla.UI options <tab>`
+        opens the menu on a tab.
+      - *Project defaults* (decisions 1, 2): hardware ray tracing off (`r.RayTracing=False`,
+        `r.Lumen.HardwareRayTracing=False`; Lumen on distance fields); the High preset is the default and
+        carries anti-aliasing history 100 %; motion blur off through the setting. The floor tile fields write
+        custom depth only while `valhalla.Visual.Outline` is on (`AValhallaTileField::ApplyCustomDepth`,
+        refreshed when the outline is applied): the outline is off since B-15, so no custom depth pass.
+      - *Fire lights* (decision 6): `fire_lights.py` now gives shadows to the campfires only (8 lights:
+        Campfire_01, the Yard and Bailey campfires, camps C1, C3, C4, C5 and C10); braziers, fireplaces, forges and torches (24) no longer cast
+        them; every flicker light function fades out beyond 35 m (`FLICKER_FADE_CM`). Re-run on L_GrasslandsV2,
+        saved.
+      - Tests `Valhalla.Core.GraphicsSettings.Defaults` / `.Json` / `.Presets`; `Valhalla.Game.UI.OptionsMenu`
+        checks six tabs and the new parts. `standalone_bench.cmd` takes `GRAPHICS=<valhalla.Graphics args>`.
+- **Phase 4 results** (editor binaries, standalone, 1920×1080 at 100 % resolution, vsync off; Phase 0 ran the
+  editor at 73 %): Harrow's Rest High 59–61 fps (GPU 14.6–15.3 ms, render thread 16–17 ms) against 47 fps on
+  Epic (GPU 19.6, RT 21.1); the old town High 48 fps, game-thread bound (22 ms on Epic, 20.7 on High: Phase
+  6's NPC animation). Packaged client, networked combat test (High defaults, the new PSO cache: 99 recorded,
+  298 stable pipelines, all precompiled at start, 1 new compute PSO in play): 69 fps idle / 72 fps fighting
+  (Phase 0: 68 / 64), GPU 12.4 ms, render thread 13.8 ms; worst frame entering the fight 82 ms (target
+  100). End to end against a throwaway backend (port 2601, its own database, two auto-logins): a new account had none saved
+  and got this PC's settings (404, PUT 200); a newer copy put on the backend was adopted and applied at the
+  next login, on the front end. `Valhalla.` suite: 55 tests, 54 pass (known MeshIdFallback).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

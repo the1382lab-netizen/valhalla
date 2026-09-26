@@ -16,16 +16,23 @@ import unreal
 
 TAG = "ValhallaFireLight"
 #: mesh -> (local offset cm, candelas, attenuation radius cm, cast shadows)
+#: B-27 Phase 4 (decision 6): only the big fires, the campfires, cast shadows.
+#: The braziers, fireplaces, forges and torches lit Eldmoor with 17 more
+#: shadowed movable lights (1.9 ms of GPU with the flicker, measured 2026-09-25).
 FIRES = {
     "SM_Campfire": ((0.0, 0.0, 30.0), 70.0, 650.0, True),
     "SM_CampfireCooking": ((0.0, 0.0, 28.0), 70.0, 650.0, True),
-    "SM_Brazier": ((0.0, 0.0, 100.0), 50.0, 550.0, True),
-    "SM_Fireplace": ((0.0, 35.0, 35.0), 45.0, 500.0, True),
+    "SM_Brazier": ((0.0, 0.0, 100.0), 50.0, 550.0, False),
+    "SM_Fireplace": ((0.0, 35.0, 35.0), 45.0, 500.0, False),
     "SM_Candle": ((0.0, 0.0, 30.0), 3.0, 160.0, False),
     "SM_TempleAltar": ((0.0, -5.0, 98.0), 6.0, 260.0, False),
-    "SM_Forge": ((0.0, 0.0, 65.0), 40.0, 500.0, True),              # B-06 Eldmoor smithy
-    "SM_TorchSconce": ((0.0, 15.0, 30.0), 14.0, 420.0, True),       # B-06 undercroft wall torch
+    "SM_Forge": ((0.0, 0.0, 65.0), 40.0, 500.0, False),             # B-06 Eldmoor smithy
+    "SM_TorchSconce": ((0.0, 15.0, 30.0), 14.0, 420.0, False),      # B-06 undercroft wall torch
 }
+#: B-27 Phase 4: the flicker (light function) is drawn only within this distance
+#: of the camera, cm; further away the light burns steady. The camera sits
+#: 1500 cm from the player, so every fire on screen is inside it.
+FLICKER_FADE_CM = 3500.0
 COLOR = unreal.Color(r=255, g=150, b=70, a=255)
 EAS = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 FLICKER = ("MI_FireFlicker_A", "MI_FireFlicker_B", "MI_FireFlicker_C")
@@ -61,6 +68,7 @@ def configure(light, actor, mesh_name):
     pick = FLICKER[zlib.crc32(actor.get_path_name().encode()) % len(FLICKER)]
     mi = unreal.EditorAssetLibrary.load_asset("/Game/Valhalla/Materials/Sets/" + pick)
     lc.set_editor_property("light_function_material", mi)
+    lc.set_editor_property("light_function_fade_distance", FLICKER_FADE_CM)
     loc = actor.get_actor_transform().transform_location(unreal.Vector(*offset))
     light.set_actor_location(loc, False, False)
 

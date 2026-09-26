@@ -651,7 +651,8 @@ bool FValhallaUIOptionsMenuTest::RunTest(const FString& /*Parameters*/)
 			TestNotNull(*FString::Printf(TEXT("WBP_OptionsMenu has %s"), *Name.ToString()), MenuTree->FindWidget(Name));
 		}
 		const UWidgetSwitcher* Switcher = Cast<UWidgetSwitcher>(MenuTree->FindWidget(TEXT("Tabs")));
-		TestTrue(TEXT("five tabs"), Switcher && Switcher->GetNumWidgets() == 5);
+		// Layout, Colours, Chat & log, Nameplates, Controls, and B-27's Graphics.
+		TestTrue(TEXT("six tabs"), Switcher && Switcher->GetNumWidgets() == 6);
 	}
 	const UClass* HudClass = StaticLoadClass(UValhallaGameHUDWidget::StaticClass(), nullptr, TEXT("/Game/Valhalla/UI/HUD/WBP_GameHUD.WBP_GameHUD_C"));
 	const UValhallaGameHUDWidget* HudDefaults = HudClass ? Cast<UValhallaGameHUDWidget>(HudClass->GetDefaultObject()) : nullptr;

@@ -15,6 +15,7 @@ import { SERVER_PORT } from '@valhalla/shared';
 import { initDatabase } from './db/index.js';
 import { authRouter } from './routes/auth.js';
 import { charactersRouter } from './routes/characters.js';
+import { accountRouter } from './routes/account.js';
 import { internalRouter } from './routes/internal.js';
 import { dataRouter } from './routes/data.js';
 import { logServerSecretStatus } from './middleware/serverSecret.js';
@@ -73,6 +74,7 @@ app.use('/api', internalRouter);
 // Auth & character API routes
 app.use('/api/auth', authRouter);
 app.use('/api/characters', charactersRouter);
+app.use('/api/account', accountRouter);
 
 const server = createServer(app);
 server.listen(PORT, HOST, () => {

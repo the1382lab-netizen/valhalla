@@ -331,6 +331,7 @@ using FValhallaSettingsPutCallback = TFunction<void(bool /*bOk*/, int32 /*Status
  *
  *   client  Register / Login / ListCharacters / CreateCharacter / DeleteCharacter
  *           / GetCharacterSettings / PutCharacterSettings (B-21)
+ *           / GetAccountSettings / PutAccountSettings (B-27)
  *           — authenticated by the player's own bearer token.
  *   server  Verify / LoadCharacter / SaveCharacter / Health
  *           — authenticated by `X-Server-Secret`, which is the shared secret in
@@ -384,6 +385,15 @@ public:
 
 	/** B-21 `PUT /api/characters/:id/settings` with body `{ "ui": Ui }` (the backend refuses over 64 KB). */
 	void PutCharacterSettings(const FString& Token, int32 CharacterId, const TSharedRef<FJsonObject>& Ui, FValhallaSettingsPutCallback OnDone);
+
+	/**
+	 * B-27 `GET /api/account/settings` — the account's graphics document (the
+	 * callback's Ui argument; 404 = nothing saved yet).
+	 */
+	void GetAccountSettings(const FString& Token, FValhallaSettingsGetCallback OnDone);
+
+	/** B-27 `PUT /api/account/settings` with body `{ "graphics": Graphics }`. */
+	void PutAccountSettings(const FString& Token, const TSharedRef<FJsonObject>& Graphics, FValhallaSettingsPutCallback OnDone);
 
 	// ── The in-world player session (B-21) ─────────────────────────────
 

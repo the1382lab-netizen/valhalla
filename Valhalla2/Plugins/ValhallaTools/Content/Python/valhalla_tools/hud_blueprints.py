@@ -147,6 +147,9 @@ OPTIONS_MENU_PARTS = (
     "NpcNameplatesCheck", "PlayerNameplatesCheck", "FloatingTextCheck",
     "NameplateFontSlider", "NameplateFontText", "ResetNameplatesButton",
     "ControlsText",
+    "GraphicsTabButton", "PresetLowButton", "PresetMediumButton", "PresetHighButton", "PresetEpicButton",
+    "PresetText", "GlobalIlluminationCheck", "ResolutionScaleSlider", "ResolutionScaleText",
+    "FrameRateCapSlider", "FrameRateCapText", "VSyncCheck", "MotionBlurCheck", "ResetGraphicsButton",
 )
 
 #: UValhallaHUDSlotWidget's BindWidgetOptional parts.
@@ -1294,10 +1297,128 @@ def wire_options_menu():
     return out
 
 
+#: WBP_OptionsMenu's width (Slate units): six tab buttons since B-27's Graphics tab.
+MENU_WIDTH = 540.0
+
+
+class _OptionsMenuKit:
+    """The options menu's row builders (text, buttons, check and slider rows, headers) on one _TreeBuilder."""
+
+    def __init__(self, builder):
+        self.b = builder
+        self.button_art = _ui_texture("T_UI_Button")
+        self.title_c = _colour("#ffcc00")
+        self.label_c = _colour("#aaaacc")
+        self.value_c = _colour("#ddd6c4")
+        self.close_c = _colour("#8888aa")
+
+    def text(self, parent, name, content, size=8, colour=None, bold=False, wrap=False, variable=False):
+        widget, slot = self.b.add(unreal.TextBlock.static_class(), name, parent, variable)
+        _text(widget, content, size, colour or self.value_c, bold=bold, wrap=wrap)
+        return widget, slot
+
+    def button(self, parent, name, caption, tint=None):
+        widget, slot = self.b.add(unreal.Button.static_class(), name, parent, True)
+        widget.set_background_color(tint or self.close_c)
+        _button_art(widget, self.button_art)
+        _not_focusable(widget)
+        self.text(widget, name + "Label", caption, 8, unreal.LinearColor(0, 0, 0, 1), bold=True)
+        return widget, slot
+
+    def check_row(self, parent, name, label):
+        row, row_slot = self.b.add(unreal.HorizontalBox.static_class(), name + "Row", parent)
+        _pad(row_slot, 0, 2)
+        check, s = self.b.add(unreal.CheckBox.static_class(), name, row, True)
+        _not_focusable(check)
+        _valign(s, "CENTER")
+        _, s = self.text(row, name + "Label", label, wrap=True)
+        _fill(s)
+        _valign(s, "CENTER")
+        _pad(s, 6, 0, 0, 0)
+        return check
+
+    def slider_row(self, parent, name, label, value_name=None):
+        row, row_slot = self.b.add(unreal.HorizontalBox.static_class(), name + "Row", parent)
+        _pad(row_slot, 0, 3)
+        box, s = self.b.add(unreal.SizeBox.static_class(), name + "LabelSize", row)
+        box.set_width_override(120.0)
+        _valign(s, "CENTER")
+        self.text(box, name + "Label", label)
+        slider, s = self.b.add(unreal.Slider.static_class(), name, row, True)
+        _not_focusable(slider)
+        _fill(s)
+        _valign(s, "CENTER")
+        if value_name:
+            box, s = self.b.add(unreal.SizeBox.static_class(), value_name + "Size", row)
+            box.set_width_override(80.0)
+            _valign(s, "CENTER")
+            _pad(s, 8, 0, 0, 0)
+            self.text(box, value_name, "", 8, variable=True)
+        return slider
+
+    def header(self, parent, name, content):
+        _, s = self.text(parent, name, content, 9, self.title_c, bold=True)
+        _pad(s, 0, 8, 0, 2)
+
+
+def _graphics_page(kit, switcher):
+    """Tab 5, Graphics (B-27): preset buttons and label, GI, resolution scale, frame-rate cap, VSync,
+    motion blur, reset. Values and ranges come from C++ (UValhallaOptionsMenuWidget::SyncFromGraphics)."""
+    b = kit.b
+    page, _ = b.add(unreal.ScrollBox.static_class(), "GraphicsTab", switcher)
+    col, _ = b.add(unreal.VerticalBox.static_class(), "GraphicsColumn", page)
+    kit.header(col, "QualityHeader", "Quality")
+    row, s = b.add(unreal.HorizontalBox.static_class(), "PresetRow", col)
+    _pad(s, 0, 2)
+    for name, caption in (("PresetLowButton", "Low"), ("PresetMediumButton", "Medium"),
+                          ("PresetHighButton", "High"), ("PresetEpicButton", "Epic")):
+        _, s = kit.button(row, name, caption, _colour("#c8b48a"))
+        _pad(s, 0, 0, 4, 0)
+    _, s = kit.text(col, "PresetText", "High", 8, kit.value_c, variable=True)
+    _pad(s, 0, 2, 0, 4)
+    kit.check_row(col, "GlobalIlluminationCheck", "Global illumination (bounced light; off is faster)")
+    kit.slider_row(col, "ResolutionScaleSlider", "Resolution scale", "ResolutionScaleText")
+    kit.header(col, "DisplayHeader", "Display")
+    kit.slider_row(col, "FrameRateCapSlider", "Frame-rate cap", "FrameRateCapText")
+    kit.check_row(col, "VSyncCheck", "VSync")
+    kit.check_row(col, "MotionBlurCheck", "Motion blur")
+    _, s = kit.button(col, "ResetGraphicsButton", "Reset graphics")
+    _pad(s, 0, 10, 0, 0)
+    _halign(s, "LEFT")
+    _, s = kit.text(col, "GraphicsNote", "Graphics settings are saved for your account: they follow you to any PC you log in on.",
+                    7, kit.label_c, wrap=True)
+    _pad(s, 0, 8, 0, 0)
+    return page
+
+
+def add_graphics_tab(asset_path=OPTIONS_MENU_BP):
+    """WBP_OptionsMenu made before B-27 Phase 4: the Graphics tab button (last in TabBar) and page
+    (Tabs index 5), in place; nothing else changes. Compiles and saves."""
+    blueprint = unreal.load_asset(asset_path)
+    if blueprint is None:
+        raise RuntimeError("no asset at {}".format(asset_path))
+    widgets = {str(_field(e, "widget_name", "") or _field(e, "widget").get_name()): _field(e, "widget")
+               for e in _widget_infos(blueprint)}
+    if "GraphicsTabButton" in widgets:
+        return {"asset": asset_path, "alreadyThere": True}
+    tab_bar, switcher = widgets.get("TabBar"), widgets.get("Tabs")
+    if tab_bar is None or switcher is None:
+        raise RuntimeError("WBP_OptionsMenu has no TabBar / Tabs; re-run layout_options_menu(replace=True)")
+    b = _TreeBuilder(blueprint)
+    kit = _OptionsMenuKit(b)
+    if widgets.get("MenuSize") is not None:
+        widgets["MenuSize"].set_width_override(MENU_WIDTH)  # room for a sixth tab
+    _, s = kit.button(tab_bar, "GraphicsTabButton", "Graphics", _colour("#c8b48a"))
+    _pad(s, 0, 0, 4, 0)
+    _graphics_page(kit, switcher)
+    missing = [n for n in OPTIONS_MENU_PARTS if n not in widgets and n not in b.added]
+    return _finish(blueprint, asset_path, b, {"partsMissing": missing})
+
+
 def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     """WBP_OptionsMenu's tree: the options menu's look, named for UValhallaOptionsMenuWidget.
 
-    MenuFrame (T_UI_Panel) > MenuSize (480 x 470) > MenuColumn: a header
+    MenuFrame (T_UI_Panel) > MenuSize (MENU_WIDTH x 470) > MenuColumn: a header
     (title, CloseButton), the tab bar (LayoutTabButton ... ControlsTabButton),
     and a dark well holding the ``Tabs`` widget switcher with five pages:
 
@@ -1312,6 +1433,9 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     3 Nameplates  NpcNameplatesCheck, PlayerNameplatesCheck, FloatingTextCheck,
                   NameplateFontSlider / Text, ResetNameplatesButton
     4 Controls    ControlsText
+    5 Graphics    Preset<Low|Medium|High|Epic>Button, PresetText, GlobalIlluminationCheck,
+                  ResolutionScaleSlider / Text, FrameRateCapSlider / Text, VSyncCheck,
+                  MotionBlurCheck, ResetGraphicsButton (B-27, per account)
 
     Slider ranges, the rows in ColourList / PresetGrid / LogFilterList and
     every value come from C++. Creates the asset when missing (checked
@@ -1328,67 +1452,17 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
 
     W = unreal
     b = _TreeBuilder(blueprint)
+    kit = _OptionsMenuKit(b)
     panel_art = _ui_texture("T_UI_Panel")
-    button_art = _ui_texture("T_UI_Button")
-    title_c = _colour("#ffcc00")
-    label_c = _colour("#aaaacc")
-    value_c = _colour("#ddd6c4")
-    close_c = _colour("#8888aa")
-
-    def text(parent, name, content, size=8, colour=None, bold=False, wrap=False, variable=False):
-        widget, slot = b.add(W.TextBlock.static_class(), name, parent, variable)
-        _text(widget, content, size, colour or value_c, bold=bold, wrap=wrap)
-        return widget, slot
-
-    def button(parent, name, caption, tint=None):
-        widget, slot = b.add(W.Button.static_class(), name, parent, True)
-        widget.set_background_color(tint or close_c)
-        _button_art(widget, button_art)
-        _not_focusable(widget)
-        text(widget, name + "Label", caption, 8, W.LinearColor(0, 0, 0, 1), bold=True)
-        return widget, slot
-
-    def check_row(parent, name, label):
-        row, row_slot = b.add(W.HorizontalBox.static_class(), name + "Row", parent)
-        _pad(row_slot, 0, 2)
-        check, s = b.add(W.CheckBox.static_class(), name, row, True)
-        _not_focusable(check)
-        _valign(s, "CENTER")
-        _, s = text(row, name + "Label", label, wrap=True)
-        _fill(s)
-        _valign(s, "CENTER")
-        _pad(s, 6, 0, 0, 0)
-        return check
-
-    def slider_row(parent, name, label, value_name=None):
-        row, row_slot = b.add(W.HorizontalBox.static_class(), name + "Row", parent)
-        _pad(row_slot, 0, 3)
-        box, s = b.add(W.SizeBox.static_class(), name + "LabelSize", row)
-        box.set_width_override(120.0)
-        _valign(s, "CENTER")
-        text(box, name + "Label", label)
-        slider, s = b.add(W.Slider.static_class(), name, row, True)
-        _not_focusable(slider)
-        _fill(s)
-        _valign(s, "CENTER")
-        if value_name:
-            box, s = b.add(W.SizeBox.static_class(), value_name + "Size", row)
-            box.set_width_override(80.0)
-            _valign(s, "CENTER")
-            _pad(s, 8, 0, 0, 0)
-            text(box, value_name, "", 8, variable=True)
-        return slider
-
-    def header(parent, name, content):
-        _, s = text(parent, name, content, 9, title_c, bold=True)
-        _pad(s, 0, 8, 0, 2)
+    title_c, label_c, value_c = kit.title_c, kit.label_c, kit.value_c
+    text, button, check_row, slider_row, header = kit.text, kit.button, kit.check_row, kit.slider_row, kit.header
 
     # ── the frame ──
     frame, _ = b.add(W.Border.static_class(), "MenuFrame")
     _framed_panel(frame, _colour("#1a1a2e", 0.97), 10, panel_art)
     _visibility(frame, "VISIBLE")
     size, _ = b.add(W.SizeBox.static_class(), "MenuSize", frame)
-    size.set_width_override(480.0)
+    size.set_width_override(MENU_WIDTH)
     size.set_height_override(470.0)
     column, _ = b.add(W.VerticalBox.static_class(), "MenuColumn", size)
 
@@ -1401,7 +1475,7 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     tabs_row, s = b.add(W.HorizontalBox.static_class(), "TabBar", column)
     _pad(s, 0, 6, 0, 4)
     for name, caption in (("LayoutTabButton", "Layout"), ("ColoursTabButton", "Colours"), ("ChatLogTabButton", "Chat & log"),
-                          ("NameplatesTabButton", "Nameplates"), ("ControlsTabButton", "Controls")):
+                          ("NameplatesTabButton", "Nameplates"), ("ControlsTabButton", "Controls"), ("GraphicsTabButton", "Graphics")):
         _, s = button(tabs_row, name, caption, _colour("#c8b48a"))
         _pad(s, 0, 0, 4, 0)
 
@@ -1483,6 +1557,9 @@ def layout_options_menu(asset_path=OPTIONS_MENU_BP, replace=False, wire=True):
     # ── 4 Controls ──
     page, _ = b.add(W.ScrollBox.static_class(), "ControlsTab", switcher)
     text(page, "ControlsText", "", 8, value_c, wrap=True, variable=True)
+
+    # ── 5 Graphics ──
+    _graphics_page(kit, switcher)
 
     _, s = text(column, "MenuHint", "Esc closes this menu. Changes are saved for this character.", 7, label_c)
     _pad(s, 0, 4, 0, 0)

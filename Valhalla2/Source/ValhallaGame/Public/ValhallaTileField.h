@@ -13,7 +13,7 @@ class UStaticMesh;
  * The custom-depth stencil values `PP_Outline` reads.
  *
  * Only one value is in use and it is written in exactly one place
- * (AValhallaTileField's constructor), but it is named here rather than left as
+ * (AValhallaTileField::ApplyCustomDepth), but it is named here rather than left as
  * a `1` in two files — the material's HLSL compares against the same number and
  * a silent disagreement between them shows up as "the outline stopped working"
  * with nothing to grep for.
@@ -78,6 +78,20 @@ public:
 	 * editor and on spawn, so it settles the question for both.
 	 */
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void BeginPlay() override;
+
+	/**
+	 * B-27 Phase 4: the field writes custom depth (and its floor stencil) only
+	 * while PP_Outline is on (`valhalla.Visual.Outline 1`). The outline has been
+	 * off since B-15, and nothing else reads custom depth, so with no field
+	 * writing it the renderer skips the custom depth pass altogether (r.CustomDepth
+	 * 3 creates it on demand).
+	 */
+	static bool IsOutlineEnabled();
+	void ApplyCustomDepth();
+
+	/** ApplyCustomDepth on every field in `World` (the player controller, when it applies the outline). */
+	static void RefreshCustomDepth(UWorld* World);
 
 	/** The field. Instances are in this component's local space. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Valhalla|Tiles")

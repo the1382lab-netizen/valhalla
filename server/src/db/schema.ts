@@ -54,5 +54,10 @@
  * character_id INTEGER PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE
  * ui_json TEXT NOT NULL (the client's UI settings document, a JSON object, <= 64 KB)
  * updated_at TEXT NOT NULL (ISO 8601, set by the backend on every write)
+ *
+ * -- account_settings -- (B-27)
+ * user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE
+ * graphics_json TEXT NOT NULL (the client's graphics settings document, a JSON object, <= 64 KB)
+ * updated_at TEXT NOT NULL (ISO 8601, set by the backend on every write)
  */
 export {};

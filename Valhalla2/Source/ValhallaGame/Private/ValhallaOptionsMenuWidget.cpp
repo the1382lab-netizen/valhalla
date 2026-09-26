@@ -20,6 +20,7 @@
 #include "Styling/CoreStyle.h"
 #include "UObject/UnrealType.h"
 #include "ValhallaGameHUDWidget.h"
+#include "ValhallaGraphicsSettingsSubsystem.h"
 #include "ValhallaPlayerController.h"
 #include "ValhallaUserSettingsSubsystem.h"
 
@@ -115,6 +116,9 @@ const TArray<FName>& UValhallaOptionsMenuWidget::GetOptionalWidgetNames()
 		TEXT("NpcNameplatesCheck"), TEXT("PlayerNameplatesCheck"), TEXT("FloatingTextCheck"),
 		TEXT("NameplateFontSlider"), TEXT("NameplateFontText"), TEXT("ResetNameplatesButton"),
 		TEXT("ControlsText"),
+		TEXT("GraphicsTabButton"), TEXT("PresetLowButton"), TEXT("PresetMediumButton"), TEXT("PresetHighButton"), TEXT("PresetEpicButton"),
+		TEXT("PresetText"), TEXT("GlobalIlluminationCheck"), TEXT("ResolutionScaleSlider"), TEXT("ResolutionScaleText"),
+		TEXT("FrameRateCapSlider"), TEXT("FrameRateCapText"), TEXT("VSyncCheck"), TEXT("MotionBlurCheck"), TEXT("ResetGraphicsButton"),
 	};
 	return Names;
 }
@@ -248,7 +252,8 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	if (ChatLogTabButton)    { ChatLogTabButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnChatLogTab); }
 	if (NameplatesTabButton) { NameplatesTabButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnNameplatesTab); }
 	if (ControlsTabButton)   { ControlsTabButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnControlsTab); }
-	TabButtons = { LayoutTabButton, ColoursTabButton, ChatLogTabButton, NameplatesTabButton, ControlsTabButton };
+	if (GraphicsTabButton)   { GraphicsTabButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnGraphicsTab); }
+	TabButtons = { LayoutTabButton, ColoursTabButton, ChatLogTabButton, NameplatesTabButton, ControlsTabButton, GraphicsTabButton };
 
 	auto Range = [](USlider* Slider, float Min, float Max, float Step)
 	{
@@ -268,6 +273,8 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	Range(HueSlider, 0.f, 1.f, 0.005f);
 	Range(SaturationSlider, 0.f, 1.f, 0.005f);
 	Range(ValueSlider, 0.f, 1.f, 0.005f);
+	Range(ResolutionScaleSlider, FValhallaGraphicsSettings::MinResolutionScale, FValhallaGraphicsSettings::MaxResolutionScale, 5.f);
+	Range(FrameRateCapSlider, 0.f, static_cast<float>(FValhallaGraphicsSettings::GetFrameRateCapSteps().Num() - 1), 1.f);
 
 	if (LockCheck)            { LockCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnLockChanged); }
 	if (UiScaleSlider)        { UiScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnUiScaleChanged); }
@@ -300,6 +307,18 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	if (NameplateFontSlider)  { NameplateFontSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnNameplateFontChanged); }
 	if (ResetNameplatesButton){ ResetNameplatesButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnResetNameplates); }
 
+	if (PresetLowButton)         { PresetLowButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnPresetLow); }
+	if (PresetMediumButton)      { PresetMediumButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnPresetMedium); }
+	if (PresetHighButton)        { PresetHighButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnPresetHigh); }
+	if (PresetEpicButton)        { PresetEpicButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnPresetEpic); }
+	PresetButtons = { PresetLowButton, PresetMediumButton, PresetHighButton, PresetEpicButton };
+	if (GlobalIlluminationCheck) { GlobalIlluminationCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnGlobalIlluminationChanged); }
+	if (ResolutionScaleSlider)   { ResolutionScaleSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnResolutionScaleChanged); }
+	if (FrameRateCapSlider)      { FrameRateCapSlider->OnValueChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnFrameRateCapChanged); }
+	if (VSyncCheck)              { VSyncCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnVSyncChanged); }
+	if (MotionBlurCheck)         { MotionBlurCheck->OnCheckStateChanged.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnMotionBlurChanged); }
+	if (ResetGraphicsButton)     { ResetGraphicsButton->OnClicked.AddUniqueDynamic(this, &UValhallaOptionsMenuWidget::OnResetGraphics); }
+
 	BuildColourRows();
 	BuildPresetSwatches();
 	BuildLogFilterChecks();
@@ -313,6 +332,12 @@ void UValhallaOptionsMenuWidget::Setup(UValhallaGameHUDWidget* InHud)
 	if (const UValhallaUserSettingsSubsystem* UserSettings = GetUserSettings())
 	{
 		SyncFromSettings(UserSettings->Get());
+	}
+	// Graphics are the account's, not the character's: their own subsystem.
+	if (UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(this))
+	{
+		Graphics->OnChanged.AddUObject(this, &UValhallaOptionsMenuWidget::SyncFromGraphics);
+		SyncFromGraphics(Graphics->Get());
 	}
 }
 
@@ -546,6 +571,45 @@ void UValhallaOptionsMenuWidget::SyncFromSettings(const FValhallaUserUISettings&
 	if (NameplateFontText)     { NameplateFontText->SetText(FText::FromString(FString::Printf(TEXT("%d px%s"), PlateFont, Settings.NameplateFontSize > 0 ? TEXT("") : TEXT(" (default)")))); }
 }
 
+void UValhallaOptionsMenuWidget::SyncFromGraphics(const FValhallaGraphicsSettings& Graphics)
+{
+	TGuardValue<bool> Guard(bSyncing, true);
+
+	for (int32 Index = 0; Index < PresetButtons.Num(); ++Index)
+	{
+		if (UButton* Button = PresetButtons[Index])
+		{
+			// The preset in force lit (still lit under Custom: it is what Custom starts from).
+			Button->SetBackgroundColor(Index == static_cast<int32>(Graphics.Quality) ? FLinearColor(1.15f, 1.05f, 0.85f) : FLinearColor(0.6f, 0.58f, 0.55f));
+		}
+	}
+	if (PresetText)
+	{
+		FString Base = FValhallaGraphicsSettings::QualityToString(Graphics.Quality);
+		Base[0] = FChar::ToUpper(Base[0]);
+		PresetText->SetText(FText::FromString(Graphics.IsCustom()
+			? FString::Printf(TEXT("Custom (%s, global illumination %s)"), *Base, Graphics.bGlobalIllumination ? TEXT("on") : TEXT("off"))
+			: Base));
+	}
+	if (GlobalIlluminationCheck) { GlobalIlluminationCheck->SetIsChecked(Graphics.bGlobalIllumination); }
+	if (ResolutionScaleSlider)   { ResolutionScaleSlider->SetValue(static_cast<float>(Graphics.ResolutionScale)); }
+	if (ResolutionScaleText)     { ResolutionScaleText->SetText(FText::FromString(FString::Printf(TEXT("%d %%"), Graphics.ResolutionScale))); }
+	const TArray<int32>& Caps = FValhallaGraphicsSettings::GetFrameRateCapSteps();
+	int32 CapIndex = 0;
+	for (int32 Index = 0; Index < Caps.Num(); ++Index)
+	{
+		// The step nearest a saved cap (a cap typed into the file may be off the steps).
+		if (FMath::Abs(Caps[Index] - Graphics.FrameRateCap) < FMath::Abs(Caps[CapIndex] - Graphics.FrameRateCap))
+		{
+			CapIndex = Index;
+		}
+	}
+	if (FrameRateCapSlider) { FrameRateCapSlider->SetValue(static_cast<float>(CapIndex)); }
+	if (FrameRateCapText)   { FrameRateCapText->SetText(FText::FromString(Graphics.FrameRateCap > 0 ? FString::Printf(TEXT("%d fps"), Graphics.FrameRateCap) : FString(TEXT("None")))); }
+	if (VSyncCheck)         { VSyncCheck->SetIsChecked(Graphics.bVSync); }
+	if (MotionBlurCheck)    { MotionBlurCheck->SetIsChecked(Graphics.bMotionBlur); }
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 //  Tabs
 // ═════════════════════════════════════════════════════════════════════════════
@@ -598,6 +662,7 @@ void UValhallaOptionsMenuWidget::OnColoursTab()    { ShowTab(1); }
 void UValhallaOptionsMenuWidget::OnChatLogTab()    { ShowTab(2); }
 void UValhallaOptionsMenuWidget::OnNameplatesTab() { ShowTab(3); }
 void UValhallaOptionsMenuWidget::OnControlsTab()   { ShowTab(4); }
+void UValhallaOptionsMenuWidget::OnGraphicsTab()   { ShowTab(5); }
 
 // ═════════════════════════════════════════════════════════════════════════════
 //  Layout tab
@@ -847,5 +912,68 @@ void UValhallaOptionsMenuWidget::OnResetNameplates()
 	if (UValhallaUserSettingsSubsystem* UserSettings = GetUserSettings())
 	{
 		UserSettings->ResetToDefaults(EValhallaUISettingsSection::Nameplates);
+	}
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Graphics tab (B-27, per account)
+// ═════════════════════════════════════════════════════════════════════════════
+
+void UValhallaOptionsMenuWidget::EditGraphics(TFunctionRef<void(FValhallaGraphicsSettings&)> Change)
+{
+	if (bSyncing)
+	{
+		return;
+	}
+	if (UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(this))
+	{
+		Graphics->Mutate(Change);
+	}
+}
+
+void UValhallaOptionsMenuWidget::SelectPreset(EValhallaGraphicsQuality Quality)
+{
+	EditGraphics([Quality](FValhallaGraphicsSettings& S) { S.SetPreset(Quality); });
+	UE_LOG(LogValhallaHUD, Log, TEXT("options: graphics preset %s"), FValhallaGraphicsSettings::QualityToString(Quality));
+}
+
+void UValhallaOptionsMenuWidget::OnPresetLow()    { SelectPreset(EValhallaGraphicsQuality::Low); }
+void UValhallaOptionsMenuWidget::OnPresetMedium() { SelectPreset(EValhallaGraphicsQuality::Medium); }
+void UValhallaOptionsMenuWidget::OnPresetHigh()   { SelectPreset(EValhallaGraphicsQuality::High); }
+void UValhallaOptionsMenuWidget::OnPresetEpic()   { SelectPreset(EValhallaGraphicsQuality::Epic); }
+
+void UValhallaOptionsMenuWidget::OnGlobalIlluminationChanged(bool bChecked)
+{
+	EditGraphics([bChecked](FValhallaGraphicsSettings& S) { S.bGlobalIllumination = bChecked; });
+}
+
+void UValhallaOptionsMenuWidget::OnResolutionScaleChanged(float Value)
+{
+	const int32 Scale = FMath::RoundToInt(Value / 5.f) * 5;
+	EditGraphics([Scale](FValhallaGraphicsSettings& S) { S.ResolutionScale = Scale; });
+}
+
+void UValhallaOptionsMenuWidget::OnFrameRateCapChanged(float Value)
+{
+	const TArray<int32>& Caps = FValhallaGraphicsSettings::GetFrameRateCapSteps();
+	const int32 Cap = Caps[FMath::Clamp(FMath::RoundToInt(Value), 0, Caps.Num() - 1)];
+	EditGraphics([Cap](FValhallaGraphicsSettings& S) { S.FrameRateCap = Cap; });
+}
+
+void UValhallaOptionsMenuWidget::OnVSyncChanged(bool bChecked)
+{
+	EditGraphics([bChecked](FValhallaGraphicsSettings& S) { S.bVSync = bChecked; });
+}
+
+void UValhallaOptionsMenuWidget::OnMotionBlurChanged(bool bChecked)
+{
+	EditGraphics([bChecked](FValhallaGraphicsSettings& S) { S.bMotionBlur = bChecked; });
+}
+
+void UValhallaOptionsMenuWidget::OnResetGraphics()
+{
+	if (UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(this))
+	{
+		Graphics->ResetToDefaults();
 	}
 }

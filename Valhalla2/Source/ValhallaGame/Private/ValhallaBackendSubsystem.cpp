@@ -457,6 +457,48 @@ void UValhallaBackendSubsystem::PutCharacterSettings(const FString& Token, int32
 		});
 }
 
+void UValhallaBackendSubsystem::GetAccountSettings(const FString& Token, FValhallaSettingsGetCallback OnDone)
+{
+	Send(TEXT("GET"), TEXT("/api/account/settings"), nullptr, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			TSharedPtr<FJsonObject> Graphics;
+			FString UpdatedAt;
+			if (bSuccess && Json.IsValid())
+			{
+				const TSharedPtr<FJsonObject>* GraphicsObject = nullptr;
+				if (Json->TryGetObjectField(TEXT("graphics"), GraphicsObject) && GraphicsObject)
+				{
+					Graphics = *GraphicsObject;
+				}
+				UpdatedAt = GetStringField(Json, TEXT("updatedAt"));
+			}
+			UE_LOG(LogValhallaBackend, Log, TEXT("account settings get : %d%s"), Status,
+				bSuccess ? (Graphics.IsValid() ? TEXT(" ok") : TEXT(" (no graphics object)")) : *FString::Printf(TEXT(" %s"), *Error));
+			if (OnDone)
+			{
+				OnDone(bSuccess && Graphics.IsValid(), Status, Graphics, UpdatedAt, Error);
+			}
+		});
+}
+
+void UValhallaBackendSubsystem::PutAccountSettings(const FString& Token, const TSharedRef<FJsonObject>& Graphics, FValhallaSettingsPutCallback OnDone)
+{
+	const TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetObjectField(TEXT("graphics"), Graphics);
+	Send(TEXT("PUT"), TEXT("/api/account/settings"), Body, Token, /*bServerAuth=*/false,
+		[OnDone = MoveTemp(OnDone)](bool bSuccess, int32 Status, const TSharedPtr<FJsonObject>& Json, const FString& Error)
+		{
+			const FString UpdatedAt = bSuccess ? GetStringField(Json, TEXT("updatedAt")) : FString();
+			UE_LOG(LogValhallaBackend, Log, TEXT("account settings put : %d%s"), Status,
+				bSuccess ? TEXT(" ok") : *FString::Printf(TEXT(" %s"), *Error));
+			if (OnDone)
+			{
+				OnDone(bSuccess, Status, UpdatedAt, Error);
+			}
+		});
+}
+
 void UValhallaBackendSubsystem::SetPlayerSession(const FString& Token, int32 UserId, int32 CharacterId)
 {
 	PlayerToken = Token;

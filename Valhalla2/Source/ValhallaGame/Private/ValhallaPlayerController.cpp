@@ -34,6 +34,7 @@
 #include "ValhallaAnimComponent.h"
 #include "ValhallaBackendSubsystem.h"
 #include "ValhallaSkillComponent.h"
+#include "ValhallaTileField.h"
 #include "ValhallaVisuals.h"
 #include "ValhallaZoneSubsystem.h"
 
@@ -120,6 +121,9 @@ void AValhallaPlayerController::ApplyOutlinePostProcess()
 		// player would set it on a camera nobody looks through.
 		return;
 	}
+
+	// B-27: the floor fields write custom depth only while the outline reads it.
+	AValhallaTileField::RefreshCustomDepth(GetWorld());
 
 	AValhallaCharacter* OwnPawn = Cast<AValhallaCharacter>(GetPawn());
 	UCameraComponent* Camera = OwnPawn ? OwnPawn->GetTopDownCamera() : nullptr;

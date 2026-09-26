@@ -4,6 +4,9 @@
 
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "HAL/IConsoleManager.h"
 
 AValhallaTileField::AValhallaTileField()
 {
@@ -47,18 +50,49 @@ AValhallaTileField::AValhallaTileField()
 	// bRenderCustomDepth on an instanced component covers every instance; there
 	// is no per-instance stencil and none is wanted, because every tile in a
 	// field is the same kind of thing.
-	Tiles->SetRenderCustomDepth(true);
+	//
+	// B-27 Phase 4: written only while the outline is on (ApplyCustomDepth), so
+	// off by default: 41 fields drawing a pass nothing reads.
+	Tiles->SetRenderCustomDepth(false);
 	Tiles->SetCustomDepthStencilValue(ValhallaStencil::Floor);
 }
 
 void AValhallaTileField::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	ApplyCustomDepth();
+}
 
+void AValhallaTileField::BeginPlay()
+{
+	Super::BeginPlay();
+	ApplyCustomDepth();
+}
+
+bool AValhallaTileField::IsOutlineEnabled()
+{
+	const IConsoleVariable* Outline = IConsoleManager::Get().FindConsoleVariable(TEXT("valhalla.Visual.Outline"));
+	return Outline && Outline->GetInt() != 0;
+}
+
+void AValhallaTileField::ApplyCustomDepth()
+{
 	if (Tiles)
 	{
-		Tiles->SetRenderCustomDepth(true);
+		Tiles->SetRenderCustomDepth(IsOutlineEnabled());
 		Tiles->SetCustomDepthStencilValue(ValhallaStencil::Floor);
+	}
+}
+
+void AValhallaTileField::RefreshCustomDepth(UWorld* World)
+{
+	if (!World)
+	{
+		return;
+	}
+	for (TActorIterator<AValhallaTileField> It(World); It; ++It)
+	{
+		It->ApplyCustomDepth();
 	}
 }
 

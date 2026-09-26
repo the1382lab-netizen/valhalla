@@ -95,7 +95,7 @@ export async function changePassword(userId: number, currentPassword: unknown, n
   return { token: generateToken({ userId, username }), username };
 }
 
-/** Delete an account's characters (inventory, equipment, action bars and UI settings) and the account itself. */
+/** Delete an account's characters (inventory, equipment, action bars and UI settings), its account settings and the account itself. */
 function deleteAccountRows(userId: number): { characters: number } {
   const db = getDb();
   const characterIds = queryRows('SELECT id FROM characters WHERE user_id = ?', [userId]).map(r => Number(r[0]));
@@ -109,6 +109,7 @@ function deleteAccountRows(userId: number): { characters: number } {
       db.run('DELETE FROM character_settings WHERE character_id = ?', [id]);
     }
     db.run('DELETE FROM characters WHERE user_id = ?', [userId]);
+    db.run('DELETE FROM account_settings WHERE user_id = ?', [userId]);
     db.run('DELETE FROM users WHERE id = ?', [userId]);
     db.run('COMMIT;');
   } catch (err) {

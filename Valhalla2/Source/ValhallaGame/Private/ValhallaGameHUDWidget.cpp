@@ -295,7 +295,7 @@ namespace
 	 *   settings  (print the JSON) | resetlayout | panels  (log each movable panel's geometry)
 	 *   movepanel <Key> <x> <y>  (place a panel at canvas offset x, y from its designer anchor: dev, until edit mode)
 	 *   hidepanel <Key> | showpanel <Key> | uiscale <0.5..2> | opacity <0.2..1> | border <1..12, 0 = default>
-	 *   B-21 steps 3-4: lock <0|1>  (0 = edit mode) | options  (toggle the options menu)
+	 *   B-21 steps 3-4: lock <0|1>  (0 = edit mode) | options [tab]  (toggle the options menu; with a tab, open it there)
 	 *   dragtest <Key> <dx> <dy> [resize]  (press, move, release through the edit-mode drag code)
 	 */
 	FAutoConsoleCommandWithWorldAndArgs GUICommand(
@@ -335,7 +335,22 @@ namespace
 				else if (Verb == TEXT("filter"))   { Hud.ToggleLogFilter(FName(*Rest)); }
 				else if (Verb == TEXT("tooltip"))  { Hud.PinInventoryTooltip(FCString::Atoi(*Rest)); }
 				else if (Verb == TEXT("reload"))   { Hud.ReloadFromDisk(); }
-				else if (Verb == TEXT("options"))  { Hud.ToggleOptions(); }
+				else if (Verb == TEXT("options"))
+				{
+					// `options` toggles; `options <tab>` opens on that tab (0 Layout .. 5 Graphics).
+					if (Rest.IsEmpty())
+					{
+						Hud.ToggleOptions();
+					}
+					else
+					{
+						Hud.OpenOptions();
+						if (UValhallaOptionsMenuWidget* Menu = Hud.GetOptionsMenu())
+						{
+							Menu->ShowTab(FCString::Atoi(*Rest));
+						}
+					}
+				}
 				else if (Verb == TEXT("dragtest"))
 				{
 					// B-21 step 3: the edit-mode drag, through the same Begin / Update /

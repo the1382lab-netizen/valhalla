@@ -24,6 +24,7 @@
 #include "ValhallaConstants.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
+#include "ValhallaGraphicsSettingsSubsystem.h"
 #include "ValhallaUserSettingsSubsystem.h"
 
 DEFINE_LOG_CATEGORY(LogValhallaFrontEnd);
@@ -1107,6 +1108,16 @@ void AValhallaFrontEndController::SubmitRegister(const FString& Username, const 
 
 void AValhallaFrontEndController::ShowCharacterSelect()
 {
+	// B-27: the account's graphics settings, applied here on the front end so
+	// the world loads with them (decision 3: they follow the login).
+	if (Session.IsValid())
+	{
+		if (UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(this))
+		{
+			Graphics->LoadForAccount(Session.UserId, Session.Token);
+		}
+	}
+
 	if (LoginScreen)
 	{
 		LoginScreen->RemoveFromParent();
@@ -1432,6 +1443,10 @@ void AValhallaFrontEndController::LogOut()
 	if (UValhallaBackendSubsystem* Backend = UValhallaBackendSubsystem::Get(this))
 	{
 		Backend->ClearPlayerSession();
+	}
+	if (UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(this))
+	{
+		Graphics->ForgetAccount();
 	}
 	bAutoLoginActive = false;
 

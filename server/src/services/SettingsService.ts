@@ -64,6 +64,62 @@ export function validateSettingsDocument(ui: unknown): string {
   return text;
 }
 
+// ── Account settings (B-27) ─────────────────────────────────
+//
+// Settings that follow the player's login rather than a character: the game
+// client's graphics options (FValhallaGraphicsSettings,
+// Valhalla2/Source/ValhallaCore/Public/ValhallaGraphicsSettings.h). Same rules
+// as the character document: opaque, a JSON object, at most 64 KB.
+
+export interface AccountSettings {
+  graphics: Record<string, unknown>;
+  /** ISO 8601, when the backend last stored it. */
+  updatedAt: string;
+}
+
+/** The account's stored settings, or null when nothing has been saved. */
+export function getAccountSettings(userId: number): AccountSettings | null {
+  const result = getDb().exec('SELECT graphics_json, updated_at FROM account_settings WHERE user_id = ?', [userId]);
+  if (result.length === 0 || result[0].values.length === 0) return null;
+  const [graphicsJson, updatedAt] = result[0].values[0];
+  let graphics: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(String(graphicsJson));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) graphics = parsed;
+  } catch {
+    // A row that no longer parses reads as empty settings: the client's defaults.
+  }
+  return { graphics, updatedAt: String(updatedAt) };
+}
+
+/**
+ * Check a PUT body's `graphics` and return its JSON text.
+ * @throws SettingsValidationError (400 not an object, 413 too big).
+ */
+export function validateAccountDocument(graphics: unknown): string {
+  if (!graphics || typeof graphics !== 'object' || Array.isArray(graphics)) {
+    throw new SettingsValidationError('Body must be { "graphics": { ... } } with graphics a JSON object.', 400);
+  }
+  const text = JSON.stringify(graphics);
+  const bytes = Buffer.byteLength(text, 'utf8');
+  if (bytes > SETTINGS_MAX_BYTES) {
+    throw new SettingsValidationError(`Settings are ${bytes} bytes; the limit is ${SETTINGS_MAX_BYTES}.`, 413);
+  }
+  return text;
+}
+
+/** Insert or replace the account's settings. Returns the new updatedAt. */
+export function saveAccountSettings(userId: number, graphicsJson: string): string {
+  const updatedAt = new Date().toISOString();
+  getDb().run(
+    `INSERT INTO account_settings (user_id, graphics_json, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(user_id) DO UPDATE SET graphics_json = excluded.graphics_json, updated_at = excluded.updated_at`,
+    [userId, graphicsJson, updatedAt],
+  );
+  saveToDisk();
+  return updatedAt;
+}
+
 /** Insert or replace the character's settings. Returns the new updatedAt. */
 export function saveCharacterSettings(characterId: number, uiJson: string): string {
   const updatedAt = new Date().toISOString();

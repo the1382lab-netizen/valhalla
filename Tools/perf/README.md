@@ -23,6 +23,9 @@ script runs the editor binaries (no packaged build needed), vsync off, no frame 
 - CSV stat `Valhalla/CombatEventsUnresolved` (client): events that arrived naming no actor the client has,
   the events of a fight it cannot see (0 since B-27 Phase 3; `csv_summary.py --combat` prints it as
   "unseen"). Server: `Valhalla/CombatEventsSentGuaranteed`, `…SentSeen`, `…Skipped`.
+- Graphics (B-27 Phase 4): every run uses the PC's saved graphics settings (High by default). Set
+  `GRAPHICS` to `valhalla.Graphics` arguments to pin them for a run without saving them, e.g.
+  `set GRAPHICS=preset=epic scale=100` before `standalone_bench.cmd`.
 - `combat_bench.cmd` with `ROUTING=0` set runs the server with `valhalla.CombatEventRouting 0` (every event to
   every player, as before Phase 3), for a before-and-after comparison.
 

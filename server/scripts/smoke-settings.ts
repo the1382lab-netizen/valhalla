@@ -18,6 +18,10 @@
  * removes its settings row (deleteCharacter deletes it explicitly: sql.js
  * resets PRAGMA foreign_keys on every export, so ON DELETE CASCADE is not
  * enforced).
+ *
+ * [7] B-27 account settings, GET/PUT /api/account/settings: 401 without a
+ * token, 404 before a save, round trip, upsert, per account, 400 / 413, and
+ * deleting the account removes the row.
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -124,7 +128,7 @@ async function http(base: string, method: string, path: string,
   return { status: res.status, body: parsed };
 }
 
-async function account(base: string, tag: string, ip: string): Promise<{ token: string; characterId: number }> {
+async function account(base: string, tag: string, ip: string): Promise<{ token: string; characterId: number; username: string }> {
   const username = `set_${tag}_${String(Date.now()).slice(-8)}`;
   const reg = await http(base, 'POST', '/api/auth/register', { body: { username, password: 'smoke-pass-123' }, ip });
   assertEq(reg.status, 200, `register ${tag}`);
@@ -133,7 +137,17 @@ async function account(base: string, tag: string, ip: string): Promise<{ token: 
     body: { name: `Set${tag}${String(Date.now()).slice(-6)}`, classId: 'warrior' }, token, ip,
   });
   assertEq(created.status, 201, `create ${tag}'s character`);
-  return { token, characterId: created.body.character.id };
+  return { token, characterId: created.body.character.id, username };
+}
+
+async function accountSettingsRows(userToken: string, base: string): Promise<number> {
+  // The row count for the token's user, read straight from the database file.
+  const me = await http(base, 'GET', '/api/characters', { token: userToken });
+  const SQL = await initSqlJs();
+  const db = new SQL.Database(readFileSync(dbFile));
+  const result = db.exec('SELECT COUNT(*) FROM account_settings a JOIN users u ON u.id = a.user_id WHERE u.username = ?', [String(me.body?.username ?? '')]);
+  db.close();
+  return Number(result[0]?.values[0]?.[0] ?? 0);
 }
 
 async function settingsRows(characterId: number): Promise<number> {
@@ -226,6 +240,37 @@ async function run(): Promise<void> {
   assertEq(await settingsRows(bob.characterId), 1, "bob's character has a settings row");
   assertEq((await http(B, 'DELETE', `/api/characters/${bob.characterId}`, { token: bob.token })).status, 200, "delete bob's character");
   assertEq(await settingsRows(bob.characterId), 0, 'its settings row is gone');
+
+  console.log('\n[7] account settings (B-27): GET/PUT /api/account/settings');
+  await sleep(WINDOW_MS + 250);
+  const acc = '/api/account/settings';
+  assertEq((await http(B, 'GET', acc)).status, 401, 'GET without a token -> 401');
+  assertEq((await http(B, 'PUT', acc, { body: { graphics: {} } })).status, 401, 'PUT without a token -> 401');
+  const accFirst = await http(B, 'GET', acc, { token: alice.token });
+  assertEq(accFirst.status, 404, 'GET before any save -> 404');
+  assertEq(accFirst.body?.noSettings, true, '404 body says noSettings');
+  const graphics = { Version: 1, UpdatedAt: '2026-09-26T12:00:00.000Z', Quality: 'high', GlobalIllumination: true, ResolutionScale: 100, FrameRateCap: 0, VSync: false, MotionBlur: false };
+  const accPut = await http(B, 'PUT', acc, { token: alice.token, body: { graphics } });
+  assertEq(accPut.status, 200, 'PUT -> 200');
+  assert(!Number.isNaN(Date.parse(accPut.body?.updatedAt)), 'PUT returns an ISO updatedAt', accPut.body?.updatedAt);
+  const accGot = await http(B, 'GET', acc, { token: alice.token });
+  assertEq(accGot.body.graphics, graphics, 'GET returns the document exactly as PUT sent it');
+  await sleep(15);
+  assertEq((await http(B, 'PUT', acc, { token: alice.token, body: { graphics: { ...graphics, Quality: 'epic' } } })).status, 200, 'second PUT -> 200');
+  assertEq((await http(B, 'GET', acc, { token: alice.token })).body.graphics.Quality, 'epic', 'second PUT replaced the document');
+  assertEq(await accountSettingsRows(alice.token, B), 1, 'one row per account (upsert)');
+  assertEq((await http(B, 'GET', acc, { token: bob.token })).status, 404, "another account does not see alice's");
+  assertEq((await http(B, 'PUT', acc, { token: bob.token, body: { graphics: [1] } })).status, 400, 'graphics is an array -> 400');
+  assertEq((await http(B, 'PUT', acc, { token: bob.token, body: {} })).status, 400, 'no graphics -> 400');
+  assertEq((await http(B, 'PUT', acc, { token: bob.token, body: { graphics: { pad: 'x'.repeat(70 * 1024) } } })).status, 413, 'a 70 KB document -> 413');
+  assertEq((await http(B, 'GET', acc, { token: bob.token })).status, 404, 'rejected PUTs stored nothing');
+  const gone = await http(B, 'POST', '/api/auth/account/delete', { token: alice.token, body: { password: 'smoke-pass-123', confirm: alice.username } });
+  assertEq(gone.status, 200, "delete alice's account");
+  const SQL = await initSqlJs();
+  const db = new SQL.Database(readFileSync(dbFile));
+  const left = db.exec('SELECT COUNT(*) FROM account_settings');
+  db.close();
+  assertEq(Number(left[0]?.values[0]?.[0] ?? 0), 0, 'its account settings row is gone');
 
   console.log(`\n[smoke-settings] ALL CHECKS PASSED (${passed} assertions)\n`);
 }

@@ -111,6 +111,17 @@ export async function initDatabase(filePath: string = 'valhalla.db'): Promise<vo
     );
   `);
 
+  // B-27: per-account settings (graphics today). One row per user; graphics_json
+  // is the client's FValhallaGraphicsSettings document, opaque here like
+  // ui_json. Created the same way, so an older database gains it on start.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS account_settings (
+      user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      graphics_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `);
+
   // ── Migrations for databases created before a column existed ──
   // SQLite has no `ADD COLUMN IF NOT EXISTS`, so check the table info first.
   const charCols = db.exec('PRAGMA table_info(characters);');

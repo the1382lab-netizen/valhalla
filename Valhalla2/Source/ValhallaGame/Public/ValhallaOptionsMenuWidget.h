@@ -29,6 +29,12 @@
 //   3 Nameplates  NpcNameplatesCheck, PlayerNameplatesCheck, FloatingTextCheck,
 //                 NameplateFontSlider (8-20 px), ResetNameplatesButton
 //   4 Controls    ControlsText, from the player controller's input mappings
+//   5 Graphics    (B-27, per account: UValhallaGraphicsSettingsSubsystem, not
+//                 the character's UI settings) PresetLow/Medium/High/EpicButton,
+//                 PresetText ("Custom" when GI differs from the preset's),
+//                 GlobalIlluminationCheck, ResolutionScaleSlider (50-100 %),
+//                 FrameRateCapSlider (an index into the cap steps: none, 30 ..
+//                 240), VSyncCheck, MotionBlurCheck, ResetGraphicsButton
 
 #pragma once
 
@@ -36,6 +42,7 @@
 #include "Blueprint/UserWidget.h"
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
+#include "ValhallaGraphicsSettings.h"
 #include "ValhallaUserUISettings.h"
 #include "ValhallaOptionsMenuWidget.generated.h"
 
@@ -104,6 +111,9 @@ public:
 	/** Show what `Settings` holds (no settings are written). */
 	void SyncFromSettings(const FValhallaUserUISettings& Settings);
 
+	/** The Graphics tab: show what `Graphics` holds (nothing is written). */
+	void SyncFromGraphics(const FValhallaGraphicsSettings& Graphics);
+
 	void ShowTab(int32 TabIndex);
 	int32 GetActiveTab() const;
 	/** Close the colour editor if it is open (Escape does this before closing the menu). True when it closed. */
@@ -145,6 +155,7 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> ChatLogTabButton;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> NameplatesTabButton;
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> ControlsTabButton;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> GraphicsTabButton;
 
 	// ── Layout tab ──
 	/** Checked = locked (the default): panels cannot be dragged. */
@@ -204,6 +215,23 @@ protected:
 	// ── Controls tab ──
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ControlsText;
 
+	// ── Graphics tab (B-27) ──
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> PresetLowButton;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> PresetMediumButton;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> PresetHighButton;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> PresetEpicButton;
+	/** "High", or "Custom (High, global illumination off)". */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> PresetText;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> GlobalIlluminationCheck;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<USlider> ResolutionScaleSlider;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> ResolutionScaleText;
+	/** 0 .. the cap steps' count - 1 (FValhallaGraphicsSettings::GetFrameRateCapSteps). */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<USlider> FrameRateCapSlider;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> FrameRateCapText;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> VSyncCheck;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> MotionBlurCheck;
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Options", meta = (BindWidgetOptional)) TObjectPtr<UButton> ResetGraphicsButton;
+
 private:
 	class UValhallaUserSettingsSubsystem* GetUserSettings() const;
 	/** Mutate the settings unless SyncFromSettings is writing the controls. */
@@ -226,6 +254,20 @@ private:
 	UFUNCTION() void OnChatLogTab();
 	UFUNCTION() void OnNameplatesTab();
 	UFUNCTION() void OnControlsTab();
+	UFUNCTION() void OnGraphicsTab();
+	UFUNCTION() void OnPresetLow();
+	UFUNCTION() void OnPresetMedium();
+	UFUNCTION() void OnPresetHigh();
+	UFUNCTION() void OnPresetEpic();
+	UFUNCTION() void OnGlobalIlluminationChanged(bool bChecked);
+	UFUNCTION() void OnResolutionScaleChanged(float Value);
+	UFUNCTION() void OnFrameRateCapChanged(float Value);
+	UFUNCTION() void OnVSyncChanged(bool bChecked);
+	UFUNCTION() void OnMotionBlurChanged(bool bChecked);
+	UFUNCTION() void OnResetGraphics();
+	/** Change the graphics settings unless SyncFromGraphics is writing the controls. */
+	void EditGraphics(TFunctionRef<void(FValhallaGraphicsSettings&)> Change);
+	void SelectPreset(EValhallaGraphicsQuality Quality);
 	UFUNCTION() void OnLockChanged(bool bChecked);
 	UFUNCTION() void OnUiScaleChanged(float Value);
 	UFUNCTION() void OnOpacityChanged(float Value);
@@ -260,4 +302,5 @@ private:
 	UPROPERTY(Transient) TArray<TObjectPtr<UBorder>> ColourSwatches;
 	UPROPERTY(Transient) TArray<TObjectPtr<UCheckBox>> LogFilterChecks;
 	UPROPERTY(Transient) TArray<TObjectPtr<UButton>> TabButtons;
+	UPROPERTY(Transient) TArray<TObjectPtr<UButton>> PresetButtons;
 };

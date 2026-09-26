@@ -62,6 +62,9 @@ namespace
 		return (Json.IsValid() && Json->TryGetStringField(Field, Value)) ? Value : FString();
 	}
 
+	/** Defined with the load parsing below; `equipment` as rows or a map. */
+	void ParseEquipment(const TSharedPtr<FJsonObject>& Json, TArray<FName>& Out);
+
 	/** One summary out of a `characters[]` entry. */
 	FValhallaCharacterSummary SummaryFromJson(const TSharedPtr<FJsonObject>& Json)
 	{
@@ -70,6 +73,15 @@ namespace
 		Summary.Name    = GetStringField(Json, TEXT("name"));
 		Summary.ClassId = FName(*GetStringField(Json, TEXT("classId")));
 		Summary.Level   = GetIntField(Json, TEXT("level"), 1);
+
+		// B-08a: optional, so a backend without them still lists characters.
+		const FString Zone = GetStringField(Json, TEXT("zoneId"));
+		Summary.ZoneId = Zone.IsEmpty() ? NAME_None : FName(*Zone);
+		Summary.BodyId = GetStringField(Json, TEXT("bodyId"));
+		if (Json.IsValid() && Json->HasField(TEXT("equipment")))
+		{
+			ParseEquipment(Json, Summary.Equipment);
+		}
 		return Summary;
 	}
 
@@ -1053,6 +1065,11 @@ namespace
 			}
 		}
 	}
+}
+
+FValhallaCharacterSummary UValhallaBackendSubsystem::CharacterSummaryFromJson(const TSharedPtr<FJsonObject>& Json)
+{
+	return SummaryFromJson(Json);
 }
 
 bool UValhallaBackendSubsystem::SaveDataFromJson(const TSharedPtr<FJsonObject>& Json, FValhallaSaveData& Out)

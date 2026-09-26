@@ -50,6 +50,8 @@ SYMBOLS = {
         ("path", "M8 44 C18 39 27 39 32 44 C37 39 46 39 56 44 V54 C46 49 37 49 32 54 C27 49 18 49 8 54 Z"),
         ("path", "M32 44 V54"), ("path", "M32 6 Q33.5 17 44 19 Q33.5 21 32 32 Q30.5 21 20 19 Q30.5 17 32 6 Z"),
     ],
+    # The plain coin Unreal and the web editor show for a class with no icon file (B-08a).
+    "default": [],
 }
 
 # Coin face: (highlight, base, shadow), symbol colour, symbol keyline.
@@ -60,6 +62,7 @@ COLOURS = {
     "rogue":   (("#4a4a57", "#2e2e38", "#18181f"), "#f0d58c", "#09090d"),  # charcoal
     "shaman":  (("#2f8f89", "#1d6a66", "#10403d"), "#f0d58c", "#08262a"),  # teal
     "wizard":  (("#7b4bb3", "#5a2f8a", "#351a55"), "#f0d58c", "#1c0c30"),  # violet
+    "default": (("#6a6152", "#4a4336", "#2a251d"), "#f0d58c", "#1a1712"),  # bronze, no symbol
 }
 
 GOLD_RIM = ("#f0d58c", "#b08d3c", "#7d6124")

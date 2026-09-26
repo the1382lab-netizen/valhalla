@@ -18,11 +18,16 @@
 #include "ValhallaBackendSubsystem.h"
 #include "ValhallaFrontEnd.generated.h"
 
+class AValhallaCharacterPreviewStage;
 class AValhallaFrontEndController;
+class UCheckBox;
 class UComboBoxString;
 class UEditableTextBox;
+class UImage;
+class UOverlay;
 class UScrollBox;
 class UTextBlock;
+class UTextureRenderTarget2D;
 class UVerticalBox;
 class UWidget;
 
@@ -65,11 +70,33 @@ class VALHALLAGAME_API UValhallaCharacterRowButton : public UButton
 	GENERATED_BODY()
 
 public:
+	/** Not focusable: the screen keeps keyboard focus for Up / Down / Enter (B-08a). */
+	UValhallaCharacterRowButton(const FObjectInitializer& ObjectInitializer);
+
 	/** Index into the owning screen's character array. */
 	UPROPERTY()
 	int32 RowIndex = INDEX_NONE;
 
 	/** The screen to tell. Weak because the screen owns the button. */
+	UPROPERTY()
+	TWeakObjectPtr<class UValhallaCharacterSelectWidget> Screen;
+
+	UFUNCTION()
+	void HandleClicked();
+};
+
+/** B-08a: a class card on the Create Character panel; knows which class it is. */
+UCLASS()
+class VALHALLAGAME_API UValhallaClassCardButton : public UButton
+{
+	GENERATED_BODY()
+
+public:
+	UValhallaClassCardButton(const FObjectInitializer& ObjectInitializer);
+
+	UPROPERTY()
+	int32 CardIndex = INDEX_NONE;
+
 	UPROPERTY()
 	TWeakObjectPtr<class UValhallaCharacterSelectWidget> Screen;
 
@@ -120,6 +147,25 @@ public:
 	/** Replace the small status line under the buttons (game data sync progress). */
 	void SetStatusLine(const FString& Text);
 
+	/**
+	 * B-08a: after a successful login, store the username if "Remember
+	 * username" is ticked (and forget it if not). Only the username is ever
+	 * stored, never the password: GameUserSettings.ini, [Valhalla.FrontEnd].
+	 */
+	void RememberUsernameIfWanted(const FString& Username);
+
+	/** B-08a: the bottom-left server line: online / offline / checking. */
+	void SetServerStatus(int32 State);
+
+	/** B-08a: ask the backend's /health and show the answer. */
+	void CheckServer();
+
+	/** B-08a: Remember-username storage (tests use the ini section directly). */
+	static const TCHAR* RememberSection() { return TEXT("Valhalla.FrontEnd"); }
+
+	/** B-08a: empty the password box (log out). */
+	void ClearPassword();
+
 protected:
 	UFUNCTION()
 	void HandleLoginClicked();
@@ -152,6 +198,20 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> StatusText;
+
+	// ── B-08a ────────────────────────────────────────────────────────────
+
+	UPROPERTY(Transient)
+	TObjectPtr<UCheckBox> RememberCheck;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> ServerDot;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> ServerText;
+
+	/** Focus goes to the first empty field once, on the first construct. */
+	bool bFocusedOnce = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,7 +264,28 @@ public:
 	/** B-12: empty the Account panel's password and confirmation boxes. */
 	void ClearAccountFields();
 
+	// ── B-08a ────────────────────────────────────────────────────────────
+
+	/** Show the preview stage's render target on the right, or nothing. */
+	void SetPreviewTexture(UTextureRenderTarget2D* Target);
+
+	/** Called by a class card on the Create panel. */
+	void HandleClassCardClicked(int32 CardIndex);
+
+	/** B-08a: select this character id on the next SetCharacters (the one just created). */
+	void PreferCharacter(int32 CharacterId) { PreferredCharacterId = CharacterId; }
+
+	/** Move the selection by Delta rows (Up / Down), clamped. */
+	void MoveSelection(int32 Delta);
+
+	/** True while the Create, Delete or Account panel is open over the screen. */
+	bool IsModalOpen() const;
+
 protected:
+	//~ Begin UUserWidget interface
+	virtual FReply NativeOnKeyDown(const FGeometry& InGeometry, const FKeyEvent& InKeyEvent) override;
+	//~ End UUserWidget interface
+
 	UFUNCTION() void HandleEnterWorldClicked();
 	UFUNCTION() void HandleCreateClicked();
 	UFUNCTION() void HandleCreateConfirmClicked();
@@ -221,9 +302,53 @@ protected:
 	void BuildUi();
 	void RefreshRows();
 
+	/** B-08a: the name and "Level N Class · Zone" under the preview; tells the controller. */
+	void UpdateSelectedDetails();
+
+	/** B-08a: open one of the three panels over the screen (or none), hiding the preview under it. */
+	void ShowModal(UWidget* Card);
+
+	/** B-08a: redraw the class cards' selected state. */
+	void RefreshClassCards();
+
 private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> HeaderText;
+
+	// ── B-08a: Gilded Hall layout ─────────────────────────────────────────
+
+	UPROPERTY(Transient)
+	TObjectPtr<UImage> PreviewImage;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> PreviewArea;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SelectedNameText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UTextBlock> SelectedLineText;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UOverlay> ModalLayer;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> CreateCard;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> DeleteCard;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UWidget> AccountCard;
+
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UValhallaClassCardButton>> ClassCards;
+
+	/** Class id per card, in GetAllClassIds order. */
+	TArray<FName> ClassCardIds;
+
+	/** Index into ClassCardIds, or INDEX_NONE. */
+	int32 SelectedClassCard = INDEX_NONE;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UScrollBox> RowBox;
@@ -278,11 +403,22 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UTextBlock> AccountStatusText;
 
+	/** B-08a: each card's copy of the error line (the footer's is under the dimmer). */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UTextBlock>> ModalErrorTexts;
+
 	/** What the last list call returned, in the backend's order. */
 	TArray<FValhallaCharacterSummary> Characters;
 
 	/** Index into Characters, or INDEX_NONE. */
 	int32 SelectedIndex = INDEX_NONE;
+
+	/** B-08a: PreferCharacter's id, used once. */
+	int32 PreferredCharacterId = INDEX_NONE;
+
+	/** B-08a: the mask and floor glow over the preview, hidden with it. */
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<UWidget>> PreviewDressing;
 
 	/** The rows, so RefreshRows can recolour the selected one. */
 	UPROPERTY(Transient)
@@ -362,6 +498,12 @@ public:
 	/** The session, or an empty one before a login. */
 	const FValhallaAuthSession& GetSession() const { return Session; }
 
+	/**
+	 * B-08a: the character select screen's selection changed (null: none, or
+	 * a panel covers the preview). Dresses the preview stage for it.
+	 */
+	void ShowPreviewFor(const FValhallaCharacterSummary* Summary);
+
 	// ── Dev ─────────────────────────────────────────────────────────────
 
 	/**
@@ -401,6 +543,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UValhallaCharacterSelectWidget> SelectScreen;
+
+	/** B-08a: the lit stage the character select preview is captured from. */
+	UPROPERTY(Transient)
+	TObjectPtr<AValhallaCharacterPreviewStage> PreviewStage;
 
 	/** Token, userId, username and the last character list. Never replicated. */
 	FValhallaAuthSession Session;

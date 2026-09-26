@@ -2525,6 +2525,50 @@ right width; make the thickness an in-game option. Screenshots `Saved/ClaudeOps/
 - Build plan: backlog B-08a (login, character select with a rotating preview, party pane with class icons),
   waiting for Kevin's review.
 
+## B-08a — Gilded Hall login, character select and party pane (2026-09-25)
+
+Kevin's calls: keep the dark background; the preview character stands still facing the camera (no
+turning, no dragging); the class icon is a classes.json field editable in the web editor.
+
+- **Login** (`UValhallaLoginWidget`): coin logo over one gold-framed panel (T_UI_Panel), Username,
+  Password, "Remember username" (GameUserSettings `[Valhalla.FrontEnd]`, the name only), LOG IN,
+  "New to Valhalla? Create an account", error and status lines; server status bottom left (`/health`
+  ping, green / red dot and the backend URL), `ProjectVersion` bottom right. Focus starts in the first
+  empty field; Enter logs in; logging out clears the password.
+- **Character select** (`UValhallaCharacterSelectWidget`): header (logo, title, account and slots,
+  ACCOUNT, LOG OUT); the list on the left (class coin, name, "Level N Class", zone); the preview on the
+  right with the name and "Level N Class · Zone" under it; CREATE CHARACTER, DELETE, the error line and
+  ENTER WORLD along the bottom. Up / Down / Enter, double-click a row to enter, Escape closes a card.
+  Create, Delete and Account are cards over a dimmer (the preview is hidden under them); Create picks
+  the class from cards (icon, name, description) for every class in classes.json. A new character is
+  selected once created.
+- **Preview** (`AValhallaCharacterPreviewStage`, new): spawned by the front-end controller at
+  (0, 0, 50000) in L_FrontEnd; one `AValhallaCharacter` dressed from the list entry with the game's own
+  equipment code (`ApplyPreviewLoadout`, skin from `bodyId`), a three-point light rig and a scene capture
+  of only that character into an 800 x 1200 target. Respawned per selection. Tuning without a rebuild:
+  `valhalla.Preview.ExposureBias / KeyLight / FillLight / RimLight / Distance`.
+- **Backend**: the character list (and create) now return `zoneId`, `bodyId` and `equipment`
+  (`CharacterService.summaryFromRow`); smoke step 4c checks them. The client parses them when present,
+  so an older backend still lists characters.
+- **Class icon field**: `classes.json` `icon` (optional file name in `Import/UI/ClassIcons`; default
+  `T_ClassIcon_<Class>.png`), a Class Icon picker with a preview in the web editor's class editor,
+  validation warns when the file is missing. `T_ClassIcon_Default.png` (plain coin) for a class without
+  one.
+- **Party pane**: each row is [class coin 24 px][name, HP bar, 4 px mana bar (energy when the class has
+  no mana)]. Not yet looked at in a live party.
+- **Art and fonts**: `ValhallaUIArt` (palette, Cinzel / EB Garamond, texture loading asset-then-PNG).
+  `Tools/ui/make_frontend_art.py` writes T_UI_Logo, T_UI_FrontEndBackdrop, T_UI_PreviewMask and
+  T_UI_FloorGlow to `Import/UI/Frames`. Imported: class icons and the four frames
+  (`import_ui_icons.py`), fonts as font faces `/Game/Valhalla/UI/Fonts/FF_*`
+  (`import_ui_fonts.py`, new; the composite fonts are built at runtime, SIL OFL in Docs/branding/fonts).
+- **Deviation from the plan**: the layout is built in C++ (WidgetTree), not in Widget Blueprints.
+  Moving it to WBP_Login / WBP_CharacterSelect the B-07 way is a follow-up.
+- Tests: `Valhalla.Game.Backend.CharacterSummary`, `Valhalla.Game.UI.ClassIconName`. Walkthrough in PIE:
+  register, create a Warrior and a Wizard (hood and staff show), keyboard selection, Delete and Account
+  cards, log out and back in (username remembered), Enter World.
+- Open: the capture's empty space is black, so the preview reads as a dark alcove rather than the
+  character standing on the page; a transparent capture needs the renderer's alpha output setting.
+
 ## B-27 — Client performance pass (2026-09-25)
 
 Plan: Drive, "B-27 · Client performance pass" (decisions confirmed by Kevin 2026-09-25: High default, hardware

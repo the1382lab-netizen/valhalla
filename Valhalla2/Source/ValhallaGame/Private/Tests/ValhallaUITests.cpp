@@ -68,6 +68,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "UObject/UnrealType.h"
 #include "ValhallaChatCommands.h"
+#include "ValhallaUIArt.h"
 #include "ValhallaDataSettings.h"
 #include "ValhallaDataSubsystem.h"
 #include "Components/Button.h"
@@ -995,6 +996,33 @@ bool FValhallaUIHudPlayFixesTest::RunTest(const FString& /*Parameters*/)
 		TestTrue(*FString::Printf(TEXT("WBP_GameHUD's %s is a Visible border"), *Name.ToString()),
 			Frame && Frame->IsA<UBorder>() && Frame->GetVisibility() == ESlateVisibility::Visible);
 	}
+	return true;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.UI.ClassIconName (B-08a)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// classes.json `icon` names a file in Import/UI/ClassIcons (the web editor
+// writes "T_ClassIcon_Warrior.png"); the texture is found by its base name.
+// A class with no icon gets T_ClassIcon_<Id>, and no class at all the default coin.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaUIClassIconNameTest,
+	"Valhalla.Game.UI.ClassIconName",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaUIClassIconNameTest::RunTest(const FString& /*Parameters*/)
+{
+	TestEqual(TEXT("no icon field: T_ClassIcon_<Id>"),
+		ValhallaUIArt::ClassIconName(TEXT("warrior"), FString()), FString(TEXT("T_ClassIcon_Warrior")));
+	TestEqual(TEXT("icon field with .png"),
+		ValhallaUIArt::ClassIconName(TEXT("warrior"), TEXT("T_ClassIcon_Rogue.png")), FString(TEXT("T_ClassIcon_Rogue")));
+	TestEqual(TEXT("icon field without extension, padded"),
+		ValhallaUIArt::ClassIconName(TEXT("shaman"), TEXT("  T_ClassIcon_Custom  ")), FString(TEXT("T_ClassIcon_Custom")));
+	TestEqual(TEXT("no class: the default coin"),
+		ValhallaUIArt::ClassIconName(NAME_None, FString()), FString(TEXT("T_ClassIcon_Default")));
 	return true;
 }
 

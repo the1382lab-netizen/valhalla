@@ -1252,6 +1252,13 @@ private:
 	UPROPERTY(Transient) TArray<TObjectPtr<UWidget>> PartyRows;
 	UPROPERTY(Transient) TArray<TObjectPtr<UTextBlock>> PartyNames;
 	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDBarWidget>> PartyBars;
+	/** B-08a: the party row's class icon, px (the kit's coin, drawn from 256 px). */
+	static constexpr float PartyIconSize = 24.f;
+	/** B-08a: each party row's class icon and its mana / energy bar. */
+	UPROPERTY(Transient) TArray<TObjectPtr<UImage>> PartyIcons;
+	UPROPERTY(Transient) TArray<TObjectPtr<UValhallaHUDBarWidget>> PartyResourceBars;
+	/** The class each row's icon was last set for, so the brush is set on change only. */
+	TArray<FName> PartyIconClasses;
 	UPROPERTY(Transient) TObjectPtr<UWidget> InviteRoot;
 
 	// combat log

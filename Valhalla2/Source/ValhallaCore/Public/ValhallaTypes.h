@@ -347,6 +347,14 @@ struct VALHALLACORE_API FValhallaClassTemplate
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
 	float BaseRangedDamage = 8.f;
 
+	/**
+	 * B-08a: JSON `icon` — the class icon PNG in Import/UI/ClassIcons (imported
+	 * to /Game/Valhalla/UI/ClassIcons). Empty means T_ClassIcon_<ClassId>; see
+	 * UValhallaVisuals::ClassIconFor.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
+	FString Icon;
+
 	/** JSON `startingItems` — optional; empty when the key is absent. */
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Classes")
 	TArray<FValhallaStartingItem> StartingItems;

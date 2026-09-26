@@ -78,6 +78,7 @@ export function loadValidationInput(repoRoot: string): { input: ValidationInput;
       ...(listDir(join(repoRoot, 'Import', 'Characters', 'MetaHuman', 'Equipment'), /\.fbx$/i) ?? []),
     ],
     iconFiles: listDir(join(repoRoot, 'Import', 'UI', 'Icons'), /\.png$/i),
+    classIconFiles: listDir(join(repoRoot, 'Import', 'UI', 'ClassIcons'), /\.png$/i),
     unrealRefs,
   };
   return { input, problems };

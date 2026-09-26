@@ -49,6 +49,7 @@
 #include "UObject/UObjectIterator.h"
 #include "UObject/UnrealType.h"
 #include "ValhallaCharacter.h"
+#include "ValhallaUIArt.h"
 #include "ValhallaChatCommands.h"
 #include "ValhallaCombatLibrary.h"
 #include "ValhallaConstants.h"
@@ -1687,6 +1688,9 @@ void UValhallaGameHUDWidget::Rebuild()
 	PartyRows.Reset();
 	PartyNames.Reset();
 	PartyBars.Reset();
+	PartyIcons.Reset();
+	PartyResourceBars.Reset();
+	PartyIconClasses.Reset();
 	FilterLabels.Reset();
 	ChatLineWidgets.Reset();
 	LootCells.Reset();
@@ -2523,14 +2527,37 @@ void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 		Row->SetStyle(RowStyle);
 		Row->SetBackgroundColor(FLinearColor::White);
 		Row->OnClicked.AddDynamic(Row, &UValhallaHUDButton::HandleClicked);
+		// B-08a: [class icon] [name / HP bar / mana or energy bar].
+		UHorizontalBox* RowLine = WidgetTree->ConstructWidget<UHorizontalBox>(UHorizontalBox::StaticClass());
+		RowLine->SetVisibility(ESlateVisibility::HitTestInvisible);
+		Row->SetContent(RowLine);
+
+		UImage* Icon = WidgetTree->ConstructWidget<UImage>(UImage::StaticClass());
+		Icon->SetDesiredSizeOverride(FVector2D(PartyIconSize, PartyIconSize));
+		Icon->SetVisibility(ESlateVisibility::HitTestInvisible);
+		if (UHorizontalBoxSlot* IconSlot = RowLine->AddChildToHorizontalBox(Icon))
+		{
+			IconSlot->SetVerticalAlignment(VAlign_Center);
+			IconSlot->SetPadding(FMargin(0.f, 0.f, 6.f, 0.f));
+		}
+
 		UVerticalBox* RowColumn = WidgetTree->ConstructWidget<UVerticalBox>(UVerticalBox::StaticClass());
-		Row->SetContent(RowColumn);
+		if (UHorizontalBoxSlot* ColumnSlot = RowLine->AddChildToHorizontalBox(RowColumn))
+		{
+			ColumnSlot->SetVerticalAlignment(VAlign_Center);
+		}
 		UTextBlock* Name = MakeText(FString(), 8, EffectiveValueColour(), false);
 		Name->SetVisibility(ESlateVisibility::HitTestInvisible);
 		RowColumn->AddChildToVerticalBox(Name);
-		UValhallaHUDBarWidget* Bar = MakeBar(160.f, 8.f, EffectiveHpHighColour(), FLinearColor::Black, 0.7f, false, 6);
+		UValhallaHUDBarWidget* Bar = MakeBar(160.f - PartyIconSize - 6.f, 8.f, EffectiveHpHighColour(), FLinearColor::Black, 0.7f, false, 6);
 		Bar->SetVisibility(ESlateVisibility::HitTestInvisible);
 		RowColumn->AddChildToVerticalBox(Bar);
+		UValhallaHUDBarWidget* Resource = MakeBar(160.f - PartyIconSize - 6.f, 4.f, EffectiveManaColour(), FLinearColor::Black, 0.7f, false, 6);
+		Resource->SetVisibility(ESlateVisibility::HitTestInvisible);
+		if (UVerticalBoxSlot* ResourceSlot = RowColumn->AddChildToVerticalBox(Resource))
+		{
+			ResourceSlot->SetPadding(FMargin(0.f, 2.f, 0.f, 0.f));
+		}
 		if (UVerticalBoxSlot* RowSlot = Cast<UVerticalBoxSlot>(Column->AddChild(Row)))
 		{
 			RowSlot->SetPadding(FMargin(0.f, 4.f, 0.f, 0.f));
@@ -2538,6 +2565,9 @@ void UValhallaGameHUDWidget::AddPartyRows(UPanelWidget* Column)
 		PartyRows.Add(Row);
 		PartyNames.Add(Name);
 		PartyBars.Add(Bar);
+		PartyIcons.Add(Icon);
+		PartyResourceBars.Add(Resource);
+		PartyIconClasses.Add(NAME_None);
 	}
 }
 
@@ -3054,6 +3084,49 @@ void UValhallaGameHUDWidget::TickPartyFrame()
 		PartyBars[Index]->SetFraction(Frac);
 		PartyBars[Index]->SetFillColour(HpColourFor(Frac));
 		PartyBars[Index]->SetLabel(Member ? FString::Printf(TEXT("%.0f/%.0f"), Member->Hp, Member->MaxHp) : FString());
+
+		// B-08a: class icon (set when the class changes) and mana or energy.
+		if (PartyIcons.IsValidIndex(Index))
+		{
+			const FName ClassId = Member ? Member->ClassId : NAME_None;
+			if (!PartyIconClasses.IsValidIndex(Index) || PartyIconClasses[Index] != ClassId || ClassId.IsNone())
+			{
+				if (UTexture2D* Icon = Member ? ValhallaUIArt::ClassIconFor(this, ClassId) : nullptr)
+				{
+					PartyIcons[Index]->SetBrushFromTexture(Icon);
+					PartyIcons[Index]->SetDesiredSizeOverride(FVector2D(PartyIconSize, PartyIconSize));
+					PartyIcons[Index]->SetVisibility(ESlateVisibility::HitTestInvisible);
+				}
+				else
+				{
+					PartyIcons[Index]->SetVisibility(ESlateVisibility::Hidden);
+				}
+				if (PartyIconClasses.IsValidIndex(Index))
+				{
+					PartyIconClasses[Index] = ClassId;
+				}
+			}
+		}
+		if (PartyResourceBars.IsValidIndex(Index))
+		{
+			UValhallaHUDBarWidget* Resource = PartyResourceBars[Index];
+			if (Member && Member->MaxMana > 0.f)
+			{
+				Resource->SetFraction(Member->Mana / Member->MaxMana);
+				Resource->SetFillColour(EffectiveManaColour());
+				Resource->SetVisibility(ESlateVisibility::HitTestInvisible);
+			}
+			else if (Member && Member->MaxEnergy > 0.f)
+			{
+				Resource->SetFraction(Member->Energy / Member->MaxEnergy);
+				Resource->SetFillColour(EffectiveEnergyColour());
+				Resource->SetVisibility(ESlateVisibility::HitTestInvisible);
+			}
+			else
+			{
+				Resource->SetVisibility(ESlateVisibility::Hidden);
+			}
+		}
 	}
 }
 

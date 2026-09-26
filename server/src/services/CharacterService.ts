@@ -25,6 +25,12 @@ export interface CharacterSummary {
   name: string;
   classId: string;
   level: number;
+  /** B-08a: where the character is, for the character select list. */
+  zoneId: string;
+  /** B-08a: base body, for the character select preview. */
+  bodyId: string;
+  /** B-08a: what the character wears, so the preview can dress them without a full load. */
+  equipment: EquipmentData[];
 }
 
 export interface InventorySlotData {
@@ -190,7 +196,30 @@ export function createCharacter(userId: number, name: string, classId: string): 
 
   saveToDisk();
 
-  return { id: charId, name: trimmedName, classId, level: 1 };
+  const created = queryOne(
+    'SELECT id, name, class_id, level, zone_id, body_id FROM characters WHERE id = ?',
+    [charId],
+  );
+  return created
+    ? summaryFromRow(created)
+    : { id: charId, name: trimmedName, classId, level: 1, zoneId: ZoneId.GRASSLANDS, bodyId: defaultBodyId(classId), equipment: [] };
+}
+
+/** B-08a: one summary row plus its equipment (the character select screen's whole need). */
+function summaryFromRow(row: Record<string, any>): CharacterSummary {
+  const equipRows = queryAll(
+    'SELECT slot_type, item_id FROM character_equipment WHERE character_id = ?',
+    [row.id],
+  );
+  return {
+    id: row.id as number,
+    name: row.name as string,
+    classId: row.class_id as string,
+    level: row.level as number,
+    zoneId: (row.zone_id as string) || ZoneId.GRASSLANDS,
+    bodyId: (row.body_id as string) || defaultBodyId(row.class_id as string),
+    equipment: equipRows.map(e => ({ slotType: e.slot_type as string, itemId: e.item_id as string })),
+  };
 }
 
 /**
@@ -198,15 +227,10 @@ export function createCharacter(userId: number, name: string, classId: string): 
  */
 export function getCharactersByUser(userId: number): CharacterSummary[] {
   const rows = queryAll(
-    'SELECT id, name, class_id, level FROM characters WHERE user_id = ?',
+    'SELECT id, name, class_id, level, zone_id, body_id FROM characters WHERE user_id = ?',
     [userId],
   );
-  return rows.map(row => ({
-    id: row.id as number,
-    name: row.name as string,
-    classId: row.class_id as string,
-    level: row.level as number,
-  }));
+  return rows.map(summaryFromRow);
 }
 
 /**

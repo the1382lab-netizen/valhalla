@@ -15,6 +15,10 @@ A gold-rimmed coin like the Valhalla logo, with a face colour per class and a go
 
 Rim: gold gradient `#f0d58c` → `#b08d3c` → `#7d6124`. Symbol: `#f0d58c` (Cleric `#6b4c14`) over a dark keyline in the coin's shadow colour.
 
+`default` is a plain bronze coin with no symbol: what the game and the web editor show for a class whose icon file is missing.
+
+Each class's icon can be chosen on the web editor's Classes page (`icon` in `classes.json`); left empty it is `T_ClassIcon_<ClassId>.png`.
+
 ## Files
 
 - `Docs/branding/class-icons/<class>.svg`: vector sources (64 × 64 viewBox).

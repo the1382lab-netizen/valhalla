@@ -134,6 +134,15 @@ public:
 	 */
 	void RefreshEquipmentVisuals();
 
+	/**
+	 * B-08a: dress this character from a fixed loadout instead of a player
+	 * state, for the character select preview (AValhallaCharacterPreviewStage).
+	 * One item id per slot, indexed by ValhallaEquipSlotToIndex; from then on
+	 * RefreshEquipmentVisuals ignores the player state. BodyId (the
+	 * character's, from the list) picks the skin tone as the class's does in game.
+	 */
+	void ApplyPreviewLoadout(const TArray<FName>& EquipmentBySlotIndex, const FString& BodyId);
+
 	/** The leader mesh. Every follower copies its pose; the anim driver plays it. */
 	USkeletalMeshComponent* GetBodyMesh() const { return BodyMesh; }
 
@@ -309,6 +318,12 @@ protected:
 	/** Assign one slot's art, and log the assignment. Returns true if it changed. */
 	bool ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId);
 
+	/** RefreshEquipmentVisuals' body: every slot, hair and the weapon stance, from any source. */
+	void RefreshEquipmentVisualsFrom(TFunctionRef<FName(EValhallaEquipSlot)> GetEquipped);
+
+	/** Tint the body's skin for a body id (body_fair, ...); external bodies are left alone. */
+	void ApplySkinTint(const FString& BodyId);
+
 	/**
 	 * Replicated so a client hides a corpse without waiting for the player
 	 * state's bAlive to arrive on its own, slower, channel.
@@ -364,4 +379,8 @@ private:
 	 * nothing when nothing changed. Indexed by (uint8)EValhallaEquipSlot.
 	 */
 	TArray<FName> AppliedEquipment;
+
+	/** B-08a: set by ApplyPreviewLoadout; the loadout it gave. */
+	bool bPreviewLoadout = false;
+	TArray<FName> PreviewEquipment;
 };

@@ -191,6 +191,13 @@ async function run(): Promise<void> {
     assert(list.body.characters.some((c: any) => c.id === characterId),
       'listed character matches the created one');
 
+    // 4c. B-08a: the summary carries what character select shows and dresses
+    const listed = list.body.characters.find((c: any) => c.id === characterId);
+    assert(typeof listed?.zoneId === 'string' && listed.zoneId.length > 0, 'summary has a zoneId', String(listed?.zoneId));
+    assert(typeof listed?.bodyId === 'string' && listed.bodyId.length > 0, 'summary has a bodyId', String(listed?.bodyId));
+    assert(Array.isArray(listed?.equipment), 'summary has an equipment array');
+    assert(Array.isArray(created.body.character.equipment), 'create returns the same summary shape');
+
     // 5. POST /api/auth/verify
     console.log('\n[5] POST /api/auth/verify');
     const verify = await http('POST', '/api/auth/verify', { body: { token }, secret: SECRET });

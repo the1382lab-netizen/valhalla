@@ -19,6 +19,7 @@ import { useEditorStore } from '../../../store/editorStore';
 interface ValidationContext {
   meshFiles: string[] | null;
   iconFiles: string[] | null;
+  classIconFiles?: string[] | null;
   unrealRefs: UnrealRefs | null;
   problems: { file: string; message: string }[];
 }
@@ -82,6 +83,7 @@ export const ValidationPanel: React.FC = () => {
       zones: zones.data,
       meshFiles: context?.meshFiles ?? undefined,
       iconFiles: context?.iconFiles ?? undefined,
+      classIconFiles: context?.classIconFiles ?? undefined,
       unrealRefs: context?.unrealRefs ?? null,
     });
     const fileProblems: ValidationIssue[] = (context?.problems ?? []).map(p => ({

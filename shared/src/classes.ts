@@ -72,6 +72,11 @@ export interface ClassTemplate {
    * BASE_RANGED_DAMAGE when absent.
    */
   baseRangedDamage?: number;
+  /**
+   * B-08a: class icon, a PNG in Import/UI/ClassIcons (e.g. "T_ClassIcon_Warrior.png").
+   * Optional: classIconFileFor() gives the default, T_ClassIcon_<ClassId>.png.
+   */
+  icon?: string;
   /** Line-of-sight vision range in UE units (cm) */
   visionRange: number;
   startingItems?: StartingItem[];
@@ -80,6 +85,19 @@ export interface ClassTemplate {
    * character's own `bodyId` once appearance selection exists.
    */
   bodyId?: string;
+}
+
+/**
+ * B-08a: the class icon file for a class, in Import/UI/ClassIcons. The class's own
+ * `icon` when it names one, else T_ClassIcon_<ClassId>.png (the kit's naming, from
+ * Tools/ui/make_class_icons.py). Unreal resolves the same name
+ * (UValhallaVisuals::ClassIconFor).
+ */
+export function classIconFileFor(classId: string, icon?: string): string {
+  const own = typeof icon === 'string' ? icon.trim() : '';
+  if (own) return /\.png$/i.test(own) ? own : `${own}.png`;
+  const pascal = classId.charAt(0).toUpperCase() + classId.slice(1);
+  return `T_ClassIcon_${pascal}.png`;
 }
 
 // ── Class Templates ────────────────────────────────────────

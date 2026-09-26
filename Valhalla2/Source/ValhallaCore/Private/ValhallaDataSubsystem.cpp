@@ -353,6 +353,9 @@ namespace
 		Out.BaseRangedDamage = static_cast<float>(Valhalla::BaseRangedDamage);
 		OptFloat(Obj, TEXT("baseRangedDamage"), Out.BaseRangedDamage);
 
+		// B-08a: optional class icon file; empty means the kit's default name.
+		OptString(Obj, TEXT("icon"), Out.Icon);
+
 		// New in 2.0 (present in classes.json since Phase 1b). Optional read with
 		// a constant fallback so older data files still load.
 		Out.VisionRange = static_cast<float>(Valhalla::DefaultVisionRange);

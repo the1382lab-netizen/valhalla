@@ -457,4 +457,57 @@ bool FValhallaBackendApplyLoadedTest::RunTest(const FString& /*Parameters*/)
 	return true;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Valhalla.Game.Backend.CharacterSummary (B-08a)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The character select screen draws each row's zone and dresses its preview
+// from the list entry. A backend from before B-08a sends none of that and must
+// still list characters; one after it must fill every slot it names.
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FValhallaBackendCharacterSummaryTest,
+	"Valhalla.Game.Backend.CharacterSummary",
+	VALHALLA_GAME_TEST_FLAGS)
+
+bool FValhallaBackendCharacterSummaryTest::RunTest(const FString& /*Parameters*/)
+{
+	auto Parse = [](const TCHAR* Text) -> FValhallaCharacterSummary
+	{
+		TSharedPtr<FJsonObject> Json;
+		const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FString(Text));
+		FJsonSerializer::Deserialize(Reader, Json);
+		return UValhallaBackendSubsystem::CharacterSummaryFromJson(Json);
+	};
+
+	{
+		const FValhallaCharacterSummary Old = Parse(TEXT("{\"id\":5,\"name\":\"Brynja\",\"classId\":\"cleric\",\"level\":3}"));
+		TestEqual(TEXT("old body: id"), Old.Id, 5);
+		TestEqual(TEXT("old body: class"), Old.ClassId, FName(TEXT("cleric")));
+		TestTrue(TEXT("old body: no zone"), Old.ZoneId.IsNone());
+		TestTrue(TEXT("old body: no body id"), Old.BodyId.IsEmpty());
+		TestEqual(TEXT("old body: no equipment array"), Old.Equipment.Num(), 0);
+	}
+
+	{
+		const FValhallaCharacterSummary New = Parse(TEXT(
+			"{\"id\":9,\"name\":\"Sigrun\",\"classId\":\"ranger\",\"level\":6,\"zoneId\":\"grasslands\",\"bodyId\":\"body_tan\","
+			"\"equipment\":[{\"slotType\":\"chest\",\"itemId\":\"stout_vest\"},{\"slotType\":\"weapon\",\"itemId\":\"yew_bow\"}]}"));
+		TestEqual(TEXT("new body: zone"), New.ZoneId, FName(TEXT("grasslands")));
+		TestEqual(TEXT("new body: body id"), New.BodyId, FString(TEXT("body_tan")));
+		TestEqual(TEXT("new body: one entry per slot"), New.Equipment.Num(), static_cast<int32>(ValhallaEquipSlotCount));
+		if (New.Equipment.Num() == ValhallaEquipSlotCount)
+		{
+			TestEqual(TEXT("new body: chest"), New.Equipment[ValhallaEquipSlotToIndex(EValhallaEquipSlot::Chest)], FName(TEXT("stout_vest")));
+			TestEqual(TEXT("new body: weapon"), New.Equipment[ValhallaEquipSlotToIndex(EValhallaEquipSlot::Weapon)], FName(TEXT("yew_bow")));
+		}
+
+		const FValhallaCharacterSummary Empty = Parse(TEXT("{\"id\":10,\"name\":\"Ulf\",\"classId\":\"warrior\",\"level\":1,\"equipment\":[]}"));
+		TestEqual(TEXT("empty equipment: still one entry per slot"), Empty.Equipment.Num(), static_cast<int32>(ValhallaEquipSlotCount));
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

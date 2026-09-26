@@ -21,6 +21,7 @@
 #include "ValhallaPlayerState.h"
 #include "ValhallaSkillComponent.h"
 #include "ValhallaTypes.h"
+#include "ValhallaInventoryLibrary.h"
 #include "ValhallaVisibilitySubsystem.h"
 #include "ValhallaVisuals.h"
 
@@ -485,23 +486,7 @@ void AValhallaCharacter::ApplyClassAppearance()
 	// also what 1.0 rendered a character with no body chosen as, so the
 	// fallback is the 1.0 behaviour rather than a placeholder. External bodies
 	// (the MetaHuman) carry their own baked skin and are not tinted.
-	if (BodyMesh && BodyMesh->GetSkeletalMeshAsset() && !UValhallaVisuals::UseExternalBody())
-	{
-		if (!SkinMaterial)
-		{
-			if (UMaterialInterface* Source = BodyMesh->GetMaterial(SkinMaterialIndex))
-			{
-				SkinMaterial = UMaterialInstanceDynamic::Create(Source, this);
-				BodyMesh->SetMaterial(SkinMaterialIndex, SkinMaterial);
-			}
-		}
-
-		if (SkinMaterial)
-		{
-			SkinMaterial->SetVectorParameterValue(
-				BaseColorParameter, UValhallaVisuals::SkinTintForBodyId(ClassTemplate->BodyId));
-		}
-	}
+	ApplySkinTint(ClassTemplate->BodyId);
 
 	// The action bar starts empty once the class is known; the game mode puts
 	// a returning character's saved bar on right after (SpawnLoadedPawn).
@@ -742,8 +727,51 @@ bool AValhallaCharacter::ApplySlotVisual(EValhallaEquipSlot Slot, FName ItemId)
 	return true;
 }
 
+void AValhallaCharacter::ApplySkinTint(const FString& BodyId)
+{
+	if (!BodyMesh || !BodyMesh->GetSkeletalMeshAsset() || UValhallaVisuals::UseExternalBody())
+	{
+		return;
+	}
+
+	if (!SkinMaterial)
+	{
+		if (UMaterialInterface* Source = BodyMesh->GetMaterial(SkinMaterialIndex))
+		{
+			SkinMaterial = UMaterialInstanceDynamic::Create(Source, this);
+			BodyMesh->SetMaterial(SkinMaterialIndex, SkinMaterial);
+		}
+	}
+
+	if (SkinMaterial)
+	{
+		SkinMaterial->SetVectorParameterValue(BaseColorParameter, UValhallaVisuals::SkinTintForBodyId(BodyId));
+	}
+}
+
+void AValhallaCharacter::ApplyPreviewLoadout(const TArray<FName>& EquipmentBySlotIndex, const FString& BodyId)
+{
+	// B-08a: the front end's preview has no player state; the loadout comes
+	// from the character list instead and drives the same code the game uses.
+	bPreviewLoadout = true;
+	PreviewEquipment = EquipmentBySlotIndex;
+	ApplySkinTint(BodyId);
+	RefreshEquipmentVisuals();
+}
+
 void AValhallaCharacter::RefreshEquipmentVisuals()
 {
+	if (bPreviewLoadout)
+	{
+		const TArray<FName> Loadout = PreviewEquipment;
+		RefreshEquipmentVisualsFrom([&Loadout](EValhallaEquipSlot Slot)
+		{
+			const int32 Index = ValhallaEquipSlotToIndex(Slot);
+			return Loadout.IsValidIndex(Index) ? Loadout[Index] : FName();
+		});
+		return;
+	}
+
 	const AValhallaPlayerState* ValhallaPS = GetValhallaPlayerState();
 	if (!ValhallaPS)
 	{
@@ -752,6 +780,11 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 		return;
 	}
 
+	RefreshEquipmentVisualsFrom([ValhallaPS](EValhallaEquipSlot Slot) { return ValhallaPS->GetEquipped(Slot); });
+}
+
+void AValhallaCharacter::RefreshEquipmentVisualsFrom(TFunctionRef<FName(EValhallaEquipSlot)> GetEquipped)
+{
 	static const EValhallaEquipSlot Slots[] = {
 		EValhallaEquipSlot::Helm, EValhallaEquipSlot::Chest, EValhallaEquipSlot::Legs,
 		EValhallaEquipSlot::Gloves, EValhallaEquipSlot::Boots, EValhallaEquipSlot::Back,
@@ -760,14 +793,14 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 
 	for (const EValhallaEquipSlot Slot : Slots)
 	{
-		ApplySlotVisual(Slot, ValhallaPS->GetEquipped(Slot));
+		ApplySlotVisual(Slot, GetEquipped(Slot));
 	}
 
 	// ── Hair ────────────────────────────────────────────────────────────
 	// A helm replaces the hair rather than being worn over it. That is 1.0's
 	// rule (the paperdoll drew helm *instead of* hair, never both) and it is
 	// also why the art ships a bald cap: a hood has to sit on something.
-	const bool bHasHelm = !ValhallaPS->GetEquipped(EValhallaEquipSlot::Helm).IsNone();
+	const bool bHasHelm = !GetEquipped(EValhallaEquipSlot::Helm).IsNone();
 	if (HairMesh)
 	{
 		if (!HairMesh->GetSkeletalMeshAsset())
@@ -791,7 +824,7 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 	// this has to be re-read whenever the weapon slot changes.
 	if (AnimComponent)
 	{
-		const FName WeaponId = ValhallaPS->GetEquipped(EValhallaEquipSlot::Weapon);
+		const FName WeaponId = GetEquipped(EValhallaEquipSlot::Weapon);
 		AnimComponent->SetAttackCycle(UValhallaVisuals::AttackCycleForEquippedWeapon(this, WeaponId));
 
 		// What the hands hold decides the stance: a fist around the weapon, a
@@ -806,7 +839,7 @@ void AValhallaCharacter::RefreshEquipmentVisuals()
 		const EValhallaAnim AttackAnim = UValhallaVisuals::AttackAnimForWeapon(this, WeaponId);
 		const bool bTwoHanded = bHasWeapon
 			&& (bBow || Grip == EValhallaGrip::Staff || AttackAnim == EValhallaAnim::Attack2H);
-		const bool bShield = !bTwoHanded && !ValhallaPS->GetEquipped(EValhallaEquipSlot::Offhand).IsNone();
+		const bool bShield = !bTwoHanded && !GetEquipped(EValhallaEquipSlot::Offhand).IsNone();
 		AnimComponent->SetWeaponLoadout(AttackAnim, bHasWeapon && !bBow, bBow, bShield);
 		if (OffhandMesh && UValhallaVisuals::UseExternalBody())
 		{

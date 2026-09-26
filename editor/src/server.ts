@@ -4,6 +4,7 @@
  *   - /api/thumbs/:file      top-down zone captures + their metadata in maps/thumbs/
  *   - /api/assets/mesh-ids   art ids from the UE import directory
  *   - /api/assets/icons      item icon PNGs from Import/UI/Icons (served at /assets/icons/)
+ *   - /api/assets/class-icons class icon PNGs from Import/UI/ClassIcons (served at /assets/class-icons/)
  *   - /api/admin/*           proxied to the UE admin HTTP API (VALHALLA_ADMIN_URL)
  *   - /api/accounts/*        account management (B-12), straight to the account backend
  *   - /api/validate          B-13 cross-reference check of the saved files (shared validator)
@@ -175,6 +176,19 @@ app.get('/api/assets/icons', (_req, res) => {
   }
 });
 
+// Class icons (B-08a): the kit's PNGs in Import/UI/ClassIcons (Tools/ui/make_class_icons.py)
+const CLASS_ICONS_DIR = path.join(IMPORT_DIR, 'UI', 'ClassIcons');
+app.use('/assets/class-icons', express.static(CLASS_ICONS_DIR));
+app.get('/api/assets/class-icons', (_req, res) => {
+  if (!fs.existsSync(CLASS_ICONS_DIR)) return res.json({ files: [] });
+  try {
+    const files = fs.readdirSync(CLASS_ICONS_DIR).filter(f => /\.png$/i.test(f)).sort();
+    res.json({ files });
+  } catch {
+    res.status(500).json({ error: 'Failed to read the class icons directory' });
+  }
+});
+
 // GET /api/assets/mesh-ids — valid art ids for FValhallaItemTemplate (meshId ?? spriteId)
 app.get('/api/assets/mesh-ids', (_req, res) => {
   if (!fs.existsSync(EQUIPMENT_MESH_DIR)) {
@@ -261,6 +275,7 @@ app.get('/api/validate/context', (_req, res) => {
     res.json({
       meshFiles: input.meshFiles ?? null,
       iconFiles: input.iconFiles ?? null,
+      classIconFiles: input.classIconFiles ?? null,
       unrealRefs: input.unrealRefs ?? null,
       problems,
     });

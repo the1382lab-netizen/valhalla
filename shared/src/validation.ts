@@ -16,6 +16,8 @@
  * field, a mechanic that isn't built yet); `info` is about the check itself.
  */
 
+import { classIconFileFor } from './classes.js';
+
 // ── B-06: zone atmosphere ─────────────────────────────────────────────
 
 /** The numeric ZoneAtmosphere fields, for editors and validators. */
@@ -150,6 +152,8 @@ export interface ValidationInput {
   meshFiles?: string[];
   /** File names in Import/UI/Icons, e.g. "sword_iron.png". */
   iconFiles?: string[];
+  /** File names in Import/UI/ClassIcons, e.g. "T_ClassIcon_Warrior.png" (B-08a). */
+  classIconFiles?: string[];
   unrealRefs?: UnrealRefs | null;
 }
 
@@ -311,6 +315,13 @@ export function validateGameData(input: ValidationInput): ValidationIssue[] {
     }
     if (cls.allowedArmor !== undefined && !has(ARMOR_TYPES, cls.allowedArmor)) {
       add('warning', 'classes', id, `allowed armor "${cls.allowedArmor}" is not one of ${ARMOR_TYPES.join(', ')}`);
+    }
+    if (cls.icon !== undefined && typeof cls.icon !== 'string') add('error', 'classes', id, 'icon must be a file name');
+    if (input.classIconFiles) {
+      const iconFile = classIconFileFor(id, cls.icon);
+      if (!input.classIconFiles.some(f => f.toLowerCase() === iconFile.toLowerCase())) {
+        add('warning', 'classes', id, `class icon "${iconFile}" is not in Import/UI/ClassIcons, so the plain coin shows instead`);
+      }
     }
     if (Array.isArray(cls.startingItems)) {
       for (const entry of cls.startingItems) {

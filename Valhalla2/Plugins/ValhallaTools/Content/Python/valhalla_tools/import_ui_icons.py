@@ -7,6 +7,7 @@ Three folders beside the Unreal project, each into its own content folder:
 - ``Import/UI/Icons``        -> ``/Game/Valhalla/UI/Icons/Items``   item icons
 - ``Import/UI/Icons/Skills`` -> ``/Game/Valhalla/UI/Icons/Skills``  skill icons (B-15 Wave 4)
 - ``Import/UI/Frames``       -> ``/Game/Valhalla/UI/Frames``        HUD frame art (B-15 Wave 4)
+- ``Import/UI/ClassIcons``   -> ``/Game/Valhalla/UI/ClassIcons``    class icons (B-08a)
 
 Settings by kind: the 1.0 item icons are 32 px pixel art (nearest filtering,
 no mips); the Wave 4 icons are 128 px renders shown at 36-48 px (bilinear, with
@@ -27,6 +28,8 @@ SETS = [
     (os.path.join("Import", "UI", "Icons"), "/Game/Valhalla/UI/Icons/Items", "icon"),
     (os.path.join("Import", "UI", "Icons", "Skills"), "/Game/Valhalla/UI/Icons/Skills", "icon"),
     (os.path.join("Import", "UI", "Frames"), "/Game/Valhalla/UI/Frames", "frame"),
+    # B-08a: the class icon kit (Tools/ui/make_class_icons.py), 256 px, shown at 24-52 px.
+    (os.path.join("Import", "UI", "ClassIcons"), "/Game/Valhalla/UI/ClassIcons", "icon"),
 ]
 
 

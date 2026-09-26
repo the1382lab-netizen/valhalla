@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { classIconFileFor } from '@valhalla/shared';
 import { useEditorStore } from '../../../store/editorStore';
 
 /** Skin tones Unreal knows (UValhallaVisuals::SkinSrgbForBodyId), with the swatch it tints the body. */
@@ -32,6 +33,8 @@ interface ClassTemplate {
   baseMeleeDamage?: number;
   /** Flat damage added to every ranged auto-attack, before Dexterity scaling. */
   baseRangedDamage?: number;
+  /** B-08a: class icon PNG in Import/UI/ClassIcons; empty means T_ClassIcon_<ClassId>.png. */
+  icon?: string;
   /** Line-of-sight vision range in UE units (cm) */
   visionRange: number;
   startingItems?: StartingItem[];
@@ -92,6 +95,13 @@ export const ClassEditor: React.FC = () => {
   );
 
   // State for the "add starting item" form
+  const [classIconFiles, setClassIconFiles] = useState<string[]>([]);
+  useEffect(() => {
+    fetch('/api/assets/class-icons')
+      .then(r => r.json())
+      .then(data => setClassIconFiles(data.files || []))
+      .catch(() => setClassIconFiles([]));
+  }, []);
   const [newItemId, setNewItemId] = useState('');
   const [newItemQty, setNewItemQty] = useState(1);
   const [newItemEquipped, setNewItemEquipped] = useState(false);
@@ -385,6 +395,35 @@ export const ClassEditor: React.FC = () => {
                         value={selectedClass.baseRangedDamage ?? 8}
                         onChange={(e) => handleUpdateClass({ baseRangedDamage: parseFloat(e.target.value) || 0 })}
                       />
+                    </div>
+                  </div>
+
+                  {/* ── Class icon (B-08a) ───────────────── */}
+                  <div className="form-group">
+                    <label className="form-label">Class Icon</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <select
+                        className="form-select"
+                        style={{ flex: 1 }}
+                        value={selectedClass.icon || ''}
+                        onChange={(e) => handleUpdateClass({ icon: e.target.value || undefined })}
+                      >
+                        <option value="">Default ({classIconFileFor(selectedClass.id)})</option>
+                        {classIconFiles.map(f => <option key={f} value={f}>{f}</option>)}
+                        {selectedClass.icon && !classIconFiles.includes(selectedClass.icon) && (
+                          <option value={selectedClass.icon}>{selectedClass.icon} (missing)</option>
+                        )}
+                      </select>
+                      <img
+                        src={`/assets/class-icons/${classIconFileFor(selectedClass.id, selectedClass.icon)}`}
+                        alt="Class icon preview"
+                        style={{ width: 48, height: 48, borderRadius: '50%', background: '#15110a' }}
+                        onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden'; }}
+                        onLoad={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'visible'; }}
+                      />
+                    </div>
+                    <div style={{ fontSize: '0.85em', color: '#888', marginTop: 4 }}>
+                      PNGs in <code>Import/UI/ClassIcons</code> (made by <code>Tools/ui/make_class_icons.py</code>). Shown on character select and in the party pane.
                     </div>
                   </div>
 

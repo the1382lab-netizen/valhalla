@@ -42,6 +42,22 @@ struct VALHALLAGAME_API FValhallaCharacterSummary
 
 	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Backend")
 	int32 Level = 1;
+
+	/** B-08a: `zoneId`, for the list's zone line. None from an older backend. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Backend")
+	FName ZoneId;
+
+	/** B-08a: `bodyId`, for the preview. Empty from an older backend. */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Backend")
+	FString BodyId;
+
+	/**
+	 * B-08a: `equipment`, one item id per slot, indexed by ValhallaEquipSlotToIndex
+	 * (the same layout as AValhallaPlayerState's equipment). Empty from an older
+	 * backend; the preview then shows the bare body.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Valhalla|Backend")
+	TArray<FName> Equipment;
 };
 
 /**
@@ -532,6 +548,9 @@ public:
 	 * with a warning, never fatal.
 	 */
 	static bool LoadedCharacterFromJson(const TSharedPtr<FJsonObject>& Json, FValhallaLoadedCharacter& Out);
+
+	/** B-08a: one `characters[]` entry of a login / list body (zone, body and equipment optional). */
+	static FValhallaCharacterSummary CharacterSummaryFromJson(const TSharedPtr<FJsonObject>& Json);
 
 	/** First eight characters and an ellipsis. The only form a token is ever logged in. */
 	static FString RedactToken(const FString& Token);

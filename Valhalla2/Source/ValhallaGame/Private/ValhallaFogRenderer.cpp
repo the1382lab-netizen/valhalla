@@ -3,6 +3,9 @@
 #include "ValhallaFogRenderer.h"
 
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+#include "Engine/Level.h"
+#include "HAL/IConsoleManager.h"
 #include "Camera/CameraComponent.h"
 #include "CanvasItem.h"
 #include "Components/LightComponent.h"
@@ -27,8 +30,22 @@
 #include "ValhallaZoneAtmosphere.h"
 #include "ValhallaZoneSubsystem.h"
 
+CSV_DECLARE_CATEGORY_EXTERN(Valhalla);
+
 namespace
 {
+	/**
+	 * `valhalla.FogAlwaysRecompute` — B-27 Phase 5. 0 (default): recompute the
+	 * visible area only when something changed, from the per-level blocker
+	 * cache. 1: the old way, an overlap query and both masks redrawn every
+	 * frame, for comparing the two.
+	 */
+	TAutoConsoleVariable<int32> CVarFogAlwaysRecompute(
+		TEXT("valhalla.FogAlwaysRecompute"),
+		0,
+		TEXT("Client. 1: recompute the fog's visible area every frame with an overlap query (before B-27 Phase 5). 0: only when the pawn moved, the walls or the zone changed."),
+		ECVF_Default);
+
 	/** Material parameter names. They have to match what `build_fog.py` authors. */
 	const FName ParamVisibleMask(TEXT("VisibleMask"));
 	const FName ParamExploredMask(TEXT("ExploredMask"));
@@ -116,6 +133,10 @@ void AValhallaFogRenderer::BeginPlay()
 		OwningController = Cast<AValhallaPlayerController>(GetOwner());
 	}
 
+	// B-27 Phase 5: the blocker cache follows the levels in and out of the world.
+	LevelAddedHandle = FWorldDelegates::LevelAddedToWorld.AddUObject(this, &AValhallaFogRenderer::HandleLevelAdded);
+	LevelRemovedHandle = FWorldDelegates::LevelRemovedFromWorld.AddUObject(this, &AValhallaFogRenderer::HandleLevelRemoved);
+
 	// B-06: the zone atmosphere rides along with the fog — same owner, same
 	// client-only life — and is spawned before any of the early returns below,
 	// because a level with no fog bounds still has lighting to switch.
@@ -162,13 +183,6 @@ void AValhallaFogRenderer::BeginPlay()
 		GlowRT->UpdateResource();
 	}
 
-	ExploredRT = UKismetRenderingLibrary::CreateRenderTarget2D(
-		World, MaskResolution, MaskResolution, RTF_RGBA8_SRGB, FLinearColor::Black, /*bAutoGenerateMipMaps*/ false);
-	if (ExploredRT)
-	{
-		UKismetRenderingLibrary::ClearRenderTarget2D(World, ExploredRT, FLinearColor::Black);
-	}
-
 	// ── The post-process material ───────────────────────────────────────
 	if (UMaterialInterface* FogParent = LoadObject<UMaterialInterface>(nullptr, FogMaterialPath))
 	{
@@ -184,7 +198,8 @@ void AValhallaFogRenderer::BeginPlay()
 	}
 
 	FogMaterial->SetTextureParameterValue(ParamVisibleMask, VisibleRT);
-	FogMaterial->SetTextureParameterValue(ParamExploredMask, ExploredRT);
+	// The current zone's explored mask (made here the first time), bound to the material.
+	SelectExploredMask(CurrentZoneId);
 	if (GlowRT)
 	{
 		FogMaterial->SetTextureParameterValue(ParamGlowMask, GlowRT);
@@ -218,26 +233,25 @@ bool AValhallaFogRenderer::ResolveBoundsForPawn(const AActor* Pawn)
 					return true;
 				}
 
-				const bool bWasExplored = !CurrentZoneId.IsNone();
-
 				CurrentZoneId = Zone->ZoneId;
 				FogBounds = Zone->GetBounds2D();
 
-				// Everything explored was explored in the *other* zone's square
-				// of world, and there is one mask. See ResolveBoundsForPawn's
-				// comment in the header.
-				if (bWasExplored && ExploredRT)
+				// B-27 Phase 5: each zone keeps its own explored mask (before, one
+				// mask was cleared on every zone change). Only once the material
+				// exists: BeginPlay selects the first one itself.
+				const bool bKnown = ExploredByZone.Contains(CurrentZoneId);
+				if (FogMaterial)
 				{
-					UKismetRenderingLibrary::ClearRenderTarget2D(World, ExploredRT, FLinearColor::Black);
+					SelectExploredMask(CurrentZoneId);
 				}
 
 				ApplyBoundsToMaterial();
 
 				UE_LOG(LogValhallaVision, Log,
-					TEXT("fog bounds -> zone '%s': (%.0f, %.0f) .. (%.0f, %.0f)%s"),
+					TEXT("fog bounds -> zone '%s': (%.0f, %.0f) .. (%.0f, %.0f), %s explored mask"),
 					*CurrentZoneId.ToString(),
 					FogBounds.Min.X, FogBounds.Min.Y, FogBounds.Max.X, FogBounds.Max.Y,
-					bWasExplored ? TEXT(", explored mask reset") : TEXT(""));
+					bKnown ? TEXT("its") : TEXT("a new"));
 				return true;
 			}
 		}
@@ -424,6 +438,8 @@ void AValhallaFogRenderer::DrawGlowMask(UCanvas* Canvas, int32 /*Width*/, int32 
 
 void AValhallaFogRenderer::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	FWorldDelegates::LevelAddedToWorld.Remove(LevelAddedHandle);
+	FWorldDelegates::LevelRemovedFromWorld.Remove(LevelRemovedHandle);
 	if (VisibleRT)
 	{
 		VisibleRT->OnCanvasRenderTargetUpdate.RemoveDynamic(this, &AValhallaFogRenderer::DrawVisibleMask);
@@ -603,9 +619,11 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 			BeaconRefreshAccumulator = 0.f;
 			GlowBounds = FogBounds;
 			GatherBeacons();
-			GlowRT->UpdateResource();
+			GlowRT->FastUpdateResource();
 		}
 	}
+
+	CSV_SCOPED_TIMING_STAT(Valhalla, FogTick);
 
 	const FVector Location = Pawn->GetActorLocation();
 	const FVector2D Origin(Location.X, Location.Y);
@@ -614,10 +632,34 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	// number the server culls relevancy with, so the lit polygon never shows
 	// ground where the server has stopped sending the NPCs standing on it.
 	const float Range = UValhallaVisibilitySubsystem::GetVisionRangeFor(Pawn);
+	const bool bAlways = CVarFogAlwaysRecompute.GetValueOnGameThread() != 0;
+
+	// ── B-27 Phase 5: only when something changed ────────────────────────
+	if (!bAlways)
+	{
+		RebuildBlockerCacheIfDirty();
+	}
+	FFogKey Key;
+	Key.Origin = Origin;
+	Key.Range = Range;
+	Key.Bounds = FogBounds;
+	Key.BlockerGeneration = BlockerGeneration;
+	if (!bAlways && !NeedsRecompute(bHaveLastKey ? &LastKey : nullptr, Key, bLastHadMovableBlocker))
+	{
+		return;
+	}
 
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_GatherSegments);
-		GatherBlockerSegments(Location, Range, SegmentScratch);
+		if (bAlways)
+		{
+			GatherBlockerSegments(Location, Range, SegmentScratch);
+			bLastHadMovableBlocker = false;
+		}
+		else
+		{
+			SelectSegmentsInRange(BlockerEntries, Location, Range, SegmentScratch, bLastHadMovableBlocker);
+		}
 	}
 
 	TArray<FVector2D> Polygon;
@@ -632,12 +674,22 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 	{
 		return;
 	}
+	LastKey = Key;
+	bHaveLastKey = true;
 
-	// This frame's polygon: the canvas clears to black first, so what is left
-	// is exactly what is visible now.
+	// This polygon: the canvas clears to black first, so what is left is
+	// exactly what is visible now. FastUpdateResource keeps the texture and
+	// only redraws it (UpdateResource re-created it every frame).
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_VisibleRT);
-		VisibleRT->UpdateResource();
+		if (bAlways)
+		{
+			VisibleRT->UpdateResource();
+		}
+		else
+		{
+			VisibleRT->FastUpdateResource();
+		}
 	}
 
 	// The same fan again into the explored mask, without a clear. See the
@@ -654,4 +706,206 @@ void AValhallaFogRenderer::Tick(float DeltaSeconds)
 		Canvas->K2_DrawTriangle(nullptr, PendingTriangles);
 	}
 	UKismetRenderingLibrary::EndDrawCanvasToRenderTarget(World, Context);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  B-27 Phase 5: when to recompute, the blocker cache, the explored masks
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool AValhallaFogRenderer::NeedsRecompute(const FFogKey* Last, const FFogKey& Now, bool bMovableBlockerInRange)
+{
+	if (!Last || bMovableBlockerInRange)
+	{
+		return true;
+	}
+	return FVector2D::DistSquared(Last->Origin, Now.Origin) >= FMath::Square(RecomputeDistanceCm)
+		|| !FMath::IsNearlyEqual(Last->Range, Now.Range, 1.f)
+		|| !(Last->Bounds == Now.Bounds)
+		|| Last->BlockerGeneration != Now.BlockerGeneration;
+}
+
+void AValhallaFogRenderer::MakeBoxSegments(const FBox& Local, const FTransform& ToWorld, FValhallaVisibilitySegment OutSegments[4])
+{
+	const double Z = Local.Min.Z;
+	const FVector2D Corners[4] =
+	{
+		FVector2D(ToWorld.TransformPosition(FVector(Local.Min.X, Local.Min.Y, Z))),
+		FVector2D(ToWorld.TransformPosition(FVector(Local.Max.X, Local.Min.Y, Z))),
+		FVector2D(ToWorld.TransformPosition(FVector(Local.Max.X, Local.Max.Y, Z))),
+		FVector2D(ToWorld.TransformPosition(FVector(Local.Min.X, Local.Max.Y, Z))),
+	};
+	for (int32 Index = 0; Index < 4; ++Index)
+	{
+		OutSegments[Index] = FValhallaVisibilitySegment(Corners[Index], Corners[(Index + 1) % 4]);
+	}
+}
+
+void AValhallaFogRenderer::SelectSegmentsInRange(TArrayView<const FBlockerEntry> Entries, const FVector& Centre, float Range,
+	TArray<FValhallaVisibilitySegment>& OutSegments, bool& bOutMovable)
+{
+	OutSegments.Reset();
+	bOutMovable = false;
+	const double RangeSq = FMath::Square(static_cast<double>(Range));
+	for (const FBlockerEntry& Entry : Entries)
+	{
+		if (!Entry.Bounds.IsValid || Entry.Bounds.ComputeSquaredDistanceToPoint(Centre) > RangeSq)
+		{
+			continue;
+		}
+		if (Entry.bMovable)
+		{
+			// Where it is now, not where it was when the level was cached.
+			const UStaticMeshComponent* Component = Entry.Component.Get();
+			const UStaticMesh* Mesh = Component ? Component->GetStaticMesh() : nullptr;
+			if (!Mesh)
+			{
+				continue;
+			}
+			FValhallaVisibilitySegment Live[4];
+			MakeBoxSegments(Mesh->GetBoundingBox(), Component->GetComponentTransform(), Live);
+			OutSegments.Append(Live, 4);
+			bOutMovable = true;
+			continue;
+		}
+		OutSegments.Append(Entry.Segments, 4);
+	}
+}
+
+void AValhallaFogRenderer::CacheLevel(const ULevel* Level, TArray<FBlockerEntry>& OutEntries)
+{
+	OutEntries.Reset();
+	if (!Level)
+	{
+		return;
+	}
+	TArray<UStaticMeshComponent*> Components;
+	for (const AActor* Actor : Level->Actors)
+	{
+		if (!Actor)
+		{
+			continue;
+		}
+		Components.Reset();
+		Actor->GetComponents(Components);
+		for (const UStaticMeshComponent* Component : Components)
+		{
+			// What the overlap on the VisionBlocker channel found: a registered
+			// component that queries and does not ignore the channel.
+			if (!Component || !Component->IsRegistered() || !Component->IsQueryCollisionEnabled()
+				|| Component->GetCollisionResponseToChannel(ValhallaVisionBlockerChannel) == ECR_Ignore)
+			{
+				continue;
+			}
+			const UStaticMesh* Mesh = Component->GetStaticMesh();
+			if (!Mesh)
+			{
+				continue;
+			}
+			FBlockerEntry& Entry = OutEntries.AddDefaulted_GetRef();
+			Entry.Component = Component;
+			Entry.Bounds = Component->Bounds.GetBox();
+			Entry.bMovable = Component->Mobility == EComponentMobility::Movable;
+			MakeBoxSegments(Mesh->GetBoundingBox(), Component->GetComponentTransform(), Entry.Segments);
+		}
+	}
+}
+
+void AValhallaFogRenderer::RebuildBlockerCacheIfDirty()
+{
+	if (!bBlockerCacheDirty)
+	{
+		return;
+	}
+	bBlockerCacheDirty = false;
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	TRACE_CPUPROFILER_EVENT_SCOPE(Valhalla_Fog_CacheBlockers);
+
+	// Drop the levels that left, cache the ones that are new; a level already
+	// cached is not walked again.
+	TSet<const ULevel*> Present;
+	for (const ULevel* Level : World->GetLevels())
+	{
+		if (Level && Level->bIsVisible)
+		{
+			Present.Add(Level);
+		}
+	}
+	for (auto It = BlockersByLevel.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || !Present.Contains(It.Key().Get()))
+		{
+			It.RemoveCurrent();
+		}
+	}
+	int32 Cached = 0;
+	for (const ULevel* Level : Present)
+	{
+		const TWeakObjectPtr<ULevel> Key(const_cast<ULevel*>(Level));
+		if (!BlockersByLevel.Contains(Key))
+		{
+			CacheLevel(Level, BlockersByLevel.Add(Key));
+			++Cached;
+		}
+	}
+
+	BlockerEntries.Reset();
+	for (const TPair<TWeakObjectPtr<ULevel>, TArray<FBlockerEntry>>& Pair : BlockersByLevel)
+	{
+		BlockerEntries.Append(Pair.Value);
+	}
+	++BlockerGeneration;
+	UE_LOG(LogValhallaVision, Log, TEXT("fog: %d vision blockers in %d levels (%d newly cached)."),
+		BlockerEntries.Num(), BlockersByLevel.Num(), Cached);
+}
+
+void AValhallaFogRenderer::MarkBlockersDirty()
+{
+	BlockersByLevel.Reset();
+	bBlockerCacheDirty = true;
+}
+
+void AValhallaFogRenderer::HandleLevelAdded(ULevel* /*Level*/, UWorld* InWorld)
+{
+	if (InWorld == GetWorld())
+	{
+		bBlockerCacheDirty = true;
+	}
+}
+
+void AValhallaFogRenderer::HandleLevelRemoved(ULevel* /*Level*/, UWorld* InWorld)
+{
+	if (InWorld == GetWorld())
+	{
+		bBlockerCacheDirty = true;
+	}
+}
+
+void AValhallaFogRenderer::SelectExploredMask(FName ZoneId)
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	TObjectPtr<UTextureRenderTarget2D>& Mask = ExploredByZone.FindOrAdd(ZoneId);
+	if (!Mask)
+	{
+		Mask = UKismetRenderingLibrary::CreateRenderTarget2D(
+			World, MaskResolution, MaskResolution, RTF_RGBA8_SRGB, FLinearColor::Black, /*bAutoGenerateMipMaps*/ false);
+		if (Mask)
+		{
+			UKismetRenderingLibrary::ClearRenderTarget2D(World, Mask, FLinearColor::Black);
+		}
+	}
+	ExploredRT = Mask;
+	if (FogMaterial && ExploredRT)
+	{
+		FogMaterial->SetTextureParameterValue(ParamExploredMask, ExploredRT);
+	}
+	// The new zone's mask has nothing of this polygon yet.
+	bHaveLastKey = false;
 }

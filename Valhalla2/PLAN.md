@@ -2677,6 +2677,23 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   (`StartArmLengthFor`; Grasslands 2600, Eldmoor 2400). The per-frame zoom clamp now uses the zone being
   blended to, so the zoom-out on entering a zone with a higher limit is not pulled back to the old one.
   Test `Valhalla.Game.Camera.StartZoom`; checked in PIE both ways (Grasslands → Eldmoor → Grasslands).
+- [x] **Phase 5: vision fog.** `AValhallaFogRenderer` recomputes the visible area only when something changed
+      (`NeedsRecompute`: the pawn moved 10 cm, the vision range, the zone's bounds or the walls changed, or a
+      movable blocker is in range); standing still it does nothing. The wall segments come from a cache per
+      level (`CacheLevel`: every registered static mesh that does not ignore the VisionBlocker channel, its
+      footprint edges worked out once; Movable ones re-read at each gather), rebuilt only for levels added to or
+      removed from the world (`FWorldDelegates::LevelAddedToWorld` / `LevelRemovedFromWorld`), so B-24's
+      streaming needs nothing extra; `MarkBlockersDirty()` is B-23's hook for doors. 1146 blockers in 7 levels
+      in L_World. The visible and glow masks redraw with `FastUpdateResource` (no texture re-creation), and
+      only with a new polygon. Each zone has its own explored mask (`ExploredByZone`): walking back into a zone
+      (or B-24 reloading it) brings back what was explored there. `valhalla.FogAlwaysRecompute 1` is the old
+      path for comparison; CSV stat `Valhalla/GameThread/FogTick`; `Tools/perf/fog_bench.cmd [old]`. Tests
+      `Valhalla.Game.Fog.Recompute` / `.BlockerCache`.
+- **Phase 5 results** (editor binaries, standalone, Harrow's Rest, `fog_bench.cmd`): fog 1.91 ms a frame
+  standing → 0.003 ms; walking 1.99 → 0.32 ms on average (a recompute every few frames, 1.8 ms p95); game
+  thread 13.3 → 10.8 ms. The frame is still render-thread bound there (16.5 ms), so fps is unchanged at
+  about 60. The fog looks the same on both paths (screenshots differ by under 1/255 on average). `Valhalla.`
+  suite: 58 tests, 57 pass (known MeshIdFallback).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

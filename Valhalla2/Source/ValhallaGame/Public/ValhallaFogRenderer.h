@@ -13,6 +13,8 @@ class UCameraComponent;
 class UCanvasRenderTarget2D;
 class UMaterialInstanceDynamic;
 class UTextureRenderTarget2D;
+class UStaticMeshComponent;
+class ULevel;
 
 /**
  * The client's fog of war. The port of `client/src/systems/FogOfWar.ts`.
@@ -49,6 +51,24 @@ class UTextureRenderTarget2D;
  *
  * The explored mask therefore lasts for the session and resets on a level
  * change, because the actor and its render targets go with the world.
+ *
+ * B-27 Phase 5 (it cost 1.9 ms a frame in the walled village, redoing
+ * everything every frame):
+ *
+ *   - the visible area is recomputed only when the pawn has moved
+ *     RecomputeDistanceCm, the vision range or the zone changed, the walls
+ *     changed (a level streamed in or out, MarkBlockersDirty), or a movable
+ *     blocker is in range (NeedsRecompute);
+ *   - the wall segments come from a cache kept per level (built once when the
+ *     level is added to the world, dropped when it is removed), not from an
+ *     overlap query every frame; so B-24's zone streaming needs nothing extra;
+ *   - the visible mask is redrawn with FastUpdateResource and only with a new
+ *     polygon; the explored mask likewise;
+ *   - there is an explored mask per zone (ExploredByZone), so walking back into
+ *     a zone, or B-24 unloading and reloading it, brings its explored fog back.
+ *
+ * `valhalla.FogAlwaysRecompute 1` restores the old behaviour (overlap query
+ * and redraw every frame) for comparing the two. CSV stat Valhalla/FogTick.
  */
 UCLASS(NotPlaceable)
 class VALHALLAGAME_API AValhallaFogRenderer : public AActor
@@ -119,6 +139,51 @@ public:
 	/** `/Game/Valhalla/Materials/PP_Fog`. Authored by `build_fog.py`. */
 	static constexpr const TCHAR* FogMaterialPath = TEXT("/Game/Valhalla/Materials/PP_Fog");
 
+	// ── B-27 Phase 5 ─────────────────────────────────────────────────────
+
+	/** How far the pawn has to move (2D) before the visible area is recomputed, cm. */
+	static constexpr float RecomputeDistanceCm = 10.f;
+
+	/** What the last visible area was computed for. */
+	struct FFogKey
+	{
+		FVector2D Origin = FVector2D::ZeroVector;
+		float Range = 0.f;
+		FBox2D Bounds = FBox2D(ForceInit);
+		uint32 BlockerGeneration = 0;
+	};
+
+	/**
+	 * Recompute? True with no previous key, when the origin moved
+	 * RecomputeDistanceCm or more, the range, bounds or blocker generation
+	 * changed, or a movable blocker was in range last time. Pure; tested.
+	 */
+	static bool NeedsRecompute(const FFogKey* Last, const FFogKey& Now, bool bMovableBlockerInRange);
+
+	/** One vision blocker in the cache: its world bounds and its footprint's four edges. */
+	struct FBlockerEntry
+	{
+		TWeakObjectPtr<const UStaticMeshComponent> Component;
+		FBox Bounds = FBox(ForceInit);
+		FValhallaVisibilitySegment Segments[4];
+		/** Movable: its edges are re-read from the component at every gather. */
+		bool bMovable = false;
+	};
+
+	/** The four XY edges of a mesh's local box pushed through a transform (the old overlap path's shape). */
+	static void MakeBoxSegments(const FBox& LocalBox, const FTransform& ToWorld, FValhallaVisibilitySegment OutSegments[4]);
+
+	/**
+	 * The segments of every entry whose bounds come within Range of Centre (3D,
+	 * as the overlap sphere did). bOutMovable: a movable one was among them.
+	 * Pure; tested.
+	 */
+	static void SelectSegmentsInRange(TArrayView<const FBlockerEntry> Entries, const FVector& Centre, float Range,
+		TArray<FValhallaVisibilitySegment>& OutSegments, bool& bOutMovable);
+
+	/** The walls changed without a level streaming (B-23's doors): rebuild the cache and recompute. */
+	void MarkBlockersDirty();
+
 protected:
 	/** UCanvasRenderTarget2D's update hook. Draws PendingTriangles. */
 	UFUNCTION()
@@ -155,7 +220,8 @@ protected:
 	FVector2D WorldToMask(const FVector2D& World) const;
 
 	/**
-	 * Point the masks at the zone the pawn is in, clearing what was explored.
+	 * Point the masks at the zone the pawn is in (B-27: and at that zone's own
+	 * explored mask; the paragraphs below describe the one shared mask before it).
 	 *
 	 * Phase 3 made the fog per *zone* rather than per level, because one level
 	 * now holds every zone: `L_World` streams the grasslands at the origin and
@@ -236,6 +302,34 @@ private:
 
 	/** Scratch, kept between frames so the per-frame pass does not allocate. */
 	TArray<FValhallaVisibilitySegment> SegmentScratch;
+
+	// ── B-27 Phase 5 ─────────────────────────────────────────────────────
+
+	/** Every loaded level's vision blockers. Rebuilt lazily when bBlockerCacheDirty. */
+	TMap<TWeakObjectPtr<ULevel>, TArray<FBlockerEntry>> BlockersByLevel;
+	/** Flat copy of BlockersByLevel's entries for the per-gather scan. */
+	TArray<FBlockerEntry> BlockerEntries;
+	bool bBlockerCacheDirty = true;
+	/** Bumped whenever the cache changes, so NeedsRecompute sees new walls. */
+	uint32 BlockerGeneration = 1;
+
+	void RebuildBlockerCacheIfDirty();
+	static void CacheLevel(const ULevel* Level, TArray<FBlockerEntry>& OutEntries);
+	void HandleLevelAdded(ULevel* Level, UWorld* World);
+	void HandleLevelRemoved(ULevel* Level, UWorld* World);
+	FDelegateHandle LevelAddedHandle;
+	FDelegateHandle LevelRemovedHandle;
+
+	FFogKey LastKey;
+	bool bHaveLastKey = false;
+	bool bLastHadMovableBlocker = false;
+
+	/** The explored mask for each zone this session has seen. ExploredRT is the current zone's. */
+	UPROPERTY(Transient)
+	TMap<FName, TObjectPtr<UTextureRenderTarget2D>> ExploredByZone;
+
+	/** ExploredRT := the zone's mask (made, black, the first time), bound to the material. */
+	void SelectExploredMask(FName ZoneId);
 
 	/** One beacon light, as the glow mask draws it. */
 	struct FBeacon

@@ -8,6 +8,7 @@ script runs the editor binaries (no packaged build needed), vsync off, no frame 
 |---|---|
 | `standalone_bench.cmd town` | Standalone game (server + client in one process) idle in the old Grasslands town. Every NPC in every zone is local here, so this is the worst case for character cost. |
 | `standalone_bench.cmd eldmoor` | The same at Harrow's Rest in Eldmoor (walls, fires, fog). Add a second argument to change a setting at frame 900, e.g. `standalone_bench.cmd eldmoor "scalability 2"`. |
+| `fog_bench.cmd [old]` | Standalone, Harrow's Rest: standing, then walking about. Prints the fog's cost a frame (CSV `Valhalla/GameThread/FogTick`); `old` runs the pre-Phase 5 path (`valhalla.FogAlwaysRecompute 1`). |
 | `combat_bench.cmd` | A dedicated server, one profiled client and three windowless bot clients fighting at three Eldmoor camps. Writes a CSV and an Insights trace of the profiled client. Needs about 15 GB of free memory. |
 | `package_client.cmd` | Stages the game data and packages a Development client into `Saved/Perf/pkg` (the editor can stay open). |
 | `record_pso.cmd` / `build_pso_cache.cmd` | Record the shader pipelines a packaged client uses and build the bundled PSO cache from them (below). |

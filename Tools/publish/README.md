@@ -15,6 +15,8 @@ Tools\publish\publish.cmd --notes "Eldmoor patrol fixes"
 | `--version 0.1.7` | Publish as this version instead of the next one. |
 | `--keep 3` | How many versions stay in R2 (default 3). Older ones are deleted, here and locally. |
 | `--dry-run` | Everything except the upload and the clean-up. Needs no credentials. |
+| `--out-dir D:\Valhalla-Builds` | Where the local copies go (see below). Must be outside the repository. |
+| `--where` | Print the builds folder (moving old copies into it) and stop. |
 | `--check` | Only test the R2 setup (list, write, public link, delete). Publishes nothing. |
 
 ## What it does
@@ -26,17 +28,38 @@ Tools\publish\publish.cmd --notes "Eldmoor patrol fixes"
    manifest listing every file with its size and SHA-256.
 5. Zips the build as `Valhalla-<version>.zip`, leaving out the build's own `Saved\`
    folder (logs can contain login tokens) and the `.pdb` debug symbols, which are kept
-   locally in `Valhalla2\Saved\Publish\symbols\<version>\` for crash reports.
+   locally in the builds folder under `symbols\<version>\` for crash reports.
 6. Uploads to `downloads/` in the bucket: the zip, `<zip>.sha256` and
    `Valhalla-<version>.manifest.json`. A version that is already there is never
    overwritten; the script stops instead.
 7. Updates `downloads/latest.json` and `downloads/latest.txt` (sent with
    `Cache-Control: no-cache`, so a download link to them is always current).
-8. Deletes versions older than the newest 3, in R2 and in `Valhalla2\Saved\Publish\`.
+8. Deletes versions older than the newest 3, in R2 and in the builds folder.
 9. Checks the public link and prints the tester message: version, link, size, SHA-256.
 
 It warns if the working tree has uncommitted or unpushed changes: the game server
 must run the same commit as the client (the message prints which one).
+
+## The builds folder (local copies)
+
+Every published version is also kept on this PC, **outside the repository**, so
+nothing a build produces can end up in a commit:
+
+```
+C:\Users\music\game-project\Valhalla-Builds\     (next to the Valhalla2.0 repo folder)
+  0.1.3\Valhalla-0.1.3.zip, .zip.sha256, .manifest.json
+  symbols\0.1.3\...\*.pdb                          (for crash reports from that version)
+  published.jsonl                                 (every version published from this PC)
+```
+
+To keep them somewhere else, add `VALHALLA_BUILDS_DIR=D:\Valhalla-Builds` to
+`secrets.local.env` (or pass `--out-dir`). A folder inside the repository is
+refused. Builds that an older version of the script left in
+`Valhalla2\Saved\Publish` are moved there on the next run.
+
+The packaged client itself is still staged in `Valhalla2\Saved\Perf\pkg` by
+`Tools\perf\package_client.cmd` (the benchmarks use it too); `Valhalla2\Saved\`
+is gitignored and is only a working copy, overwritten by every package.
 
 ## One-time setup
 

@@ -14,7 +14,7 @@ Steps:
   3. Run Tools/audit_client_secrets.py on the build; stop on any finding.
   4. Write version.json next to Valhalla2.exe and manifest.json beside the zip.
   5. Zip the build as Valhalla-<version>.zip (without Saved/, logs or .pdb symbols;
-     the .pdb is kept locally under Valhalla2/Saved/Publish/symbols/<version>/).
+     the .pdb is kept locally under <builds folder>/symbols/<version>/).
   6. Upload to the R2 bucket under downloads/: the zip, <zip>.sha256 and
      Valhalla-<version>.manifest.json. Refuses if that version already exists.
   7. Update downloads/latest.json and downloads/latest.txt (not cached).
@@ -22,6 +22,12 @@ Steps:
   9. Check the public link, then print a message to send to testers.
 
 --dry-run does steps 1-5 and prints what it would upload; no credentials needed.
+
+Local copies (zips, manifests, symbols, published.jsonl) go to the builds folder,
+which is outside the repository: ../Valhalla-Builds next to the repo folder by
+default, or VALHALLA_BUILDS_DIR (secrets.local.env or the environment), or
+--out-dir. A folder inside the repository is refused. Copies left in the old
+place (Valhalla2/Saved/Publish) are moved there on the next run.
 
 Credentials come from <repo>/secrets.local.env (never committed):
   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET, R2_PUBLIC_URL
@@ -49,7 +55,12 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = REPO / "Valhalla2"
 DEFAULT_BUILD = PROJECT / "Saved" / "Perf" / "pkg" / "Windows"
-PUBLISH_DIR = PROJECT / "Saved" / "Publish"
+# Published builds are kept outside the repository (Kevin, 2026-09-25): by
+# default in a Valhalla-Builds folder next to the repo folder. main() sets
+# PUBLISH_DIR from --out-dir / VALHALLA_BUILDS_DIR / this default.
+DEFAULT_PUBLISH_DIR = REPO.parent / "Valhalla-Builds"
+LEGACY_PUBLISH_DIR = PROJECT / "Saved" / "Publish"   # where they were kept before
+PUBLISH_DIR = DEFAULT_PUBLISH_DIR
 SECRETS_FILE = REPO / "secrets.local.env"
 PACKAGE_CMD = REPO / "Tools" / "perf" / "package_client.cmd"
 AUDIT_PY = REPO / "Tools" / "audit_client_secrets.py"
@@ -267,6 +278,67 @@ def collect(build: Path) -> list[Path]:
     return files
 
 
+def resolve_publish_dir(cli: Path | None, env: dict[str, str]) -> Path:
+    """The builds folder: --out-dir, else VALHALLA_BUILDS_DIR, else ../Valhalla-Builds. Never inside the repo."""
+    raw = str(cli) if cli else env.get("VALHALLA_BUILDS_DIR", "").strip()
+    path = Path(raw).expanduser() if raw else DEFAULT_PUBLISH_DIR
+    if not path.is_absolute():
+        path = REPO.parent / path
+    path = path.resolve()
+    try:
+        path.relative_to(REPO.resolve())
+    except ValueError:
+        return path
+    fail(f"the builds folder {path} is inside the repository ({REPO}). Published builds are kept "
+         f"outside it; use --out-dir or VALHALLA_BUILDS_DIR to pick a folder elsewhere.")
+
+
+def migrate_legacy(publish_dir: Path) -> None:
+    """Move what an older version of this script kept in Valhalla2/Saved/Publish into the builds folder.
+
+    Copies first and deletes the old copy only after, so a file that is in use
+    (a tester build someone unzipped there and is running) never costs anything:
+    it is left in the old place with a warning, and the next run finishes the move.
+    """
+    legacy = LEGACY_PUBLISH_DIR
+    if not legacy.is_dir() or legacy.resolve() == publish_dir:
+        return
+    children = list(legacy.iterdir())
+    if children:
+        publish_dir.mkdir(parents=True, exist_ok=True)
+    moved, left = [], []
+    for child in children:
+        dest = publish_dir / child.name
+        try:
+            if child.name == "published.jsonl":
+                have = set(dest.read_text(encoding="utf-8").splitlines()) if dest.is_file() else set()
+                with dest.open("a", encoding="utf-8") as h:
+                    for line in child.read_text(encoding="utf-8").splitlines():
+                        if line.strip() and line not in have:
+                            h.write(line + "\n")
+                child.unlink()
+            elif child.is_dir():
+                shutil.copytree(child, dest, dirs_exist_ok=True)
+                shutil.rmtree(child)
+            else:
+                if not dest.exists():
+                    shutil.copy2(child, dest)
+                child.unlink()
+            moved.append(child.name)
+        except OSError as e:
+            left.append(f"{child.name} ({e.strerror or e})")
+    try:
+        if not any(legacy.iterdir()):
+            legacy.rmdir()
+    except OSError:
+        pass
+    if moved:
+        say(f"Moved {', '.join(moved)} from {legacy} to {publish_dir} (builds are kept outside the repository now).")
+    if left:
+        say(f"WARNING: could not finish moving {'; '.join(left)} out of {legacy}; a file there is in use. "
+            f"It is copied to {publish_dir}; close whatever uses it and run again to remove the old copy.")
+
+
 def check_setup(env: dict[str, str], public_url: str) -> None:
     """Test the R2 setup without publishing: list, write, read back publicly, delete."""
     r2 = R2(env)
@@ -311,9 +383,19 @@ def main() -> None:
     ap.add_argument("--keep", type=int, default=3, help="how many versions to keep in R2 (default 3)")
     ap.add_argument("--dry-run", action="store_true", help="do everything except upload and delete")
     ap.add_argument("--check", action="store_true", help="only test the R2 setup: credentials, bucket, upload, public link; publishes nothing")
+    ap.add_argument("--out-dir", type=Path, help=f"where local copies go (default: VALHALLA_BUILDS_DIR, else {DEFAULT_PUBLISH_DIR}); must be outside the repository")
+    ap.add_argument("--where", action="store_true", help="print the builds folder (moving old copies into it) and stop")
     args = ap.parse_args()
 
-    env = {**read_env_file(SECRETS_FILE), **{k: v for k, v in os.environ.items() if k.startswith("R2_")}}
+    env = {**read_env_file(SECRETS_FILE),
+           **{k: v for k, v in os.environ.items() if k.startswith("R2_") or k == "VALHALLA_BUILDS_DIR"}}
+
+    global PUBLISH_DIR
+    PUBLISH_DIR = resolve_publish_dir(args.out_dir, env)
+    migrate_legacy(PUBLISH_DIR)
+    if args.where:
+        say(f"Builds folder: {PUBLISH_DIR}")
+        return
     public_url = env.get("R2_PUBLIC_URL", "").rstrip("/")
     need = ["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET", "R2_PUBLIC_URL"]
     missing = [k for k in need if not env.get(k)]
@@ -345,7 +427,7 @@ def main() -> None:
     ver = fmt_version(version)
     zip_name = f"Valhalla-{ver}.zip"
     zip_key = PREFIX + zip_name
-    say(f"Version {ver}")
+    say(f"Version {ver}; local copies go to {PUBLISH_DIR / ver}")
     if r2 and r2.exists(zip_key):
         fail(f"{zip_key} is already in the bucket. Published versions are never overwritten; pick another --version.")
 
@@ -437,7 +519,7 @@ def main() -> None:
         say(f"WARNING: could not open the public link ({e}). Check that R2.dev public access is on for the bucket.")
 
     # Local copies follow the same rule: zips and symbols of versions no longer
-    # in R2 are removed from Valhalla2/Saved/Publish.
+    # in R2 are removed from the builds folder.
     kept = set(sorted(by_version)[-args.keep:]) | {version}
     for parent in (PUBLISH_DIR, PUBLISH_DIR / "symbols"):
         if parent.is_dir():
@@ -457,6 +539,7 @@ def main() -> None:
     print(f"SHA-256 (optional check): {zip_sha}")
     print("=" * 70)
     print(f"\nThe game server must run commit {commit[:8]} (the same code as this build).")
+    print(f"Local copy of this build: {out}")
 
 
 if __name__ == "__main__":

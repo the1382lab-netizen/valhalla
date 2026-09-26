@@ -4,7 +4,8 @@ rem   publish.cmd                        package, then publish the next version 
 rem   publish.cmd --notes "What changed" add notes for testers
 rem   publish.cmd --skip-package         publish the build already in Valhalla2\Saved\Perf\pkg
 rem   publish.cmd --dry-run              do everything except the upload
-rem Needs the R2_* lines in secrets.local.env and boto3 (see README.md).
+rem Local copies go to ..\Valhalla-Builds next to the repo folder (outside the repository), or
+rem VALHALLA_BUILDS_DIR in secrets.local.env. Needs the R2_* lines there and boto3 (see README.md).
 setlocal
 set "PY=python"
 where py >nul 2>&1 && set "PY=py -3"

@@ -2664,6 +2664,13 @@ skips NPC animation, keep the profiling tools, combat first). Built so B-24 plug
   100). End to end against a throwaway backend (port 2601, its own database, two auto-logins): a new account had none saved
   and got this PC's settings (404, PUT 200); a newer copy put on the backend was adopted and applied at the
   next login, on the front end. `Valhalla.` suite: 55 tests, 54 pass (known MeshIdFallback).
+- **Phase 4 fixes (2026-09-25).** The editor crashed on every PIE Stop: each PIE game instance's graphics
+  subsystem registered `valhalla.Graphics` and unregistered it in `Deinitialize`, so with two PIE instances
+  the second unregistered a command the first had already deleted (access violation in
+  `FConsoleManager::UnregisterConsoleObject`). The command is now one `FAutoConsoleCommandWithWorldAndArgs`
+  for the process that finds the running game instance's subsystem. The options menu's button captions are
+  warm white with a black outline instead of black on the gold plates (`OPTIONS_BUTTON_TEXT`,
+  `hud_blueprints.fix_options_button_text()`).
 - Packaging notes: the game data has to be staged (`stage_game_data.py`, or `package_client.cmd` copies
   `shared/data` into `Content/Data`) or a standalone packaged client starts with no classes or NPC templates;
   the cook reports two editor-environment errors (no GameFeatureData Asset Manager rule, the MCP HTTP port in

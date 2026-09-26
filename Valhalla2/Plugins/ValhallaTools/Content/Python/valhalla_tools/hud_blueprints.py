@@ -1300,6 +1300,10 @@ def wire_options_menu():
 #: WBP_OptionsMenu's width (Slate units): six tab buttons since B-27's Graphics tab.
 MENU_WIDTH = 540.0
 
+#: The options menu's button captions: warm white with the HUD font's black outline. They were
+#: black on the gold T_UI_Button plate, which read as a dark smudge on the dimmed tabs (Kevin, 2026-09-25).
+OPTIONS_BUTTON_TEXT = "#fff4dc"
+
 
 class _OptionsMenuKit:
     """The options menu's row builders (text, buttons, check and slider rows, headers) on one _TreeBuilder."""
@@ -1322,7 +1326,7 @@ class _OptionsMenuKit:
         widget.set_background_color(tint or self.close_c)
         _button_art(widget, self.button_art)
         _not_focusable(widget)
-        self.text(widget, name + "Label", caption, 8, unreal.LinearColor(0, 0, 0, 1), bold=True)
+        self.text(widget, name + "Label", caption, 8, _colour(OPTIONS_BUTTON_TEXT), bold=True)
         return widget, slot
 
     def check_row(self, parent, name, label):
@@ -1389,6 +1393,27 @@ def _graphics_page(kit, switcher):
                     7, kit.label_c, wrap=True)
     _pad(s, 0, 8, 0, 0)
     return page
+
+
+def fix_options_button_text(asset_path=OPTIONS_MENU_BP):
+    """In place: every button caption in WBP_OptionsMenu (the ``<Button>Label`` text inside each
+    Button) gets OPTIONS_BUTTON_TEXT and a 1 px black outline. Nothing else changes; compiles, saves."""
+    blueprint = unreal.load_asset(asset_path)
+    if blueprint is None:
+        raise RuntimeError("no asset at {}".format(asset_path))
+    widgets = {str(_field(e, "widget_name", "") or _field(e, "widget").get_name()): _field(e, "widget")
+               for e in _widget_infos(blueprint)}
+    fixed = []
+    for name, widget in widgets.items():
+        if not isinstance(widget, unreal.TextBlock) or not name.endswith("Label"):
+            continue
+        if not isinstance(widgets.get(name[:-len("Label")]), unreal.Button):
+            continue
+        size = widget.get_editor_property("font").get_editor_property("size")
+        _text(widget, str(widget.get_text()), size, _colour(OPTIONS_BUTTON_TEXT), bold=True, outline=1)
+        fixed.append(name)
+    builder = _TreeBuilder(blueprint)
+    return _finish(blueprint, asset_path, builder, {"captionsFixed": sorted(fixed)})
 
 
 def add_graphics_tab(asset_path=OPTIONS_MENU_BP):

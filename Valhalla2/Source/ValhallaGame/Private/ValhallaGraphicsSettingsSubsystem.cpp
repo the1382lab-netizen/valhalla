@@ -52,12 +52,6 @@ void UValhallaGraphicsSettingsSubsystem::Initialize(FSubsystemCollectionBase& Co
 	TickHandle = FTSTicker::GetCoreTicker().AddTicker(
 		FTickerDelegate::CreateUObject(this, &UValhallaGraphicsSettingsSubsystem::TickDebounce), 0.25f);
 
-	ConsoleCommand = IConsoleManager::Get().RegisterConsoleCommand(
-		TEXT("valhalla.Graphics"),
-		TEXT("B-27. No arguments: print the graphics settings in force. preset=low|medium|high|epic gi=0|1 scale=50..100 cap=0|30..360 vsync=0|1 mb=0|1: apply without saving (benchmarks)."),
-		FConsoleCommandWithArgsDelegate::CreateUObject(this, &UValhallaGraphicsSettingsSubsystem::HandleConsoleCommand),
-		ECVF_Default);
-
 	FValhallaGraphicsSettings Local;
 	const bool bHasLocal = ReadCache(0, Local);
 	Settings = bHasLocal ? Local : FValhallaGraphicsSettings();
@@ -79,11 +73,6 @@ void UValhallaGraphicsSettingsSubsystem::Deinitialize()
 {
 	FTSTicker::GetCoreTicker().RemoveTicker(TickHandle);
 	TickHandle.Reset();
-	if (ConsoleCommand)
-	{
-		IConsoleManager::Get().UnregisterConsoleObject(ConsoleCommand);
-		ConsoleCommand = nullptr;
-	}
 	FlushPendingSave();
 	OnChanged.Clear();
 	Super::Deinitialize();
@@ -377,7 +366,48 @@ void UValhallaGraphicsSettingsSubsystem::ForgetAccount()
 //  valhalla.Graphics
 // ─────────────────────────────────────────────────────────────────────────────
 
-void UValhallaGraphicsSettingsSubsystem::HandleConsoleCommand(const TArray<FString>& Args)
+namespace
+{
+	/**
+	 * Registered once for the process, not per game instance: every PIE
+	 * session (and every PIE player) has its own subsystem, and a command each
+	 * of them registered and unregistered under the same name was deleted by
+	 * the first to shut down and unregistered again by the next, which crashed
+	 * the editor on Stop (2026-09-25).
+	 */
+	FAutoConsoleCommandWithWorldAndArgs GGraphicsCommand(
+		TEXT("valhalla.Graphics"),
+		TEXT("B-27. No arguments: print the graphics settings in force. preset=low|medium|high|epic gi=0|1 scale=50..100 cap=0|30..360 vsync=0|1 mb=0|1: apply without saving (benchmarks)."),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			UValhallaGraphicsSettingsSubsystem* Graphics = UValhallaGraphicsSettingsSubsystem::Get(World);
+			// Typed into the editor's console the world is the editor's, which
+			// has no game instance: use the first game or PIE world's.
+			if (!Graphics && GEngine)
+			{
+				for (const FWorldContext& Context : GEngine->GetWorldContexts())
+				{
+					if (UGameInstance* GameInstance = Context.OwningGameInstance)
+					{
+						if ((Graphics = GameInstance->GetSubsystem<UValhallaGraphicsSettingsSubsystem>()) != nullptr)
+						{
+							break;
+						}
+					}
+				}
+			}
+			if (Graphics)
+			{
+				Graphics->RunConsoleCommand(Args);
+			}
+			else
+			{
+				UE_LOG(LogValhallaGraphics, Warning, TEXT("valhalla.Graphics: no game running (the graphics settings live in a game instance)."));
+			}
+		}));
+}
+
+void UValhallaGraphicsSettingsSubsystem::RunConsoleCommand(const TArray<FString>& Args)
 {
 	if (Args.Num() == 0)
 	{

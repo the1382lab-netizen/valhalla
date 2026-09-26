@@ -86,6 +86,9 @@ public:
 	static FString CachePathFor(int32 UserId);
 
 	int32 GetUserId() const { return UserId; }
+
+	/** `valhalla.Graphics` (registered once for the process; see the .cpp). */
+	void RunConsoleCommand(const TArray<FString>& Args);
 	bool IsDirty() const { return bDirty; }
 
 	FOnValhallaGraphicsSettingsChanged OnChanged;
@@ -101,7 +104,6 @@ private:
 	void PushToBackend();
 	/** Can this process apply at all (a renderer), and should it now (not the editor, unless the player asked)? */
 	static bool CanApply();
-	void HandleConsoleCommand(const TArray<FString>& Args);
 
 	FValhallaGraphicsSettings Settings;
 	/** 0: no account (graphics_local.json only). */
@@ -111,5 +113,4 @@ private:
 	double LastChangeSeconds = 0.0;
 	int32 LoadSerial = 0;
 	FTSTicker::FDelegateHandle TickHandle;
-	IConsoleObject* ConsoleCommand = nullptr;
 };
